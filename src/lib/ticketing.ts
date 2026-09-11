@@ -133,12 +133,13 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za')
     : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');
 
-  if (process.env.NODE_ENV !== 'production') {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (!resendApiKey || resendApiKey === 'your-resend-api-key') {
     const smtpHost = process.env.SMTP_HOST;
     const smtpUser = process.env.SMTP_USER;
     const smtpPass = process.env.SMTP_PASS;
     if (!smtpHost || !smtpUser || !smtpPass) {
-      throw new Error('SMTP is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS in .env.local');
+      throw new Error('Neither RESEND_API_KEY nor SMTP credentials are configured. Set RESEND_API_KEY or SMTP_HOST/USER/PASS.');
     }
 
     const smtpPort = Number(process.env.SMTP_PORT || 587);
@@ -158,8 +159,6 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     return;
   }
 
-  const resendApiKey = process.env.RESEND_API_KEY;
-  if (!resendApiKey || resendApiKey === 'your-resend-api-key') throw new Error('RESEND_API_KEY is not configured');
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST', headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
