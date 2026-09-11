@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     const passphrase = process.env.PAYFAST_PASSPHRASE;
     const payfast_url = process.env.PAYFAST_URL || 'https://sandbox.payfast.co.za/eng/process';
     
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
     if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
     if (!payfast_url.startsWith('https://')) throw new Error('PAYFAST_URL must use HTTPS');
 
