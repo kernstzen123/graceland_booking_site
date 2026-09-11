@@ -134,55 +134,55 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');
 
   const resendApiKey = process.env.RESEND_API_KEY;
-  if (!resendApiKey || resendApiKey === 'your-resend-api-key') {
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpUser = process.env.SMTP_USER;
-    const smtpPass = process.env.SMTP_PASS;
-    if (!smtpHost || !smtpUser || !smtpPass) {
-      console.error('Neither RESEND_API_KEY nor SMTP credentials are configured. Skipping email delivery.');
-      return;
-    }
-
-    const smtpPort = Number(process.env.SMTP_PORT || 587);
-    const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
-      auth: { user: smtpUser, pass: smtpPass },
-    });
+  if (resendApiKey && resendApiKey !== 'your-resend-api-key') {
     try {
-      await transporter.sendMail({
-        from: `Graceland Venues <${fromEmail}>`,
-        to: email,
-        subject: 'Your Tickets - Graceland Venues',
-        html,
-        attachments: attachments.map(({ filename, content }) => ({ filename, content })),
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST', headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: `Graceland Venues <${fromEmail}>`,
+          to: [email],
+          subject: 'Your Tickets - Graceland Venues',
+          html,
+          attachments: attachments.map(({ filename, content }) => ({
+            filename,
+            content: content.toString('base64'),
+          })),
+        }),
       });
+      if (!response.ok) {
+        console.error(`Failed to send ticket email via Resend: ${await response.text()}`);
+      }
     } catch (e) {
-      console.error('SMTP email delivery failed, but payment was successful:', e);
+      console.error('Resend email delivery failed, but payment was successful:', e);
     }
     return;
   }
 
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    console.error('Neither RESEND_API_KEY nor SMTP credentials are configured. Skipping email delivery.');
+    return;
+  }
+
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
+    auth: { user: smtpUser, pass: smtpPass },
+  });
   try {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST', headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: `Graceland Venues <${fromEmail}>`,
-        to: [email],
-        subject: 'Your Tickets - Graceland Venues',
-        html,
-        attachments: attachments.map(({ filename, content }) => ({
-          filename,
-          content: content.toString('base64'),
-        })),
-      }),
+    await transporter.sendMail({
+      from: `Graceland Venues <${fromEmail}>`,
+      to: email,
+      subject: 'Your Tickets - Graceland Venues',
+      html,
+      attachments: attachments.map(({ filename, content }) => ({ filename, content })),
     });
-    if (!response.ok) {
-      console.error(`Failed to send ticket email via Resend: ${await response.text()}`);
-    }
   } catch (e) {
-    console.error('Resend email delivery failed, but payment was successful:', e);
+    console.error('SMTP email delivery failed, but payment was successful:', e);
   }
 }
 
