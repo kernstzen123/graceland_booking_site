@@ -139,7 +139,8 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     const smtpUser = process.env.SMTP_USER;
     const smtpPass = process.env.SMTP_PASS;
     if (!smtpHost || !smtpUser || !smtpPass) {
-      throw new Error('Neither RESEND_API_KEY nor SMTP credentials are configured. Set RESEND_API_KEY or SMTP_HOST/USER/PASS.');
+      console.error('Neither RESEND_API_KEY nor SMTP credentials are configured. Skipping email delivery.');
+      return;
     }
 
     const smtpPort = Number(process.env.SMTP_PORT || 587);
