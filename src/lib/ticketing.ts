@@ -150,30 +150,40 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
       secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
       auth: { user: smtpUser, pass: smtpPass },
     });
-    await transporter.sendMail({
-      from: `Graceland Venues <${fromEmail}>`,
-      to: email,
-      subject: 'Your Tickets - Graceland Venues',
-      html,
-      attachments: attachments.map(({ filename, content }) => ({ filename, content })),
-    });
+    try {
+      await transporter.sendMail({
+        from: `Graceland Venues <${fromEmail}>`,
+        to: email,
+        subject: 'Your Tickets - Graceland Venues',
+        html,
+        attachments: attachments.map(({ filename, content }) => ({ filename, content })),
+      });
+    } catch (e) {
+      console.error('SMTP email delivery failed, but payment was successful:', e);
+    }
     return;
   }
 
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST', headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: `Graceland Venues <${fromEmail}>`,
-      to: [email],
-      subject: 'Your Tickets - Graceland Venues',
-      html,
-      attachments: attachments.map(({ filename, content }) => ({
-        filename,
-        content: content.toString('base64'),
-      })),
-    }),
-  });
-  if (!response.ok) throw new Error(`Failed to send ticket email: ${await response.text()}`);
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST', headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: `Graceland Venues <${fromEmail}>`,
+        to: [email],
+        subject: 'Your Tickets - Graceland Venues',
+        html,
+        attachments: attachments.map(({ filename, content }) => ({
+          filename,
+          content: content.toString('base64'),
+        })),
+      }),
+    });
+    if (!response.ok) {
+      console.error(`Failed to send ticket email via Resend: ${await response.text()}`);
+    }
+  } catch (e) {
+    console.error('Resend email delivery failed, but payment was successful:', e);
+  }
 }
 
 async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, index: number) {
