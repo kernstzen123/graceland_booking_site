@@ -111,6 +111,6 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('PayFast webhook error', error);
     const message = error instanceof Error ? error.message : 'Unknown webhook error';
-    return new NextResponse(process.env.NODE_ENV === 'production' ? 'Error' : `Webhook error: ${message}`, { status: 500 });
+    return new NextResponse(`Webhook error: ${message}`, { status: 500 });
   }
 }
