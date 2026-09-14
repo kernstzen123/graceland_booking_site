@@ -55,14 +55,15 @@ export function AttendeeNames({ selections, attendeeNames, onChange, onNext, onB
 
   const allComplete = attendeeNames.length > 0 && attendeeNames.every(a => a.firstName.trim() && a.lastName.trim());
 
-  // Friendly label that strips the category prefix for compactness
+  // Friendly label that extracts the item name and water-activity context
   const friendlyLabel = (ticketType: string) => {
-    const parts = ticketType.split('—');
-    const category = (parts[0] || '').trim();
-    const name = (parts[1] || '').trim();
-    const isWater = category.toLowerCase().includes('including water');
-    const suffix = isWater ? '(incl. water)' : '(excl. water)';
-    return `${name} ${suffix}`;
+    const parts = ticketType.split('—').map(s => s.trim());
+    // The item name is always the last segment (e.g. "Children 3–17")
+    const name = parts[parts.length - 1] || ticketType;
+    const lower = ticketType.toLowerCase();
+    if (lower.includes('excluding water')) return `${name} (excl. water activities)`;
+    if (lower.includes('including water')) return `${name} (incl. water activities)`;
+    return name;
   };
 
   return (
