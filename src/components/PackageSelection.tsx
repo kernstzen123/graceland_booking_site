@@ -39,7 +39,7 @@ interface PackageSelectionProps {
 }
 
 export function PackageSelection({ selectedDate, selections, party, onPartyChange, onUpdateSelection, onNext, onBack }: PackageSelectionProps) {
-  const [partyAvailability, setPartyAvailability] = useState<{ availableSlots: string[]; nextAvailableDate: string | null } | null>(null);
+  const [partyAvailability, setPartyAvailability] = useState<{ slots: string[]; availableSlots: string[]; nextAvailableDate: string | null } | null>(null);
   const [partyError, setPartyError] = useState('');
   const [selectionError, setSelectionError] = useState('');
 
@@ -144,7 +144,10 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
             <label>Additional children <input type="number" min="0" value={party.additionalChildren} onChange={event => { const count = Math.max(0, Number(event.target.value) || 0); onPartyChange({ ...party, additionalChildren: count, additionalChildrenWater: party.additionalChildrenWater.slice(0, count) }); }} style={{ display: 'block', width: '100%', padding: 8, marginTop: 4 }} /></label>
             {party.additionalChildren > 0 && <div><strong>Additional child entrance type</strong>{Array.from({ length: party.additionalChildren }, (_, index) => <label key={index} style={{ display: 'block', marginTop: 6 }}><input type="checkbox" checked={party.additionalChildrenWater[index] === true} onChange={event => { const water = [...party.additionalChildrenWater]; water[index] = event.target.checked; onPartyChange({ ...party, additionalChildrenWater: water }); }} /> Child {index + 1}: swimming and waterslides (R200)</label>)}<small style={{ color: 'var(--text-muted)' }}>Leave unchecked for non-swimming entrance (R100).</small></div>}
             <label>Optional party packs (R50 each) <input type="number" min="0" value={party.partyPacks} onChange={event => onPartyChange({ ...party, partyPacks: Math.max(0, Number(event.target.value) || 0) })} style={{ display: 'block', width: '100%', padding: 8, marginTop: 4 }} /></label>
-            <label>Party time slot<select value={party.slot} onChange={event => onPartyChange({ ...party, slot: event.target.value })} style={{ display: 'block', width: '100%', padding: 8, marginTop: 4 }}><option value="">Select a time slot</option>{(partyAvailability?.availableSlots || getPartySlots(selectedDate)).map(slot => <option key={slot} value={slot}>{slot}</option>)}</select></label>
+            <label>Party time slot<select value={party.slot} onChange={event => onPartyChange({ ...party, slot: event.target.value })} style={{ display: 'block', width: '100%', padding: 8, marginTop: 4 }}><option value="">Select a time slot</option>{(partyAvailability?.slots || getPartySlots(selectedDate)).map(slot => {
+              const isAvailable = partyAvailability ? partyAvailability.availableSlots.includes(slot) : true;
+              return <option key={slot} value={slot} disabled={!isAvailable}>{slot}{!isAvailable ? ' (Fully Booked)' : ''}</option>;
+            })}</select></label>
             <p style={{ color: '#0369a1', fontSize: '0.9rem', backgroundColor: '#e0f2fe', padding: '0.75rem', borderRadius: '0.5rem', marginTop: '0.5rem' }}>As we only have 30 minute gaps between party slots to clean up and set up the party huts, it would be appreciated if you would please only arrive 10 minutes before the party.</p>
             {party.enabled && party.children < 10 && <p style={{ color: 'var(--danger)' }}>A party requires at least 10 children.</p>}
             {party.enabled && !party.slot && <p style={{ color: 'var(--danger)' }}>Select one of the available party time slots.</p>}
