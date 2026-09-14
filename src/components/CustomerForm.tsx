@@ -16,7 +16,7 @@ export function CustomerForm({ customerDetails, onChange, onNext, onBack }: Cust
 
   return (
     <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
-      <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Step 3: Your Details</h2>
+      <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Step 4: Your Details</h2>
       
       <div style={{ display: 'grid', gap: '1rem', marginBottom: '2rem' }}>
         <div>

@@ -9,7 +9,7 @@ type BookingItem = {
   quantity: number;
   package_id: string | null;
   hut_id: string | null;
-  metadata: { name?: string; itemId?: string; isPerson?: boolean } | null;
+  metadata: { name?: string; itemId?: string; isPerson?: boolean; attendeeNames?: Array<{ firstName: string; lastName: string }> } | null;
   packages?: { name?: string } | null;
   huts?: { name?: string } | null;
   bookings?: { visit_date?: string; customer_id?: string; voucher_credit_id?: string | null } | null;
@@ -40,7 +40,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     if (!spot?.number) return null;
     return `${spot.type === 'table' ? 'Table' : 'Hut'} ${spot.number}`;
   }).filter(Boolean).join(', ');
-  const displayNames = buildTicketDisplayNames(items, seatingLabel);
+  const { names: displayNames, attendeeFullNames } = buildTicketDisplayNames(items, seatingLabel);
   const voucherCreditId = items.find(item => item.bookings?.voucher_credit_id)?.bookings?.voucher_credit_id;
   let voucherRemaining: number | null = null;
   if (voucherCreditId) {
@@ -54,6 +54,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     const labelledTickets = existingTickets.map((ticket, index) => ({
       ...ticket,
       display_name: displayNames[index] || 'Entrance Ticket',
+      attendee_name: attendeeFullNames[index] || '',
     }));
     await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining);
     return labelledTickets;
@@ -65,11 +66,13 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     for (let i = 0; i < item.quantity; i++) {
       const ticketUid = `TKT-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
       const qrToken = createQrToken(bookingId, ticketUid, String(item.bookings?.visit_date));
-      const displayName = displayNames[personIndex++] || 'Entrance Ticket';
+      const displayName = displayNames[personIndex] || 'Entrance Ticket';
+      const attendeeName = attendeeFullNames[personIndex] || '';
+      personIndex++;
       newTickets.push({
         booking_id: bookingId, package_id: item.package_id, customer_id: item.bookings?.customer_id,
         ticket_uid: ticketUid, qr_token: qrToken, visit_date: item.bookings?.visit_date,
-        display_name: displayName,
+        display_name: displayName, attendee_name: attendeeName,
       });
     }
   }
@@ -89,8 +92,10 @@ function buildTicketDisplayNames(items: BookingItem[], seatingLabel = '') {
     ? Array.from({ length: item.quantity }, () => item.huts?.name || item.metadata?.name || 'Hut')
     : []);
   const names: string[] = [];
+  const attendeeFullNames: string[] = [];
   let assignedHuts = false;
   for (const item of items.filter(item => item.metadata?.isPerson === true || item.package_id)) {
+    const itemAttendees = item.metadata?.attendeeNames || [];
     for (let i = 0; i < item.quantity; i++) {
       let name = item.packages?.name || item.metadata?.name || 'Entrance Ticket';
       if (hutNames.length && name.toLowerCase().includes('adult') && !assignedHuts) {
@@ -98,10 +103,17 @@ function buildTicketDisplayNames(items: BookingItem[], seatingLabel = '') {
         assignedHuts = true;
       }
       if (seatingLabel) name += ` · Seating: ${seatingLabel}`;
+      // Prepend attendee name if available
+      const attendee = itemAttendees[i];
+      if (attendee) {
+        attendeeFullNames.push(`${attendee.firstName} ${attendee.lastName}`);
+      } else {
+        attendeeFullNames.push('');
+      }
       names.push(name);
     }
   }
-  return names;
+  return { names, attendeeFullNames };
 }
 
 async function sendTicketsEmail(email: string, name: string, tickets: Array<Record<string, unknown>>, voucherRemaining: number | null = null) {
@@ -114,9 +126,11 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
   const ticketsHtml = tickets.map((ticket, index) => {
     const scanUrl = `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(scanUrl)}`;
+    const attendeeName = String(ticket.attendee_name || '');
     return `<div style="border:2px solid #0EA5E9;border-radius:8px;padding:20px;margin-bottom:20px;text-align:center;background:#f8fafc">
       <h3 style="color:#0EA5E9">TICKET ${index + 1}</h3>
-      <p style="font-size:1.2rem;font-weight:bold;color:#0f172a">${escapeHtml(String(ticket.display_name || 'Entrance Ticket'))}</p>
+      ${attendeeName ? `<p style="font-size:1.3rem;font-weight:bold;color:#0f172a;margin-bottom:4px">${escapeHtml(attendeeName)}</p>` : ''}
+      <p style="font-size:1.1rem;font-weight:600;color:#334155">${escapeHtml(String(ticket.display_name || 'Entrance Ticket'))}</p>
       <p style="color:#64748b"><strong>Ticket ID:</strong> ${escapeHtml(String(ticket.ticket_uid))}</p>
       <img src="${qrUrl}" alt="QR Code for Ticket" width="200" height="200" />
       <p style="color:#64748b">Present this QR code at the entrance scanner.</p>
@@ -189,6 +203,7 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
 async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, index: number) {
   const ticketUid = String(ticket.ticket_uid || `ticket-${index + 1}`);
   const displayName = String(ticket.display_name || 'Entrance Ticket');
+  const attendeeName = String(ticket.attendee_name || '');
   const visitDate = String(ticket.visit_date || 'See booking confirmation');
   const scanUrl = `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
   const qrBuffer = await QRCode.toBuffer(scanUrl, { type: 'png', width: 220, margin: 1 });
@@ -204,14 +219,30 @@ async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, 
   page.drawRectangle({ x: 40, y: 42, width: 515, height: 758, borderColor: primary, borderWidth: 2 });
   page.drawText('GRACELAND VENUES', { x: 75, y: 720, size: 24, font: bold, color: primary });
   page.drawText('DIGITAL ENTRY TICKET', { x: 77, y: 690, size: 12, font: regular, color: muted });
-  const titleSize = 20;
+
+  let nextY = 660;
+
+  // Attendee name (prominent, if available)
+  if (attendeeName) {
+    const nameLines = wrapPdfText(attendeeName, bold, 445, 22, 2);
+    nameLines.forEach((line) => {
+      page.drawText(line, { x: 75, y: nextY, size: 22, font: bold, color: dark });
+      nextY -= 28;
+    });
+    nextY -= 4;
+  }
+
+  // Ticket type / display name
+  const titleSize = 18;
   const titleLines = wrapPdfText(displayName, bold, 445, titleSize, 3);
-  titleLines.forEach((line, lineIndex) => {
-    page.drawText(line, { x: 75, y: 640 - lineIndex * 25, size: titleSize, font: bold, color: dark });
+  titleLines.forEach((line) => {
+    page.drawText(line, { x: 75, y: nextY, size: titleSize, font: bold, color: primary });
+    nextY -= 23;
   });
-  const detailsY = 640 - titleLines.length * 25 - 14;
-  page.drawText(`Ticket ID: ${ticketUid}`, { x: 75, y: detailsY, size: 13, font: regular, color: muted });
-  page.drawText(`Visit date: ${visitDate}`, { x: 75, y: detailsY - 22, size: 13, font: regular, color: muted });
+
+  nextY -= 10;
+  page.drawText(`Ticket ID: ${ticketUid}`, { x: 75, y: nextY, size: 13, font: regular, color: muted });
+  page.drawText(`Visit date: ${visitDate}`, { x: 75, y: nextY - 22, size: 13, font: regular, color: muted });
   const qrImage = await document.embedPng(qrBuffer);
   page.drawImage(qrImage, { x: 187, y: 335, width: 220, height: 220 });
   page.drawText('Present this QR code at the entrance scanner.', { x: 145, y: 280, size: 13, font: regular, color: dark });

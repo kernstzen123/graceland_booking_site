@@ -51,7 +51,7 @@ export function BookingSummary({ selectedDate, selections, party, customerDetail
   const removeVoucher = () => { setVoucher(null); setVoucherInput(''); setVoucherMessage(''); onVoucherApplied(null); };
   return (
     <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
-      <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>Step 4: Booking Summary</h2>
+      <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>Step 5: Booking Summary</h2>
       
       <div style={{ marginBottom: '1.5rem' }}>
         <h3 style={{ fontSize: '1.1rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Visit Date</h3>

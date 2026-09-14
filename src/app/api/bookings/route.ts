@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   try {
     if (!(await checkRateLimit(request, 'booking', 10, 60))) return NextResponse.json({ success: false, error: 'Too many booking attempts. Please wait a minute and try again.' }, { status: 429 });
     const body = await request.json();
-    const { selectedDate, selections, customerDetails, totalAmount, party, spotIds, idempotencyKey, voucherCode, termsAccepted, privacyAccepted } = body;
+    const { selectedDate, selections, customerDetails, totalAmount, party, spotIds, idempotencyKey, voucherCode, termsAccepted, privacyAccepted, attendeeNames } = body;
     if (!selectedDate || !selections || !customerDetails?.email || Number(totalAmount) < 0) {
       throw new Error('Missing or invalid booking details');
     }
@@ -43,6 +43,18 @@ export async function POST(request: Request) {
       if (!/^[a-z0-9-]+$/.test(key) || !Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 500) throw new Error('Invalid package quantity');
     }
     const safeCustomerDetails = { firstName, lastName, email, phone };
+
+    // Validate and sanitize attendee names (only for non-party bookings)
+    const isParty = (party as PartyDetails | undefined)?.enabled === true;
+    let sanitizedAttendeeNames: Array<{ firstName: string; lastName: string }> = [];
+    if (!isParty && Array.isArray(attendeeNames) && attendeeNames.length > 0) {
+      sanitizedAttendeeNames = attendeeNames.map((entry: { firstName?: string; lastName?: string }) => {
+        const aFirst = cleanText(String(entry?.firstName || ''), 80);
+        const aLast = cleanText(String(entry?.lastName || ''), 80);
+        if (aFirst.length < 1 || aLast.length < 1) throw new Error('Each attendee must have a first name and surname');
+        return { firstName: aFirst, lastName: aLast };
+      });
+    }
 
     // 1. Calculate the total people count from selections
     let peopleCount = 0;
@@ -124,21 +136,38 @@ export async function POST(request: Request) {
     if (error) throw error;
     if (!bookingId) throw new Error('Booking reservation did not return a booking ID');
 
-    const items: Array<{ booking_id: string; quantity: number; price_per_unit: number; subtotal: number; metadata: Record<string, unknown> }> = Object.entries(selections)
+    const items: Array<{ booking_id: string; quantity: number; price_per_unit: number; subtotal: number; metadata: Record<string, unknown> }> = [];
+    let attendeeIdx = 0;
+    Object.entries(selections)
       .filter(([, quantity]) => Number(quantity) > 0)
-      .map(([itemId, quantity]) => {
+      .forEach(([itemId, quantity]) => {
         const item = BOOKABLE_ITEMS[itemId];
         if (!item) throw new Error(`Unknown booking item: ${itemId}`);
+        const qty = Number(quantity);
 
-        return {
+        // Attach attendee names to each individual unit of person-type items
+        const attendeeNamesForItem: Array<{ firstName: string; lastName: string }> = [];
+        if (item.isPerson && sanitizedAttendeeNames.length > 0) {
+          for (let i = 0; i < qty; i++) {
+            if (attendeeIdx < sanitizedAttendeeNames.length) {
+              attendeeNamesForItem.push(sanitizedAttendeeNames[attendeeIdx]);
+              attendeeIdx++;
+            }
+          }
+        }
+
+        items.push({
           booking_id: bookingId,
-          quantity: Number(quantity),
+          quantity: qty,
           price_per_unit: item.price,
-          subtotal: item.price * Number(quantity),
-          // The UI uses stable item IDs. Keep them as metadata until catalog UUIDs
-          // are configured in Supabase; ticket generation uses this metadata too.
-          metadata: { itemId, name: item.name, isPerson: item.isPerson },
-        };
+          subtotal: item.price * qty,
+          metadata: {
+            itemId,
+            name: item.name,
+            isPerson: item.isPerson,
+            ...(attendeeNamesForItem.length > 0 ? { attendeeNames: attendeeNamesForItem } : {}),
+          },
+        });
       });
 
     if (partyDetails?.enabled) {

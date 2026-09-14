@@ -2,6 +2,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Calendar } from '../components/Calendar';
 import { PackageSelection, PACKAGES } from '../components/PackageSelection';
+import { AttendeeNames, buildInitialAttendeeNames } from '../components/AttendeeNames';
+import type { AttendeeName } from '../components/AttendeeNames';
 import { CustomerForm } from '../components/CustomerForm';
 import { BookingSummary } from '../components/BookingSummary';
 import { PaymentSelection } from '../components/PaymentSelection';
@@ -28,6 +30,7 @@ export default function Home() {
   const [selections, setSelections] = useState<Record<string, number>>({});
   const [party, setParty] = useState<PartyDetails>({ enabled: false, option: 'option-1', children: 10, adults: 0, adultsWater: [], additionalChildren: 0, additionalChildrenWater: [], partyPacks: 0, slot: '' });
   const [customerDetails, setCustomerDetails] = useState({ firstName: '', lastName: '', email: '', phone: '' });
+  const [attendeeNames, setAttendeeNames] = useState<AttendeeName[]>([]);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
@@ -51,6 +54,7 @@ export default function Home() {
     setSelections({});
     setParty({ enabled: false, option: 'option-1', children: 10, adults: 0, adultsWater: [], additionalChildren: 0, additionalChildrenWater: [], partyPacks: 0, slot: '' });
     setCustomerDetails({ firstName: '', lastName: '', email: '', phone: '' });
+    setAttendeeNames([]);
     setReference('');
     setTermsAccepted(false);
     setPrivacyAccepted(false);
@@ -77,7 +81,7 @@ export default function Home() {
       const renderConfirmationState = window.setTimeout(() => {
         if (!cancelled) {
           setReference(returnedReference);
-          setStep(8);
+          setStep(9);
         }
       }, 0);
       const checkStatus = async () => {
@@ -98,12 +102,12 @@ export default function Home() {
             if (data.amountDue && Number(data.amountDue) > 0) setServerAmountDue(Number(data.amountDue));
             if (data.customer) setCustomerDetails({ firstName: data.customer.firstName || '', lastName: data.customer.lastName || '', email: data.customer.email || '', phone: data.customer.phone || '' });
             if (data.visitDate) setSelectedDate(data.visitDate);
-            setStep(9);
+            setStep(10);
             return;
           }
           if (!cancelled && data.ready) {
             paymentPollingActive.current = false;
-            setStep(7);
+            setStep(8);
           }
         } catch (error) {
           // The dev server or network can restart while PayFast confirmation
@@ -126,7 +130,7 @@ export default function Home() {
               if (data.visitDate) setSelectedDate(data.visitDate);
             })
             .catch(() => {});
-          setStep(9);
+          setStep(10);
         }
       }, 5 * 60 * 1000);
       return () => {
@@ -140,7 +144,7 @@ export default function Home() {
     } else if (statusParam === 'cancel') {
       if (returnedReference) setReference(returnedReference);
       setPaymentFailure({ expired: false, message: 'The PayFast payment was cancelled before it was completed.' });
-      setStep(9);
+      setStep(10);
       // Fetch the real amount due and customer details from the server so that
       // the retry flow shows the correct total and has the customer info needed
       // for PayFast / EFT emails (all client state is lost after the redirect).
@@ -198,7 +202,7 @@ export default function Home() {
     window.sessionStorage.setItem('graceland-booking-idempotency', idempotencyKey.current);
     // Call the API to reserve capacity
     try {
-      const bookingRequest = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedDate, selections, party, customerDetails, totalAmount, spotIds: selectedSpotIds, voucherCode: appliedVoucher?.code || null, idempotencyKey: idempotencyKey.current, termsAccepted, privacyAccepted }) };
+      const bookingRequest = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedDate, selections, party, customerDetails, totalAmount, spotIds: selectedSpotIds, voucherCode: appliedVoucher?.code || null, idempotencyKey: idempotencyKey.current, termsAccepted, privacyAccepted, attendeeNames: party.enabled ? [] : attendeeNames }) };
       let res = await fetch('/api/bookings', bookingRequest);
       // A transient connection failure can happen after the server has
       // reserved the booking. Retry once with the same idempotency key so the
@@ -211,7 +215,7 @@ export default function Home() {
       if (data.success) {
         setReference(data.reference);
         if (data.voucherAmountUsed) setVoucherRemainingBalance(Number(data.voucherRemainingBalance ?? appliedVoucher?.remainingBalance ?? 0));
-        setStep(5);
+        setStep(6);
       } else {
         alert("Error: " + data.error);
       }
@@ -287,7 +291,7 @@ export default function Home() {
     } catch (e) {
       console.error("Failed to send EFT email", e);
     }
-    setStep(6);
+    setStep(7);
   };
 
   return (
@@ -312,31 +316,58 @@ export default function Home() {
           party={party}
           onPartyChange={setParty}
           onUpdateSelection={handleUpdateSelection}
-          onNext={() => { setSeatingDone(false); setStep(3); }}
+          onNext={() => {
+            setSeatingDone(false);
+            if (party.enabled) {
+              // Party bookings skip attendee names step
+              setStep(4);
+            } else {
+              // Build initial attendee list from selections, preserving any
+              // names already entered if the user navigated back
+              const fresh = buildInitialAttendeeNames(selections);
+              // Keep existing names when the list shape hasn't changed
+              if (attendeeNames.length === fresh.length && attendeeNames.every((a, i) => a.itemId === fresh[i].itemId)) {
+                setStep(3);
+              } else {
+                setAttendeeNames(fresh);
+                setStep(3);
+              }
+            }
+          }}
           onBack={() => setStep(1)}
         />
       )}
 
-      {step === 3 && requiresSeating && !seatingDone && selectedDate && (
-        <SeatingMap selectedDate={selectedDate} requiredTables={requiredTables} requiredHuts={requiredHuts} selectedSpotIds={selectedSpotIds} onChange={setSelectedSpotIds} onNext={() => setSeatingDone(true)} onBack={() => { setSelectedSpotIds([]); setSeatingDone(false); setStep(2); }} />
-      )}
-
-      {step === 3 && (!requiresSeating || seatingDone) && (
-        <CustomerForm 
-          customerDetails={customerDetails}
-          onChange={setCustomerDetails}
-          onNext={() => setStep(4)}
-          onBack={() => { setSeatingDone(false); setStep(2); }}
+      {step === 3 && !party.enabled && (
+        <AttendeeNames
+          selections={selections}
+          attendeeNames={attendeeNames}
+          onChange={setAttendeeNames}
+          onNext={() => { setSeatingDone(false); setStep(4); }}
+          onBack={() => setStep(2)}
         />
       )}
 
-      {step === 4 && selectedDate && (
+      {step === 4 && requiresSeating && !seatingDone && selectedDate && (
+        <SeatingMap selectedDate={selectedDate} requiredTables={requiredTables} requiredHuts={requiredHuts} selectedSpotIds={selectedSpotIds} onChange={setSelectedSpotIds} onNext={() => setSeatingDone(true)} onBack={() => { setSelectedSpotIds([]); setSeatingDone(false); setStep(party.enabled ? 2 : 3); }} />
+      )}
+
+      {step === 4 && (!requiresSeating || seatingDone) && (
+        <CustomerForm 
+          customerDetails={customerDetails}
+          onChange={setCustomerDetails}
+          onNext={() => setStep(5)}
+          onBack={() => { setSeatingDone(false); setStep(party.enabled ? 2 : 3); }}
+        />
+      )}
+
+      {step === 5 && selectedDate && (
         <BookingSummary 
           selectedDate={selectedDate}
           selections={selections}
           party={party}
           customerDetails={customerDetails}
-          onBack={() => setStep(3)}
+          onBack={() => setStep(4)}
           onConfirm={handleConfirmBooking}
           submitting={bookingSubmitting}
           termsAccepted={termsAccepted}
@@ -347,18 +378,18 @@ export default function Home() {
         />
       )}
 
-      {step === 5 && (
+      {step === 6 && (
         <PaymentSelection 
           reference={reference}
           total={appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount}
           onPayFast={handlePayFast}
           onManualEFT={handleManualEFT}
-          onVoucherComplete={() => setStep(7)}
+          onVoucherComplete={() => setStep(8)}
           disabled={paying}
         />
       )}
 
-      {step === 6 && (
+      {step === 7 && (
         <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
           <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', color: 'var(--primary)' }}>Manual EFT Instructions</h2>
           <div style={{ backgroundColor: '#eff6ff', color: '#1e40af', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
@@ -386,7 +417,7 @@ export default function Home() {
         </div>
       )}
 
-      {step === 7 && (
+      {step === 8 && (
         <div className="card" style={{ maxWidth: '600px', margin: '0 auto', textAlign: 'center', padding: '3rem 2rem' }}>
           <h2 style={{ fontSize: '2rem', marginBottom: '1.5rem', color: 'var(--success)' }}>Payment Successful!</h2>
           <p style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>
@@ -409,7 +440,7 @@ export default function Home() {
         </div>
       )}
 
-      {step === 8 && (
+      {step === 9 && (
         <div className="card" style={{ maxWidth: '600px', margin: '0 auto', textAlign: 'center', padding: '3rem 2rem' }}>
           <h2 style={{ fontSize: '2rem', marginBottom: '1.5rem', color: 'var(--primary)' }}>Confirming your payment…</h2>
           <p style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>
@@ -419,13 +450,13 @@ export default function Home() {
         </div>
       )}
 
-      {step === 9 && paymentFailure && (
+      {step === 10 && paymentFailure && (
         <div className="card" style={{ maxWidth: '600px', margin: '0 auto', textAlign: 'center', padding: '3rem 2rem' }}>
           <h2 style={{ fontSize: '2rem', marginBottom: '1.5rem', color: 'var(--danger)' }}>Payment not completed</h2>
           <p style={{ marginBottom: '1rem' }}>{paymentFailure.message}</p>
           <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>You can retry if the booking is still active. If money was deducted, do not pay again—contact support with booking reference <strong>{reference}</strong> so we can investigate.</p>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            {!paymentFailure.expired && <button className="btn btn-primary" onClick={() => { setPaymentFailure(null); setStep(5); }}>Retry PayFast payment</button>}
+            {!paymentFailure.expired && <button className="btn btn-primary" onClick={() => { setPaymentFailure(null); setStep(6); }}>Retry PayFast payment</button>}
             <button className="btn" onClick={startNewBooking}>Start a new booking</button>
           </div>
           <SupportContact compact />
