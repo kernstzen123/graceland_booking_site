@@ -121,7 +121,7 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
                   </div>
                 </div>
               ))}
-              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any sized group can book a table for 6 (1 table per 6 people). Covered huts require more than 8 people; groups of more than 24 may select 2 huts. Birthday parties include one selectable hut.</p>}
+              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any sized group can book a table for 6 (1 table per 6 people). Covered huts require more than 8 people; groups of more than 24 may select 2 huts. Birthday parties include one selectable hut. <strong>Please note: tables/huts may become available at any time during the day due to parties.</strong></p>}
             </div>
           </div>
         ))}

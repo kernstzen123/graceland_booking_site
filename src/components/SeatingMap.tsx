@@ -46,7 +46,7 @@ export function SeatingMap({ selectedDate, requiredTables, requiredHuts, selecte
 
   return <div className="card" style={{ maxWidth: 980, margin: '0 auto' }}>
     <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Step 3: Choose your seating</h2>
-    <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>Select {requiredTables > 0 ? `${requiredTables} table${requiredTables === 1 ? '' : 's'}` : ''}{requiredTables > 0 && requiredHuts > 0 ? ' and ' : ''}{requiredHuts > 0 ? `${requiredHuts} hut${requiredHuts === 1 ? '' : 's'}` : ''} for {selectedDate}.</p>
+    <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>Select {requiredTables > 0 ? `${requiredTables} table${requiredTables === 1 ? '' : 's'}` : ''}{requiredTables > 0 && requiredHuts > 0 ? ' and ' : ''}{requiredHuts > 0 ? `${requiredHuts} hut${requiredHuts === 1 ? '' : 's'}` : ''} for {selectedDate}. <strong>Please note: tables/huts may become available at any time during the day due to parties.</strong></p>
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: '1rem', fontSize: 14 }}>
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#16a34a', marginRight: 5 }} />Available</span>
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#2563eb', marginRight: 5 }} />Selected</span>
