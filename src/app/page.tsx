@@ -349,7 +349,7 @@ export default function Home() {
       )}
 
       {step === 4 && requiresSeating && !seatingDone && selectedDate && (
-        <SeatingMap selectedDate={selectedDate} requiredTables={requiredTables} requiredHuts={requiredHuts} selectedSpotIds={selectedSpotIds} onChange={setSelectedSpotIds} onNext={() => setSeatingDone(true)} onBack={() => { setSelectedSpotIds([]); setSeatingDone(false); setStep(party.enabled ? 2 : 3); }} />
+        <SeatingMap party={party} selectedDate={selectedDate} requiredTables={requiredTables} requiredHuts={requiredHuts} selectedSpotIds={selectedSpotIds} onChange={setSelectedSpotIds} onNext={() => setSeatingDone(true)} onBack={() => { setSelectedSpotIds([]); setSeatingDone(false); setStep(party.enabled ? 2 : 3); }} />
       )}
 
       {step === 4 && (!requiresSeating || seatingDone) && (

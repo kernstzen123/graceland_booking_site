@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-type Spot = { id: string; number: string; type: 'table' | 'hut'; capacity: number; x_percent: number; y_percent: number; available: boolean };
+import { PartyDetails } from '@/lib/parties';
+
+type Spot = { id: string; number: string; type: 'table' | 'hut'; capacity: number; x_percent: number; y_percent: number; available: boolean; unavailableReason?: string };
 
 interface SeatingMapProps {
+  party: PartyDetails;
   selectedDate: string;
   requiredTables: number;
   requiredHuts: number;
@@ -14,7 +17,7 @@ interface SeatingMapProps {
   onBack: () => void;
 }
 
-export function SeatingMap({ selectedDate, requiredTables, requiredHuts, selectedSpotIds, onChange, onNext, onBack }: SeatingMapProps) {
+export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, selectedSpotIds, onChange, onNext, onBack }: SeatingMapProps) {
   const [spots, setSpots] = useState<Spot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -26,7 +29,12 @@ export function SeatingMap({ selectedDate, requiredTables, requiredHuts, selecte
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError('');
-    fetch(`/api/seating/availability?date=${encodeURIComponent(selectedDate)}`, { cache: 'no-store' })
+    const params = new URLSearchParams({
+      date: selectedDate,
+      isParty: String(party.enabled),
+      partySlot: party.slot || ''
+    });
+    fetch(`/api/seating/availability?${params.toString()}`, { cache: 'no-store' })
       .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Seating availability could not be loaded.'); return data; })
       .then(data => { if (!cancelled) setSpots(data.spots || []); })
       .catch(loadError => { if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'Seating availability could not be loaded.'); })
@@ -63,7 +71,13 @@ export function SeatingMap({ selectedDate, requiredTables, requiredHuts, selecte
             const typeNeeded = spot.type === 'table' ? requiredTables > 0 : requiredHuts > 0;
             const typeFull = (spot.type === 'table' ? selectedTables >= requiredTables : selectedHuts >= requiredHuts) && !isSelected;
             const disabled = !spot.available || !typeNeeded || typeFull;
-            return <button key={spot.id} type="button" title={`${spot.type === 'table' ? 'Table with umbrella' : 'Covered hut'} ${spot.number} - seats ${spot.capacity}`} aria-label={`${spot.type === 'table' ? 'Table with umbrella' : 'Covered hut'} ${spot.number}, capacity ${spot.capacity}${spot.available ? '' : ', unavailable'}`} disabled={disabled} onClick={() => toggleSpot(spot)} style={{ position: 'absolute', left: `${spot.x_percent}%`, top: `${spot.y_percent}%`, transform: 'translate(-50%, -50%)', width: 38, height: 38, borderRadius: '50%', border: isSelected ? '3px solid white' : '2px solid white', background: isSelected ? '#2563eb' : disabled ? '#94a3b8' : '#16a34a', color: 'white', fontWeight: 800, lineHeight: 1, cursor: disabled ? 'not-allowed' : 'pointer', boxShadow: isSelected ? '0 0 0 3px #2563eb' : '0 2px 5px rgba(0,0,0,.35)', opacity: disabled && !isSelected ? 0.72 : 1 }}>{spot.number}</button>;
+            
+            let hoverTitle = `${spot.type === 'table' ? 'Table with umbrella' : 'Covered hut'} ${spot.number} - seats ${spot.capacity}`;
+            if (!spot.available) {
+              hoverTitle += ` (Unavailable${spot.unavailableReason ? ` - ${spot.unavailableReason}` : ''})`;
+            }
+
+            return <button key={spot.id} type="button" title={hoverTitle} aria-label={hoverTitle} disabled={disabled} onClick={() => toggleSpot(spot)} style={{ position: 'absolute', left: `${spot.x_percent}%`, top: `${spot.y_percent}%`, transform: 'translate(-50%, -50%)', width: 38, height: 38, borderRadius: '50%', border: isSelected ? '3px solid white' : '2px solid white', background: isSelected ? '#2563eb' : disabled ? '#94a3b8' : '#16a34a', color: 'white', fontWeight: 800, lineHeight: 1, cursor: disabled ? 'not-allowed' : 'pointer', boxShadow: isSelected ? '0 0 0 3px #2563eb' : '0 2px 5px rgba(0,0,0,.35)', opacity: disabled && !isSelected ? 0.72 : 1 }}>{spot.number}</button>;
           })}
         </div>
       </div>
