@@ -39,6 +39,7 @@ export default function Home() {
   const [voucherRemainingBalance, setVoucherRemainingBalance] = useState<number | null>(null);
   const [selectedSpotIds, setSelectedSpotIds] = useState<string[]>([]);
   const [seatingDone, setSeatingDone] = useState(false);
+  const [serverAmountDue, setServerAmountDue] = useState<number | null>(null);
   const paymentPollingActive = useRef(false);
   const idempotencyKey = useRef('');
 
@@ -57,6 +58,7 @@ export default function Home() {
     setPaying(false);
     setPaymentFailure(null);
     setAppliedVoucher(null);
+    setServerAmountDue(null);
     setVoucherRemainingBalance(null);
     setSelectedSpotIds([]);
     setSeatingDone(false);
@@ -91,6 +93,11 @@ export default function Home() {
           if (!cancelled && (data.paymentState === 'FAILED' || data.paymentState === 'EXPIRED')) {
             paymentPollingActive.current = false;
             setPaymentFailure({ expired: data.paymentState === 'EXPIRED', message: data.paymentState === 'EXPIRED' ? 'The payment window expired before PayFast confirmed your payment.' : 'PayFast reported that the payment did not complete.' });
+            // Restore booking details from the server (client state is lost
+            // after the PayFast redirect) so the retry flow works correctly.
+            if (data.amountDue && Number(data.amountDue) > 0) setServerAmountDue(Number(data.amountDue));
+            if (data.customer) setCustomerDetails({ firstName: data.customer.firstName || '', lastName: data.customer.lastName || '', email: data.customer.email || '', phone: data.customer.phone || '' });
+            if (data.visitDate) setSelectedDate(data.visitDate);
             setStep(9);
             return;
           }
@@ -110,6 +117,15 @@ export default function Home() {
         if (!cancelled) {
           paymentPollingActive.current = false;
           setPaymentFailure({ expired: false, message: 'We could not confirm the payment within five minutes.' });
+          // Fetch booking details so the retry flow has the correct amount and customer info.
+          fetch(`/api/bookings/status?reference=${encodeURIComponent(returnedReference)}`, { cache: 'no-store', headers: { 'ngrok-skip-browser-warning': '1' } })
+            .then(r => r.json())
+            .then(data => {
+              if (data.amountDue && Number(data.amountDue) > 0) setServerAmountDue(Number(data.amountDue));
+              if (data.customer) setCustomerDetails({ firstName: data.customer.firstName || '', lastName: data.customer.lastName || '', email: data.customer.email || '', phone: data.customer.phone || '' });
+              if (data.visitDate) setSelectedDate(data.visitDate);
+            })
+            .catch(() => {});
           setStep(9);
         }
       }, 5 * 60 * 1000);
@@ -125,6 +141,33 @@ export default function Home() {
       if (returnedReference) setReference(returnedReference);
       setPaymentFailure({ expired: false, message: 'The PayFast payment was cancelled before it was completed.' });
       setStep(9);
+      // Fetch the real amount due and customer details from the server so that
+      // the retry flow shows the correct total and has the customer info needed
+      // for PayFast / EFT emails (all client state is lost after the redirect).
+      if (returnedReference) {
+        fetch(`/api/bookings/status?reference=${encodeURIComponent(returnedReference)}`, {
+          cache: 'no-store',
+          headers: { 'ngrok-skip-browser-warning': '1' },
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.amountDue && Number(data.amountDue) > 0) {
+              setServerAmountDue(Number(data.amountDue));
+            }
+            if (data.customer) {
+              setCustomerDetails({
+                firstName: data.customer.firstName || '',
+                lastName: data.customer.lastName || '',
+                email: data.customer.email || '',
+                phone: data.customer.phone || '',
+              });
+            }
+            if (data.visitDate) {
+              setSelectedDate(data.visitDate);
+            }
+          })
+          .catch(() => { /* non-critical – PayFast generate will still use the DB values */ });
+      }
     }
   }, []);
 
@@ -188,7 +231,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reference,
-          totalAmount: appliedVoucher?.amountDue ?? totalAmount,
+          totalAmount: appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount,
           name_first: customerDetails.firstName,
           name_last: customerDetails.lastName,
           email_address: customerDetails.email
@@ -233,7 +276,7 @@ export default function Home() {
           email: customerDetails.email,
           name: customerDetails.firstName,
           reference: reference,
-          totalAmount: appliedVoucher?.amountDue ?? totalAmount,
+          totalAmount: appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount,
           visitDate: selectedDate,
         })
       });
@@ -307,7 +350,7 @@ export default function Home() {
       {step === 5 && (
         <PaymentSelection 
           reference={reference}
-          total={appliedVoucher?.amountDue ?? totalAmount}
+          total={appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount}
           onPayFast={handlePayFast}
           onManualEFT={handleManualEFT}
           onVoucherComplete={() => setStep(7)}
@@ -323,7 +366,7 @@ export default function Home() {
             <p style={{ marginTop: '0.5rem' }}>After making payment, use the upload link in that email to submit your proof of payment. Your tickets will only be emailed after our team approves the proof.</p>
           </div>
           <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Your booking reference is: <strong>{reference}</strong></p>
-          <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Please transfer <strong>R {appliedVoucher?.amountDue ?? totalAmount}</strong> to the following account:</p>
+          <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Please transfer <strong>R {appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount}</strong> to the following account:</p>
           
           <div style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '1px solid var(--border-color)', fontSize: '1.1rem' }}>
             <p style={{ marginBottom: '0.5rem' }}><strong>Bank:</strong> FNB</p>
