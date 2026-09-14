@@ -32,7 +32,7 @@ export default function UploadProof() {
       });
       const data = await res.json();
       if (data.success) {
-        setStatus('Success! Your proof of payment has been uploaded and is pending review by our team.');
+        setStatus('Success! Your proof of payment has been uploaded and is pending review by our team. Once approved, tickets will automatically be sent to your email. Make sure to check your spam folder.');
       } else {
         setStatus(`Error: ${data.error}`);
       }

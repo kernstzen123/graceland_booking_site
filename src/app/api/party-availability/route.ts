@@ -19,7 +19,10 @@ export async function GET(request: Request) {
     })
     .map(item => typeof item.metadata?.partySlot === 'string' ? item.metadata.partySlot : null)
     .filter((slot): slot is string => Boolean(slot));
-  const availableSlots = slots.filter(slot => !bookedSlots.includes(slot));
+  const availableSlots = slots.filter(slot => {
+    const bookedCount = bookedSlots.filter(s => s === slot).length;
+    return bookedCount < 3;
+  });
   let nextDate = availableSlots.length ? date : null;
   if (!nextDate) {
     const cursor = new Date(`${date}T00:00:00Z`);
@@ -32,8 +35,15 @@ export async function GET(request: Request) {
           const booking = Array.isArray(item.bookings) ? item.bookings[0] : item.bookings;
           return booking?.visit_date === candidate;
         })
-        .map(item => typeof item.metadata?.partySlot === 'string' ? item.metadata.partySlot : null);
-      if (candidateSlots.some(slot => !candidateBooked.includes(slot))) { nextDate = candidate; break; }
+        .map(item => typeof item.metadata?.partySlot === 'string' ? item.metadata.partySlot : null)
+        .filter(Boolean);
+      
+      const hasAvailableSlot = candidateSlots.some(slot => {
+        const bookedCount = candidateBooked.filter(s => s === slot).length;
+        return bookedCount < 3;
+      });
+
+      if (hasAvailableSlot) { nextDate = candidate; break; }
     }
   }
   return NextResponse.json({ date, slots, bookedSlots, availableSlots, nextAvailableDate: nextDate });

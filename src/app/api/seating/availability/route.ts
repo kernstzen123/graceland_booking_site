@@ -58,16 +58,19 @@ export async function GET(request: Request) {
           }
         } else {
           // Normal day visitor booking
-          if (isPartyHut && bookingsForSpot.length > 0) {
-            // Party huts are completely unavailable to day visitors if ANY parties are booked
+          if (isPartyHut) {
+            // Party huts are strictly exclusive to birthday parties and can NEVER be booked by day visitors
             available = false;
-            // Find the latest time slot
-            const endTimes = bookingsForSpot.map(b => b.party_slot ? b.party_slot.split('–')[1] : '').filter(Boolean).sort();
-            const latestTime = endTimes[endTimes.length - 1];
-            if (latestTime) {
-              unavailableReason = `Reserved for a party until ${latestTime}.`;
+            if (bookingsForSpot.length > 0) {
+              const endTimes = bookingsForSpot.map(b => b.party_slot ? b.party_slot.split('–')[1] : '').filter(Boolean).sort();
+              const latestTime = endTimes[endTimes.length - 1];
+              if (latestTime) {
+                unavailableReason = `Reserved for a party until ${latestTime}.`;
+              } else {
+                unavailableReason = 'Reserved.';
+              }
             } else {
-              unavailableReason = 'Reserved.';
+              unavailableReason = 'Reserved for birthday parties.';
             }
           } else if (bookingsForSpot.length > 0) {
             // Non-party hut booked by someone
