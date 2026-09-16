@@ -64,8 +64,8 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
   };
 
   const groupSize = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('adult') || id.includes('pensioner') || id.includes('infant') || id.includes('toddler') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.adults + party.additionalChildren : 0);
-  const maxHuts = groupSize > 24 ? 2 : groupSize > 8 ? 1 : 0;
-  const maxTables = Math.ceil(Math.max(1, groupSize) / 6);
+  const maxHuts = groupSize >= 12 ? 2 : groupSize >= 6 ? 1 : 0;
+  const maxTables = Math.max(1, Math.ceil(groupSize / 6));
   const paidHuts = Number(selections['hut-covered'] || 0);
 
   const continueToDetails = () => {
@@ -121,7 +121,7 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
                   </div>
                 </div>
               ))}
-              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any sized group can book a table for 6 (1 table per 6 people). Covered huts require more than 8 people; groups of more than 24 may select 2 huts. Birthday parties include one selectable hut. <strong>Please note: tables/huts may become available at any time during the day due to parties.</strong></p>}
+              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any group can book a shaded table (seating for 6). Covered huts require a minimum of 6 people; groups of 12 or more may select 2 huts. Birthday parties include one selectable hut. <strong>Please note: tables/huts may become available at any time during the day due to parties.</strong></p>}
             </div>
           </div>
         ))}

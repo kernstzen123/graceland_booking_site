@@ -89,9 +89,10 @@ export async function POST(request: Request) {
     const selectedTableCount = Number(selections['hut-shaded'] || 0);
     const selectedPaidHutCount = Number(selections['hut-covered'] || 0);
     const requiredHutCount = selectedPaidHutCount + (partyDetails?.enabled ? 1 : 0);
-    const maximumHutCount = peopleCount > 24 ? 2 : peopleCount > 8 ? 1 : 0;
-    const maximumTableCount = Math.ceil(Math.max(1, peopleCount) / 6);
-    if (selectedPaidHutCount > 0 && peopleCount <= 8) throw new Error('Covered huts are available for groups of more than 8 people.');
+    const maximumHutCount = peopleCount >= 12 ? 2 : peopleCount >= 6 ? 1 : 0;
+    const maximumTableCount = Math.max(1, Math.ceil(peopleCount / 6));
+    if (requiredHutCount > 0 && peopleCount < 6) throw new Error('Covered huts require a minimum of 6 people.');
+    if (requiredHutCount > 1 && peopleCount < 12) throw new Error('Booking 2 huts requires a minimum of 12 people.');
     if (requiredHutCount > maximumHutCount) throw new Error(`This group can select a maximum of ${maximumHutCount} hut${maximumHutCount === 1 ? '' : 's'}.`);
     if (selectedTableCount > maximumTableCount) throw new Error(`This group can select a maximum of ${maximumTableCount} table${maximumTableCount === 1 ? '' : 's'}.`);
     const requestedSpotIds = Array.isArray(spotIds) ? spotIds.filter(value => typeof value === 'string') : [];
