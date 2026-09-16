@@ -123,6 +123,11 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
 
   const escapeHtml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+
+  // Extract the visit date from the first ticket for the email header
+  const rawVisitDate = String(tickets[0]?.visit_date || '');
+  const formattedVisitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : '';
+
   const ticketsHtml = tickets.map((ticket, index) => {
     const scanUrl = `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(scanUrl)}`;
@@ -137,9 +142,11 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     </div>`;
   }).join('');
   const voucherNotice = voucherRemaining !== null ? `<p style="background:#eff6ff;border:1px solid #93c5fd;padding:12px;border-radius:6px;color:#1d4ed8"><strong>Voucher balance remaining:</strong> R ${voucherRemaining.toFixed(2)}. Vouchers never expire and are valid for ticket purchases only.</p>` : '';
+  const visitDateBanner = formattedVisitDate ? `<div style="background:#f0fdf4;border:2px solid #22c55e;border-radius:8px;padding:16px;margin-bottom:20px;text-align:center"><p style="margin:0;font-size:1.15rem;color:#15803d;font-weight:700">📅 Visit Date: ${escapeHtml(formattedVisitDate)}</p></div>` : '';
   const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#0f172a">
     <h2 style="color:#0EA5E9">Your Graceland Venues Tickets</h2><p>Hi ${escapeHtml(name)},</p>${voucherNotice}
     <p>Your payment was successful and your booking is confirmed.</p>
+    ${visitDateBanner}
     <p>Each person requires their own ticket to enter.</p>${ticketsHtml}<p>We look forward to seeing you!</p>
   </div>`;
   const attachments = await Promise.all(tickets.map((ticket, index) => createTicketPdf(ticket, appUrl, index)));
@@ -155,7 +162,7 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
         body: JSON.stringify({
           from: `Graceland Venues <${fromEmail}>`,
           to: [email],
-          subject: 'Your Tickets - Graceland Venues',
+          subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
           html,
           attachments: attachments.map(({ filename, content }) => ({
             filename,
@@ -191,7 +198,7 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     await transporter.sendMail({
       from: `Graceland Venues <${fromEmail}>`,
       to: email,
-      subject: 'Your Tickets - Graceland Venues',
+      subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
       html,
       attachments: attachments.map(({ filename, content }) => ({ filename, content })),
     });
@@ -204,7 +211,8 @@ async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, 
   const ticketUid = String(ticket.ticket_uid || `ticket-${index + 1}`);
   const displayName = String(ticket.display_name || 'Entrance Ticket');
   const attendeeName = String(ticket.attendee_name || '');
-  const visitDate = String(ticket.visit_date || 'See booking confirmation');
+  const rawVisitDate = String(ticket.visit_date || '');
+  const visitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : 'See booking confirmation';
   const scanUrl = `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
   const qrBuffer = await QRCode.toBuffer(scanUrl, { type: 'png', width: 220, margin: 1 });
 
@@ -215,6 +223,23 @@ async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, 
   const primary = rgb(14 / 255, 165 / 255, 233 / 255);
   const dark = rgb(15 / 255, 23 / 255, 42 / 255);
   const muted = rgb(100 / 255, 116 / 255, 139 / 255);
+  const green = rgb(21 / 255, 128 / 255, 61 / 255);
+
+  // --- Fixed bottom-up layout for QR code and footer ---
+  // This ensures these elements never collide with the top-down text.
+  const footerY = 80;
+  page.drawText('This ticket is valid for one person and may only be used once.', { x: 115, y: footerY, size: 10, font: regular, color: muted });
+
+  const scanInstructionY = 245;
+  page.drawText('Present this QR code at the entrance scanner.', { x: 145, y: scanInstructionY, size: 13, font: regular, color: dark });
+
+  const qrY = 275;
+  const qrImage = await document.embedPng(qrBuffer);
+  page.drawImage(qrImage, { x: 187, y: qrY, width: 220, height: 220 });
+
+  // --- Top-down layout for ticket info ---
+  // The QR zone starts at qrY + 220 = 495, so text must stay above that.
+  const qrZoneTop = qrY + 220 + 15; // 510 — safe boundary
 
   page.drawRectangle({ x: 40, y: 42, width: 515, height: 758, borderColor: primary, borderWidth: 2 });
   page.drawText('GRACELAND VENUES', { x: 75, y: 720, size: 24, font: bold, color: primary });
@@ -222,12 +247,18 @@ async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, 
 
   let nextY = 660;
 
+  // Visit date — displayed prominently at the top so it's never hidden
+  page.drawText(`Visit Date: ${visitDate}`, { x: 75, y: nextY, size: 16, font: bold, color: green });
+  nextY -= 30;
+
   // Attendee name (prominent, if available)
   if (attendeeName) {
     const nameLines = wrapPdfText(attendeeName, bold, 445, 22, 2);
     nameLines.forEach((line) => {
-      page.drawText(line, { x: 75, y: nextY, size: 22, font: bold, color: dark });
-      nextY -= 28;
+      if (nextY > qrZoneTop) {
+        page.drawText(line, { x: 75, y: nextY, size: 22, font: bold, color: dark });
+        nextY -= 28;
+      }
     });
     nextY -= 4;
   }
@@ -236,21 +267,31 @@ async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, 
   const titleSize = 18;
   const titleLines = wrapPdfText(displayName, bold, 445, titleSize, 3);
   titleLines.forEach((line) => {
-    page.drawText(line, { x: 75, y: nextY, size: titleSize, font: bold, color: primary });
-    nextY -= 23;
+    if (nextY > qrZoneTop) {
+      page.drawText(line, { x: 75, y: nextY, size: titleSize, font: bold, color: primary });
+      nextY -= 23;
+    }
   });
 
   nextY -= 10;
-  page.drawText(`Ticket ID: ${ticketUid}`, { x: 75, y: nextY, size: 13, font: regular, color: muted });
-  page.drawText(`Visit date: ${visitDate}`, { x: 75, y: nextY - 22, size: 13, font: regular, color: muted });
-  const qrImage = await document.embedPng(qrBuffer);
-  page.drawImage(qrImage, { x: 187, y: 335, width: 220, height: 220 });
-  page.drawText('Present this QR code at the entrance scanner.', { x: 145, y: 280, size: 13, font: regular, color: dark });
-  page.drawText('This ticket is valid for one person and may only be used once.', { x: 115, y: 115, size: 10, font: regular, color: muted });
+  if (nextY > qrZoneTop) {
+    page.drawText(`Ticket ID: ${ticketUid}`, { x: 75, y: nextY, size: 13, font: regular, color: muted });
+  }
 
   const content = Buffer.from(await document.save());
 
   return { filename: `${ticketUid}.pdf`, content };
+}
+
+function formatVisitDate(dateStr: string): string {
+  // Parse as local date (avoid timezone shift by splitting manually)
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  if (isNaN(date.getTime())) return dateStr;
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 function wrapPdfText(text: string, font: Awaited<ReturnType<PDFDocument['embedFont']>>, maxWidth: number, size: number, maxLines: number) {
