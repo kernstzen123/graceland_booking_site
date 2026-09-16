@@ -54,7 +54,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     try {
       const response = await fetch('/api/admin/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       const data = await response.json();
-      if (!response.ok) { setError(data.error || 'Staff access is required'); await supabaseBrowser.auth.signOut(); return; }
+      if (!response.ok) {
+        // On the set-password page, don't sign out — the user may be setting
+        // their password for the first time before their role check succeeds.
+        if (pathname !== '/admin/set-password') {
+          setError(data.error || 'Staff access is required');
+          await supabaseBrowser.auth.signOut();
+        }
+        return;
+      }
       setRole(data.role);
       // Cache session for offline use
       try {
@@ -99,6 +107,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const logoutButton = session ? <button onClick={signOut} style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 10, padding: '0.55rem 0.8rem', background: 'white', border: '1px solid var(--border-color)', borderRadius: 8, cursor: 'pointer' }}>Log out</button> : null;
 
   if (loading) return <main className="container" style={{ padding: '4rem 1rem' }}>Loading staff portal…</main>;
+
+  // Allow the set-password page to render even without a role — the invited
+  // user has a valid Supabase session but may not pass the role check yet.
+  if (pathname === '/admin/set-password' && session) {
+    return <>{children}{logoutButton}</>;
+  }
+
   if (!session || !role) return (
     <>{logoutButton}<main className="container" style={{ padding: '4rem 1rem' }}>
       <div className="card" style={{ maxWidth: 430, margin: '0 auto' }}>
