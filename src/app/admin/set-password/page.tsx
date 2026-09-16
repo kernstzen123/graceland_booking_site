@@ -17,14 +17,24 @@ export default function SetPassword() {
     let active = true;
 
     async function init() {
-      // 1. Check if Supabase sent a PKCE code in the URL query string
+      // 1. Check for errors in the URL hash (common if an email scanner consumed the link)
+      if (typeof window !== 'undefined' && window.location.hash) {
+        const hashParams = new URLSearchParams(window.location.hash.substring(1));
+        const hashError = hashParams.get('error_description') || hashParams.get('error');
+        if (hashError) {
+          if (active) setMessage(`Link error: ${hashError.replace(/\+/g, ' ')} (Try generating a new invite)`);
+          return;
+        }
+      }
+
+      // 2. Check if Supabase sent a PKCE code in the URL query string
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
       
       if (code) {
         const { error } = await supabaseBrowser.auth.exchangeCodeForSession(code);
         if (error) {
-          if (active) setMessage('This invitation is invalid or has expired. Please ask an administrator to send a new invite.');
+          if (active) setMessage(`Code exchange error: ${error.message}`);
           return; // Stop here if exchange failed
         }
         
@@ -32,7 +42,7 @@ export default function SetPassword() {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      // 2. Try to pick up tokens from the URL hash (implicit flow fallback) or existing session
+      // 3. Try to pick up tokens from the URL hash (implicit flow fallback) or existing session
       const { data } = await supabaseBrowser.auth.getSession();
       if (!active) return;
 
@@ -52,10 +62,19 @@ export default function SetPassword() {
       }
     });
 
-    // If no session appears within 4 seconds, show an expiry message
+    // If no session appears within 4 seconds, and we haven't shown a specific error yet, show expiry
     const timeout = setTimeout(() => {
-      if (active && !ready) {
-        setMessage('This invitation is invalid or has expired. Please ask an administrator to send a new invite.');
+      if (active) {
+        setReady((currentReady) => {
+          if (!currentReady) {
+            setMessage((currentMsg) => 
+              currentMsg === 'Checking your invitation…' 
+                ? 'This invitation is invalid or has expired. Please ask an administrator to send a new invite.' 
+                : currentMsg
+            );
+          }
+          return currentReady;
+        });
       }
     }, 4000);
 
