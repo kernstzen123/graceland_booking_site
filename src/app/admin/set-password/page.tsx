@@ -17,9 +17,22 @@ export default function SetPassword() {
     let active = true;
 
     async function init() {
-      // First, try to pick up tokens from the URL hash (implicit flow fallback).
-      // The Supabase browser client does this automatically on creation, but
-      // we listen for the resulting auth state change to be sure.
+      // 1. Check if Supabase sent a PKCE code in the URL query string
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      
+      if (code) {
+        const { error } = await supabaseBrowser.auth.exchangeCodeForSession(code);
+        if (error) {
+          if (active) setMessage('This invitation is invalid or has expired. Please ask an administrator to send a new invite.');
+          return; // Stop here if exchange failed
+        }
+        
+        // Remove the code from the URL so it doesn't get reused if the user refreshes
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      // 2. Try to pick up tokens from the URL hash (implicit flow fallback) or existing session
       const { data } = await supabaseBrowser.auth.getSession();
       if (!active) return;
 
@@ -28,9 +41,6 @@ export default function SetPassword() {
         setMessage('Create a password for your staff account.');
         return;
       }
-
-      // If no session yet, the page may have been reached via a direct link
-      // or the callback may still be processing. Wait for onAuthStateChange.
     }
 
     init();
