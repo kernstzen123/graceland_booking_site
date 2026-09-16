@@ -62,7 +62,7 @@ export async function POST(request: Request) {
       const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
         type: existingAccount ? 'recovery' : 'invite',
         email: authUser.user.email,
-        options: { redirectTo: `${appUrl()}/auth/callback?next=/admin/set-password` },
+        options: { redirectTo: `${appUrl()}/admin/set-password` },
       });
       if (linkError || !linkData.properties?.action_link) throw linkError || new Error('Activation link could not be generated');
       await sendActivationEmail(authUser.user.email, staff.display_name || authUser.user.user_metadata?.display_name || '', linkData.properties.action_link, existingAccount);
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
       const existingUser = users.users.find(candidate => candidate.email?.toLowerCase() === email);
       if (existingUser) invitedUserId = existingUser.id;
       else {
-        const { data: invite, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, { data: { display_name: name }, redirectTo: `${appUrl()}/auth/callback?next=/admin/set-password` });
+        const { data: invite, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, { data: { display_name: name }, redirectTo: `${appUrl()}/admin/set-password` });
         if (inviteError || !invite.user) throw inviteError || new Error('Invite could not be sent');
         invitedUserId = invite.user.id;
       }

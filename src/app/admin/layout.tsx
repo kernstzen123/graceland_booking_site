@@ -108,9 +108,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (loading) return <main className="container" style={{ padding: '4rem 1rem' }}>Loading staff portal…</main>;
 
-  // Allow the set-password page to render even without a role — the invited
-  // user has a valid Supabase session but may not pass the role check yet.
-  if (pathname === '/admin/set-password' && session) {
+  // Allow the set-password page to render unconditionally — the invited
+  // user may not have a session yet (tokens are in the URL hash) and won't have a role.
+  if (pathname === '/admin/set-password') {
     return <>{children}{logoutButton}</>;
   }
 
