@@ -104,18 +104,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     window.location.assign('/');
   };
 
-  const logoutButton = session ? <button onClick={signOut} style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 10, padding: '0.55rem 0.8rem', background: 'white', border: '1px solid var(--border-color)', borderRadius: 8, cursor: 'pointer' }}>Log out</button> : null;
+
 
   if (loading) return <main className="container" style={{ padding: '4rem 1rem' }}>Loading staff portal…</main>;
 
   // Allow the set-password page to render unconditionally — the invited
   // user may not have a session yet (tokens are in the URL hash) and won't have a role.
   if (pathname === '/admin/set-password') {
-    return <>{children}{logoutButton}</>;
+    return <>{children}</>;
   }
 
   if (!session || !role) return (
-    <>{logoutButton}<main className="container" style={{ padding: '4rem 1rem' }}>
+    <><main className="container" style={{ padding: '4rem 1rem' }}>
       <div className="card" style={{ maxWidth: 430, margin: '0 auto' }}>
         <h1 style={{ color: 'var(--primary)', marginBottom: '0.5rem' }}>Staff Sign In</h1>
         <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Use your Supabase staff account to access the admin portal.</p>
@@ -130,8 +130,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     </main></>
   );
 
-  if (role === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/set-password') return <>{logoutButton}<main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role only has access to the ticket scanner.</p><a className="btn btn-primary" href="/admin/scanner">Open scanner</a></div></main></>;
-  if (pathname === '/admin/staff' && role !== 'ADMIN') return <>{logoutButton}<main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Admin access required</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Only administrators can manage staff accounts.</p></div></main></>;
+  if (role === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/set-password') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role only has access to the ticket scanner.</p><a className="btn btn-primary" href="/admin/scanner">Open scanner</a></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
+  if (pathname === '/admin/staff' && role !== 'ADMIN') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Admin access required</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Only administrators can manage staff accounts.</p></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
 
   return <>
     {offlineMode && (
@@ -146,8 +146,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         ⚡ Offline mode — using cached credentials
       </div>
     )}
-    {children}
-    {role !== 'SCANNER' && <div style={{ position: 'fixed', left: 16, bottom: 16, zIndex: 10, display: 'flex', gap: 10, flexWrap: 'wrap', maxWidth: 'calc(100vw - 90px)' }}>{role === 'ADMIN' && <a href="/admin/staff" style={{ padding: '0.55rem 0.8rem', background: 'white', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--primary)', fontWeight: 700 }}>Staff management</a>}<a href="/admin/vouchers" style={{ padding: '0.55rem 0.8rem', background: 'white', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--primary)', fontWeight: 700 }}>Vouchers</a><a href="/admin/notifications" style={{ padding: '0.55rem 0.8rem', background: 'white', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--primary)', fontWeight: 700 }}>Email retries</a></div>}
-    {logoutButton}
+    <div className="admin-content-pad">
+      {children}
+    </div>
+    {role !== 'SCANNER' && (
+      <div className="admin-bottom-nav">
+        <a href="/admin" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Dashboard</a>
+        {role === 'ADMIN' && <a href="/admin/staff" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Staff</a>}
+        <a href="/admin/vouchers" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Vouchers</a>
+        <a href="/admin/notifications" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Email retries</a>
+        <div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div>
+      </div>
+    )}
+    {role === 'SCANNER' && (
+      <div className="admin-bottom-nav">
+        <div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div>
+      </div>
+    )}
   </>;
 }

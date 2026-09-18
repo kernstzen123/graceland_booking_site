@@ -80,3 +80,159 @@ button {
   background-color: var(--primary-hover);
   transform: translateY(-1px);
 }
+
+/* ── Admin mobile responsive ─────────────────────────────────────────────── */
+
+/* Bottom navigation bar for admin */
+.admin-bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: var(--white);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-bottom-nav a,
+.admin-bottom-nav button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Push page content above the fixed bottom bar */
+.admin-content-pad {
+  padding-bottom: 70px;
+}
+
+/* Admin page header — stacks on mobile */
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+/* Admin nav buttons row */
+.admin-nav {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Stat cards grid */
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* Two-panel layout (list + detail) */
+.admin-panels {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-panels.has-detail {
+  grid-template-columns: minmax(280px, 0.8fr) minmax(320px, 1.2fr);
+}
+
+/* Table wrapper with horizontal scroll */
+.admin-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  /* Smaller cards on mobile */
+  .card {
+    padding: 1rem;
+    border-radius: 0.5rem;
+  }
+
+  /* Compact buttons */
+  .btn {
+    padding: 0.6rem 1rem;
+    font-size: 0.85rem;
+  }
+
+  /* Smaller headings */
+  h1 { font-size: 1.5rem !important; }
+  h2 { font-size: 1.15rem !important; }
+
+  /* Stack admin header vertically */
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Nav buttons: scrollable row */
+  .admin-nav {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+
+  .admin-nav .btn {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  /* Stat cards: 2 per row */
+  .admin-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+
+  .admin-stats .card strong {
+    font-size: 1.6rem !important;
+  }
+
+  /* Two-panel layout stacks on mobile */
+  .admin-panels.has-detail {
+    grid-template-columns: 1fr;
+  }
+
+  /* Bottom nav compact */
+  .admin-bottom-nav {
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  .admin-bottom-nav a,
+  .admin-bottom-nav button {
+    padding: 0.45rem 0.65rem !important;
+    font-size: 0.75rem !important;
+    border-radius: 6px !important;
+  }
+
+  /* Table cells compact */
+  .admin-table-wrap table th,
+  .admin-table-wrap table td {
+    padding: 0.5rem !important;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .admin-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-stats .card strong {
+    font-size: 1.4rem !important;
+  }
+}
+

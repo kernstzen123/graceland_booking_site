@@ -94,11 +94,11 @@ export default function ConflictsPage() {
 
   return (
     <main className="container" style={{ padding: '2rem 1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
+      <div className="admin-header" style={{ marginBottom: '2rem' }}>
         <div>
           <p style={{ color: 'var(--primary)', fontWeight: 700 }}>STAFF OPERATIONS</p>
-          <h1 style={{ fontSize: '2rem' }}>Duplicate Check-in Alerts</h1>
-          <p style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+          <h1>Duplicate Check-in Alerts</h1>
+          <p style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: '0.9rem' }}>
             These tickets were scanned on multiple offline devices before sync.
           </p>
         </div>
@@ -170,7 +170,7 @@ export default function ConflictsPage() {
 
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
                 gap: '1rem',
                 marginTop: '1rem',
                 padding: '0.75rem',
