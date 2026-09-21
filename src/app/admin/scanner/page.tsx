@@ -566,7 +566,7 @@ export default function Scanner() {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <main style={{ minHeight: '100vh', background: '#0f172a', color: 'white', padding: '1rem' }}>
+    <main style={{ minHeight: '100vh', background: '#0f172a', color: 'white', padding: '1rem', paddingBottom: '20vh' }}>
       <div style={{ maxWidth: 620, margin: '0 auto' }}>
 
         {/* Header */}
@@ -654,6 +654,94 @@ export default function Scanner() {
           </div>
         </div>
 
+        {/* Search by name fallback (Moved up for mobile visibility) */}
+        <div style={{ background: '#1e293b', padding: '1rem', borderRadius: 12, marginTop: '1rem', marginBottom: '0.75rem' }}>
+          <button
+            onClick={() => { setShowSearch(!showSearch); setSearchQuery(''); setSearchResults([]); }}
+            style={{
+              width: '100%',
+              textAlign: 'left',
+              background: 'none',
+              color: '#94a3b8',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              border: 'none',
+              padding: 0,
+            }}
+          >
+            Search name, booking, or ticket ID
+            <span style={{ fontSize: '1.2rem' }}>{showSearch ? '▲' : '▼'}</span>
+          </button>
+
+          {showSearch && (
+            <div style={{ marginTop: 12 }}>
+              <input
+                value={searchQuery}
+                onChange={e => handleSearch(e.target.value)}
+                placeholder="Type a name, BK-..., or TKT-..."
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: '#0f172a',
+                  color: 'white',
+                  marginBottom: 8,
+                }}
+                autoFocus
+              />
+              {searchResults.length > 0 && (
+                <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+                  {searchResults.map(ticket => (
+                    <button
+                      key={ticket.ticket_uid}
+                      onClick={() => checkInFromSearch(ticket)}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '10px 12px',
+                        marginBottom: 4,
+                        borderRadius: 8,
+                        background: ticket.status === 'USED' ? '#1c1917' : '#0f172a',
+                        color: ticket.status === 'USED' ? '#94a3b8' : 'white',
+                        border: `1px solid ${ticket.status === 'USED' ? '#374151' : '#1e40af'}`,
+                        cursor: 'pointer',
+                        display: 'block',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <strong>{ticket.customer_name}</strong>
+                        {ticket.status === 'USED' && (
+                          <span style={{ fontSize: '0.7rem', background: '#7f1d1d', padding: '2px 6px', borderRadius: 4 }}>
+                            SCANNED
+                          </span>
+                        )}
+                        {ticket.status === 'VALID' && (
+                          <span style={{ fontSize: '0.7rem', background: '#064e3b', padding: '2px 6px', borderRadius: 4 }}>
+                            VALID
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: 2 }}>
+                        {ticket.ticket_uid} · {ticket.package_name}
+                        {ticket.seating && ` · ${ticket.seating}`}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {searchQuery.trim().length >= 2 && searchResults.length === 0 && (
+                <p style={{ color: '#94a3b8', textAlign: 'center', padding: 8 }}>
+                  No matching tickets found
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Camera viewfinder */}
         <div style={{ position: 'relative', marginTop: '1rem' }}>
           <div
@@ -735,93 +823,6 @@ export default function Scanner() {
         </button>
 
 
-        {/* Search by name fallback */}
-        <div style={{ background: '#1e293b', padding: '1rem', borderRadius: 12, marginBottom: '0.75rem' }}>
-          <button
-            onClick={() => { setShowSearch(!showSearch); setSearchQuery(''); setSearchResults([]); }}
-            style={{
-              width: '100%',
-              textAlign: 'left',
-              background: 'none',
-              color: '#94a3b8',
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              border: 'none',
-              padding: 0,
-            }}
-          >
-            Search by guest name / reference
-            <span style={{ fontSize: '1.2rem' }}>{showSearch ? '▲' : '▼'}</span>
-          </button>
-
-          {showSearch && (
-            <div style={{ marginTop: 12 }}>
-              <input
-                value={searchQuery}
-                onChange={e => handleSearch(e.target.value)}
-                placeholder="Type a name or booking reference…"
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  borderRadius: 8,
-                  border: 'none',
-                  background: '#0f172a',
-                  color: 'white',
-                  marginBottom: 8,
-                }}
-                autoFocus
-              />
-              {searchResults.length > 0 && (
-                <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-                  {searchResults.map(ticket => (
-                    <button
-                      key={ticket.ticket_uid}
-                      onClick={() => checkInFromSearch(ticket)}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '10px 12px',
-                        marginBottom: 4,
-                        borderRadius: 8,
-                        background: ticket.status === 'USED' ? '#1c1917' : '#0f172a',
-                        color: ticket.status === 'USED' ? '#94a3b8' : 'white',
-                        border: `1px solid ${ticket.status === 'USED' ? '#374151' : '#1e40af'}`,
-                        cursor: 'pointer',
-                        display: 'block',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong>{ticket.customer_name}</strong>
-                        {ticket.status === 'USED' && (
-                          <span style={{ fontSize: '0.7rem', background: '#7f1d1d', padding: '2px 6px', borderRadius: 4 }}>
-                            SCANNED
-                          </span>
-                        )}
-                        {ticket.status === 'VALID' && (
-                          <span style={{ fontSize: '0.7rem', background: '#064e3b', padding: '2px 6px', borderRadius: 4 }}>
-                            VALID
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: 2 }}>
-                        {ticket.ticket_uid} · {ticket.package_name}
-                        {ticket.seating && ` · ${ticket.seating}`}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {searchQuery.trim().length >= 2 && searchResults.length === 0 && (
-                <p style={{ color: '#94a3b8', textAlign: 'center', padding: 8 }}>
-                  No matching guests found
-                </p>
-              )}
-            </div>
-          )}
-        </div>
 
         {/* Navigation */}
         <a
