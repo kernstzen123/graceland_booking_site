@@ -40,6 +40,12 @@ export async function POST(request: Request) {
       .from('payment_proofs')
       .insert({ booking_id: booking.id, file_url: uploadData.path, status: 'PENDING' });
     if (insertError) throw insertError;
+    // Hold the booking in PAYMENT_PENDING so capacity and seating are not released
+    // while staff review the proof. The capacity/seating queries always count
+    // PAYMENT_PENDING bookings regardless of expires_at.
+    if (booking.status === 'UNPAID') {
+      await supabase.from('bookings').update({ status: 'PAYMENT_PENDING' }).eq('id', booking.id);
+    }
     return NextResponse.json({ success: true, message: 'Uploaded successfully' });
   } catch (error: unknown) {
     console.error('Proof upload failed', error);

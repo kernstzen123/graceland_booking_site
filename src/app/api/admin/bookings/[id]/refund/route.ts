@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       await sendVoucherEmail({ bookingReference: credit.booking_reference, visitDate: credit.visit_date, customerEmail: credit.customer_email, customerName: credit.customer_name || 'Customer', creditCode: credit.credit_code, originalAmount: Number(credit.original_amount) });
     } catch (emailError) {
       emailSent = false;
-      await recordNotificationFailure('VOUCHER_ISSUED', credit.customer_email, credit.credit_id, emailError);
+      await recordNotificationFailure('booking_credit', 'VOUCHER_ISSUED', credit.customer_email, credit.credit_id, emailError);
     }
     return NextResponse.json({ success: true, emailSent, credit: { id: credit.credit_id, code: credit.credit_code, originalAmount: Number(credit.original_amount) }, message: emailSent ? 'Booking cancelled and voucher issued. Email sent.' : 'Booking cancelled and voucher issued. Email delivery failed and was queued for retry.' });
   } catch (error) {

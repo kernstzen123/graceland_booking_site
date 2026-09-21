@@ -29,7 +29,7 @@ export async function POST(request: Request) {
           emailsSent++;
         } catch (emailError) {
           emailSent = false;
-          await recordNotificationFailure('VOUCHER_ISSUED', credit.customer_email || '', credit.credit_id, emailError);
+          await recordNotificationFailure('booking_credit', 'VOUCHER_ISSUED', credit.customer_email || '', credit.credit_id, emailError);
         }
         await writeAudit(user.id, 'ISSUE_VOUCHER_REFUND_BULK', 'booking', booking.id, { credit_code: credit.credit_code, amount: credit.original_amount, date });
         succeeded.push({ bookingId: booking.id, code: credit.credit_code, emailSent });

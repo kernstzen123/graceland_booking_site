@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
+import { recordNotificationFailure } from '@/lib/voucher-email';
 
 function isValidSignature(params: URLSearchParams) {
   const received = params.get('signature');
@@ -26,7 +27,7 @@ async function verifyWithPayFast(params: URLSearchParams) {
   // The unsigned local simulator is deliberately supported only in development.
   if (!params.get('signature') && process.env.NODE_ENV !== 'production') return true;
   const processUrl = process.env.PAYFAST_URL || 'https://sandbox.payfast.co.za/eng/process';
-  const validationUrl = processUrl.replace(/\/eng\/process(?:\?.*)?\/?$/i, '/eng/query/validate');
+  const validationUrl = processUrl.replace(/\/eng\/process(?:\?.*)?\/?\$/i, '/eng/query/validate');
   const response = await fetch(validationUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/plain' },
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
 
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('id, total_amount, notes, customers(first_name, last_name, email)')
+      .select('id, total_amount, amount_due, notes, customers(first_name, last_name, email)')
       .eq('reference', reference)
       .single();
     if (bookingError || !booking) throw new Error(`Booking ${reference} was not found`);
@@ -64,13 +65,15 @@ export async function POST(request: Request) {
 
     // PayFast ITN notifications use amount_gross. Keep amount as a fallback
     // for the local development simulator and older integrations.
+    const expectedAmount = Number(booking.amount_due ?? booking.total_amount);
     const submittedAmount = params.get('amount_gross') || params.get('amount');
     const amount = submittedAmount
       ? Number(submittedAmount)
       : process.env.NODE_ENV !== 'production'
-        ? Number(booking.total_amount)
+        ? expectedAmount
         : Number.NaN;
-    if (!Number.isFinite(amount) || amount !== Number(booking.total_amount)) {
+    // Compare in whole cents to avoid floating-point mismatch
+    if (!Number.isFinite(amount) || Math.round(amount * 100) !== Math.round(expectedAmount * 100)) {
       return new NextResponse('Amount mismatch', { status: 400 });
     }
 
@@ -102,11 +105,24 @@ export async function POST(request: Request) {
     const customer = Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
     const email = customer?.email || params.get('email_address') || '';
     const name = [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || params.get('name_first') || 'Customer';
-    await generateTicketsAndSendEmail(booking.id, email, name);
-    const notes = booking.notes ? `${booking.notes}\nTICKETS_EMAIL_SENT` : 'TICKETS_EMAIL_SENT';
-    const { error: notesError } = await supabase.from('bookings').update({ notes }).eq('id', booking.id);
-    if (notesError) throw notesError;
-    console.log(`PayFast payment confirmed and tickets emailed for ${reference}`);
+
+    try {
+      await generateTicketsAndSendEmail(booking.id, email, name);
+      // Only write TICKETS_EMAIL_SENT after successful delivery
+      const notes = booking.notes ? `${booking.notes}\nTICKETS_EMAIL_SENT` : 'TICKETS_EMAIL_SENT';
+      const { error: notesError } = await supabase.from('bookings').update({ notes }).eq('id', booking.id);
+      if (notesError) throw notesError;
+      console.log(`PayFast payment confirmed and tickets emailed for ${reference}`);
+    } catch (emailError) {
+      // Email delivery failed — do NOT write TICKETS_EMAIL_SENT.
+      // Record the failure for admin visibility and return 500 so PayFast retries.
+      // Existing tickets are reused on retry (ticketing.ts checks for them first),
+      // and the payment row is protected by a unique constraint on provider_reference.
+      console.error(`Ticket email delivery failed for ${reference}`, emailError);
+      await recordNotificationFailure('booking', 'TICKETS_EMAIL_FAILED', email, booking.id, emailError);
+      return new NextResponse('Email delivery failed', { status: 500 });
+    }
+
     return new NextResponse('OK', { status: 200 });
   } catch (error) {
     console.error('PayFast webhook error', error);

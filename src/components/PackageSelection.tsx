@@ -1,32 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties';
+import { PACKAGE_GROUPS } from '@/lib/pricing';
 
-export const PACKAGES = [
-  {
-    category: 'DAY VISITOR — INCLUDING WATER ACTIVITIES', items: [
-      { id: 'day-water-infant', name: 'Children under 1', price: 0 },
-      { id: 'day-water-toddler', name: 'Toddlers 1–2', price: 110 },
-      { id: 'day-water-child', name: 'Children 3–17', price: 210 },
-      { id: 'day-water-adult', name: 'Adults', price: 230 },
-      { id: 'day-water-pensioner', name: 'Pensioners', price: 200 },
-    ]
-  },
-  {
-    category: 'DAY VISITOR — EXCLUDING WATER ACTIVITIES', items: [
-      { id: 'day-no-water-infant', name: 'Children under 1', price: 0 },
-      { id: 'day-no-water-toddler', name: 'Toddlers 1–2', price: 0 },
-      { id: 'day-no-water-child', name: 'Children 3–17', price: 100 },
-      { id: 'day-no-water-adult', name: 'Adults', price: 120 },
-      { id: 'day-no-water-pensioner', name: 'Pensioners', price: 100 },
-    ]
-  },
-  {
-    category: 'DAY VISITOR HUTS', items: [
-      { id: 'hut-covered', name: 'Covered Hut (Seating for 14-16)', price: 400 },
-      { id: 'hut-shaded', name: 'Shaded Table (Seating for 6)', price: 250 },
-    ]
-  }
-];
+export const PACKAGES = PACKAGE_GROUPS;
 
 interface PackageSelectionProps {
   selectedDate: string;

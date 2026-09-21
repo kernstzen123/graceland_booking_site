@@ -64,7 +64,7 @@ export async function POST(request: Request) {
       const credit = Array.isArray(result) ? result[0] : result;
       if (!credit) return NextResponse.json({ success: false, error: 'Voucher could not be issued' }, { status: 400 });
       let emailSent = true;
-      try { await sendVoucherEmail({ bookingReference: credit.booking_reference, visitDate: credit.visit_date, customerEmail: credit.customer_email || customer?.email || '', customerName: credit.customer_name || 'Customer', creditCode: credit.credit_code, originalAmount: Number(credit.original_amount) }); } catch (emailError) { emailSent = false; await recordNotificationFailure('VOUCHER_ISSUED', credit.customer_email || customer?.email || '', credit.credit_id, emailError); }
+      try { await sendVoucherEmail({ bookingReference: credit.booking_reference, visitDate: credit.visit_date, customerEmail: credit.customer_email || customer?.email || '', customerName: credit.customer_name || 'Customer', creditCode: credit.credit_code, originalAmount: Number(credit.original_amount) }); } catch (emailError) { emailSent = false; await recordNotificationFailure('booking_credit', 'VOUCHER_ISSUED', credit.customer_email || customer?.email || '', credit.credit_id, emailError); }
       await writeAudit(user.id, 'ISSUE_VOUCHER_REFUND', 'booking', booking.id, { reference: booking.reference, reason: reason || null, amount: credit.original_amount, credit_code: credit.credit_code });
       return NextResponse.json({ success: true, emailSent, message: emailSent ? 'Booking cancelled and voucher issued. Email sent.' : 'Booking cancelled and voucher issued. Email queued for retry.' });
     }

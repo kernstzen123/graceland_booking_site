@@ -19,10 +19,22 @@ export default function BookingsAdmin() {
     if (type === 'delete' && !window.confirm(`Permanently delete booking ${selected.reference}?`)) return;
     if (type === 'refund' && !window.confirm(`Cancel ${selected.reference} and issue a voucher for R ${Number(selected.total_amount).toFixed(2)}? All valid tickets will be invalidated.`)) return;
     if (type === 'mark_paid' && !window.confirm(`Mark booking ${selected.reference} as paid and issue tickets?`)) return;
-    setBusy(type); setMessage(type === 'refund' ? 'Issuing voucher refund... please wait.' : 'Processing booking action... please wait.');
+    if (type === 'resend_tickets' && !window.confirm(`Resend tickets for ${selected.reference} to the customer's email?`)) return;
+    setBusy(type); setMessage(type === 'refund' ? 'Issuing voucher refund... please wait.' : type === 'resend_tickets' ? 'Resending tickets...' : 'Processing booking action... please wait.');
     try {
-      const endpoint = type === 'refund' ? `/api/admin/bookings/${selected.id}/refund` : '/api/admin/bookings';
-      const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: type === 'refund' ? undefined : JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason: window.prompt('Reason (optional):') || null }) });
+      let endpoint: string;
+      let body: string | undefined;
+      if (type === 'resend_tickets') {
+        endpoint = `/api/admin/bookings/${selected.id}/resend-tickets`;
+        body = undefined;
+      } else if (type === 'refund') {
+        endpoint = `/api/admin/bookings/${selected.id}/refund`;
+        body = undefined;
+      } else {
+        endpoint = '/api/admin/bookings';
+        body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason: window.prompt('Reason (optional):') || null });
+      }
+      const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body });
       const data = await response.json(); setMessage(data.message || data.error); if (!response.ok) return;
       if (type === 'delete') setSelected(null); await load();
       if (type === 'resend_tickets') showToast('Tickets resent successfully');

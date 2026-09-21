@@ -13,6 +13,14 @@ export async function POST(request: Request) {
     const customer = Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
     const payableAmount = Number(booking.amount_due ?? booking.total_amount);
     if (!Number.isFinite(payableAmount) || payableAmount <= 0) return NextResponse.json({ success: false, error: 'This booking has no amount due' }, { status: 400 });
+    // Extend the hold window for EFT bookings so capacity is not released
+    // before the customer has time to pay and upload proof.
+    if (booking.status === 'UNPAID') {
+      const holdHours = Number(process.env.EFT_HOLD_HOURS) || 48;
+      await supabase.from('bookings').update({
+        expires_at: new Date(Date.now() + holdHours * 60 * 60 * 1000).toISOString(),
+      }).eq('reference', String(reference).trim());
+    }
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
     const escapeHtml = (value: unknown) => String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');

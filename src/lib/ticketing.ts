@@ -171,10 +171,12 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
         }),
       });
       if (!response.ok) {
-        console.error(`Failed to send ticket email via Resend: ${await response.text()}`);
+        const body = await response.text().catch(() => 'unknown error');
+        throw new Error(`Failed to send ticket email via Resend: ${body}`);
       }
     } catch (e) {
-      console.error('Resend email delivery failed, but payment was successful:', e);
+      if (e instanceof Error && e.message.startsWith('Failed to send ticket email via Resend:')) throw e;
+      throw new Error(`Resend email delivery failed: ${e instanceof Error ? e.message : 'unknown error'}`);
     }
     return;
   }
@@ -183,6 +185,9 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   if (!smtpHost || !smtpUser || !smtpPass) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('No email provider configured (neither RESEND_API_KEY nor SMTP). Cannot deliver tickets.');
+    }
     console.error('Neither RESEND_API_KEY nor SMTP credentials are configured. Skipping email delivery.');
     return;
   }
@@ -194,17 +199,13 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
     auth: { user: smtpUser, pass: smtpPass },
   });
-  try {
-    await transporter.sendMail({
-      from: `Graceland Venues <${fromEmail}>`,
-      to: email,
-      subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
-      html,
-      attachments: attachments.map(({ filename, content }) => ({ filename, content })),
-    });
-  } catch (e) {
-    console.error('SMTP email delivery failed, but payment was successful:', e);
-  }
+  await transporter.sendMail({
+    from: `Graceland Venues <${fromEmail}>`,
+    to: email,
+    subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
+    html,
+    attachments: attachments.map(({ filename, content }) => ({ filename, content })),
+  });
 }
 
 async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, index: number) {

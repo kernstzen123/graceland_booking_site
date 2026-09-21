@@ -14,12 +14,13 @@
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "html5-qrcode": "^2.3.8",
-    "next": "16.3.1",
-    "nodemailer": "^9.0.5",
+    "next": "^16.3.5",
+    "nodemailer": "^10.0.10",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -28,7 +29,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.1",
+    "eslint-config-next": "^16.3.5",
     "typescript": "^5"
   }
 }

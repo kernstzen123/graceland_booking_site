@@ -12,6 +12,9 @@ export function customerError(error: unknown, fallback: string) {
     'That birthday party time slot has already been booked.', 'Booking not found',
     'This booking is already paid', 'File must be 10 MB or smaller',
     'Only PDF, JPG, and PNG files are allowed', 'The uploaded file is not a valid PDF, JPG, or PNG',
+    'Prices have been updated. Please refresh the page and try again.',
+    'Invalid party field:',
+    'Unknown booking item:',
   ];
   if (safeMessages.some(safe => message === safe || message.startsWith(safe))) return message;
   if (/capacity exceeded/i.test(message)) return 'This date is full. Please choose another date or contact support.';

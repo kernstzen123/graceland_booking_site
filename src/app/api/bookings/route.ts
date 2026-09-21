@@ -1,25 +1,11 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties';
+import { getPartySlots, PartyDetails } from '@/lib/parties';
 import { checkRateLimit, cleanText, isValidEmail } from '@/lib/request-security';
 import { customerError } from '@/lib/public-errors';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
-
-const BOOKABLE_ITEMS: Record<string, { name: string; price: number; isPerson: boolean }> = {
-  'day-water-infant': { name: 'Children under 1 (including water activities)', price: 0, isPerson: true },
-  'day-water-toddler': { name: 'Toddlers 1-2 (including water activities)', price: 110, isPerson: true },
-  'day-water-child': { name: 'Children 3-17 (including water activities)', price: 210, isPerson: true },
-  'day-water-adult': { name: 'Adult (including water activities)', price: 230, isPerson: true },
-  'day-water-pensioner': { name: 'Pensioner (including water activities)', price: 200, isPerson: true },
-  'day-no-water-infant': { name: 'Children under 1 (excluding water activities)', price: 0, isPerson: true },
-  'day-no-water-toddler': { name: 'Toddlers 1-2 (excluding water activities)', price: 0, isPerson: true },
-  'day-no-water-child': { name: 'Children 3-17 (excluding water activities)', price: 100, isPerson: true },
-  'day-no-water-adult': { name: 'Adult (excluding water activities)', price: 120, isPerson: true },
-  'day-no-water-pensioner': { name: 'Pensioner (excluding water activities)', price: 100, isPerson: true },
-  'hut-covered': { name: 'Covered Hut (Seating for 14-16)', price: 400, isPerson: false },
-  'hut-shaded': { name: 'Shaded Table (Seating for 6)', price: 250, isPerson: false },
-};
+import { BOOKABLE_ITEMS, calculateServerTotal, validatePartyFields } from '@/lib/pricing';
 
 export async function POST(request: Request) {
   try {
@@ -42,10 +28,20 @@ export async function POST(request: Request) {
     for (const [key, value] of Object.entries(selections)) {
       if (!/^[a-z0-9-]+$/.test(key) || !Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 500) throw new Error('Invalid package quantity');
     }
+    // Verify every selection key is a known bookable item
+    for (const key of Object.keys(selections)) {
+      if (Number(selections[key]) > 0 && !BOOKABLE_ITEMS[key]) throw new Error(`Unknown booking item: ${key}`);
+    }
     const safeCustomerDetails = { firstName, lastName, email, phone };
 
-    // Validate and sanitize attendee names (only for non-party bookings)
+    // Validate and sanitize party details
     const isParty = (party as PartyDetails | undefined)?.enabled === true;
+    let validatedParty: PartyDetails | undefined;
+    if (isParty) {
+      validatedParty = validatePartyFields(party as PartyDetails);
+    }
+
+    // Validate and sanitize attendee names (only for non-party bookings)
     let sanitizedAttendeeNames: Array<{ firstName: string; lastName: string }> = [];
     if (!isParty && Array.isArray(attendeeNames) && attendeeNames.length > 0) {
       sanitizedAttendeeNames = attendeeNames.map((entry: { firstName?: string; lastName?: string }) => {
@@ -54,6 +50,24 @@ export async function POST(request: Request) {
         if (aFirst.length < 1 || aLast.length < 1) throw new Error('Each attendee must have a first name and surname');
         return { firstName: aFirst, lastName: aLast };
       });
+    }
+
+    // --- SERVER-SIDE PRICING (never trust client totalAmount for money) ---
+    const serverSelections: Record<string, number> = {};
+    for (const [key, value] of Object.entries(selections)) {
+      const qty = Number(value);
+      if (qty > 0) serverSelections[key] = qty;
+    }
+    const { total: serverTotal } = calculateServerTotal(serverSelections, validatedParty);
+
+    // Reject if the server total is zero or negative
+    if (serverTotal <= 0) throw new Error('Invalid booking amount');
+
+    // Compare server total against client total (tolerance R0.01)
+    const clientTotal = Number(totalAmount);
+    if (Math.abs(serverTotal - clientTotal) > 0.01) {
+      console.error(`Price mismatch: server=${serverTotal}, client=${clientTotal}, selections=${JSON.stringify(serverSelections)}, party=${JSON.stringify(validatedParty)}`);
+      throw new Error('Prices have been updated. Please refresh the page and try again.');
     }
 
     // 1. Calculate the total people count from selections
@@ -72,7 +86,7 @@ export async function POST(request: Request) {
       }
     });
 
-    const partyDetails = party as PartyDetails | undefined;
+    const partyDetails = validatedParty;
     if (partyDetails?.enabled) {
       if (!['option-1', 'option-2'].includes(partyDetails.option) || Number(partyDetails.children) < 10) {
         throw new Error('Birthday parties require at least 10 children and a valid party option');
@@ -123,12 +137,13 @@ export async function POST(request: Request) {
     }
 
     // Reserve capacity and create the customer/booking in one database transaction.
+    // Use the SERVER-COMPUTED total, never the client's totalAmount.
     const { data: bookingId, error } = await supabase.rpc('reserve_capacity', {
       p_visit_date: selectedDate,
       p_people_count: peopleCount,
       p_customer: safeCustomerDetails,
       p_reference: reference,
-      p_total_amount: totalAmount,
+      p_total_amount: serverTotal,
       p_party_slot: partyDetails?.enabled ? partyDetails.slot : null,
       p_idempotency_key: requestIdempotencyKey,
       p_voucher_code: typeof voucherCode === 'string' && voucherCode.trim() ? voucherCode.trim().toUpperCase() : null,
@@ -213,14 +228,14 @@ export async function POST(request: Request) {
       try {
         await generateTicketsAndSendEmail(bookingId, safeCustomerDetails.email, `${safeCustomerDetails.firstName} ${safeCustomerDetails.lastName}`);
       } catch (emailError) {
-        await recordNotificationFailure('TICKETS_ISSUED_BY_VOUCHER', safeCustomerDetails.email, bookingId, emailError);
+        await recordNotificationFailure('booking', 'TICKETS_ISSUED_BY_VOUCHER', safeCustomerDetails.email, bookingId, emailError);
       }
     }
 
     return NextResponse.json({
       success: true,
       reference,
-      amountDue: Number(bookingTotals.amount_due ?? totalAmount),
+      amountDue: Number(bookingTotals.amount_due ?? serverTotal),
       voucherAmountUsed: Number(bookingTotals.voucher_amount_used || 0),
       voucherRemainingBalance,
       paymentRequired: !(bookingTotals.status === 'PAID' && Number(bookingTotals.amount_due || 0) === 0),

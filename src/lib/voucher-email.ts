@@ -38,7 +38,7 @@ export async function sendVoucherEmail(credit: VoucherEmail) {
   if (!response.ok) throw new Error('Resend rejected the voucher email');
 }
 
-export async function recordNotificationFailure(type: string, recipient: string, entityId: string, error: unknown) {
-  const { error: insertError } = await supabase.from('notification_failures').insert({ notification_type: type, recipient, entity_type: 'booking_credit', entity_id: entityId, error_message: error instanceof Error ? error.message : 'Unknown email error' });
+export async function recordNotificationFailure(entityType: string, type: string, recipient: string, entityId: string, error: unknown) {
+  const { error: insertError } = await supabase.from('notification_failures').insert({ notification_type: type, recipient, entity_type: entityType, entity_id: entityId, error_message: error instanceof Error ? error.message : 'Unknown email error' });
   if (insertError) console.error('Could not record notification failure', insertError);
 }
