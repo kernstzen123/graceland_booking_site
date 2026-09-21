@@ -27,7 +27,7 @@ async function verifyWithPayFast(params: URLSearchParams) {
   // The unsigned local simulator is deliberately supported only in development.
   if (!params.get('signature') && process.env.NODE_ENV !== 'production') return true;
   const processUrl = process.env.PAYFAST_URL || 'https://sandbox.payfast.co.za/eng/process';
-  const validationUrl = processUrl.replace(/\/eng\/process(?:\?.*)?\/?\$/i, '/eng/query/validate');
+  const validationUrl = processUrl.replace(/\/eng\/process(?:\?.*)?\/?$/i, '/eng/query/validate');
   const response = await fetch(validationUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/plain' },
