@@ -21,6 +21,7 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting error state before async fetch
     setPartyError('');
     fetch(`/api/party-availability?date=${encodeURIComponent(selectedDate)}`, { cache: 'no-store' })
       .then(response => response.ok ? response.json() : Promise.reject(new Error('Availability unavailable')))

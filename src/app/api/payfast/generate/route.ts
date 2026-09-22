@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { customerError } from '@/lib/public-errors';
 import { supabase } from '@/lib/supabase';
+import { requireEnv } from '@/lib/env';
 
 export async function POST(request: Request) {
   try {
-    const { reference, totalAmount, name_first, name_last, email_address } = await request.json();
+    const { reference, name_first, name_last, email_address } = await request.json();
     if (typeof reference !== 'string' || !reference.trim()) return NextResponse.json({ success: false, error: 'Booking reference is required' }, { status: 400 });
     const { data: booking, error: bookingError } = await supabase.from('bookings').select('status,total_amount,amount_due,customers(first_name,last_name,email)').eq('reference', reference.trim()).maybeSingle();
     if (bookingError || !booking) return NextResponse.json({ success: false, error: 'Booking could not be found' }, { status: 404 });
@@ -14,19 +15,16 @@ export async function POST(request: Request) {
     const payableAmount = Number(booking.amount_due ?? booking.total_amount);
     if (!Number.isFinite(payableAmount) || payableAmount <= 0) return NextResponse.json({ success: false, error: 'This booking has no amount due' }, { status: 400 });
     
-    const merchant_id = process.env.PAYFAST_MERCHANT_ID;
-    const merchant_key = process.env.PAYFAST_MERCHANT_KEY;
-    const passphrase = process.env.PAYFAST_PASSPHRASE;
-    const payfast_url = process.env.PAYFAST_URL || 'https://sandbox.payfast.co.za/eng/process';
+    const merchant_id = requireEnv('PAYFAST_MERCHANT_ID');
+    const merchant_key = requireEnv('PAYFAST_MERCHANT_KEY');
+    const passphrase = requireEnv('PAYFAST_PASSPHRASE');
+    const payfast_url = requireEnv('PAYFAST_URL', 'https://sandbox.payfast.co.za/eng/process');
     
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
     if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
     if (!payfast_url.startsWith('https://')) throw new Error('PAYFAST_URL must use HTTPS');
 
-    if (!merchant_id || !merchant_key) {
-      console.error('PayFast credentials are not configured');
-      return NextResponse.json({ success: false, error: 'Online payment is temporarily unavailable. Please try again or contact support.' }, { status: 503 });
-    }
+
 
     const fields: Record<string, string> = {
       merchant_id: merchant_id.trim(),

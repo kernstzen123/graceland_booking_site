@@ -1,11 +1,12 @@
 import crypto from 'crypto';
+import { requireEnv } from './env';
 
 type QrClaims = { v: 1; bid: string; tid: string; nonce: string; exp: number };
 
 function secret() {
-  const value = process.env.QR_SIGNING_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!value) throw new Error('QR_SIGNING_SECRET is not configured');
-  return value;
+  // QR_SIGNING_SECRET must be its own dedicated secret — never fall back to
+  // SUPABASE_SERVICE_ROLE_KEY, which has a different rotation lifecycle.
+  return requireEnv('QR_SIGNING_SECRET', 'dev-qr-secret-DO-NOT-USE-IN-PRODUCTION');
 }
 
 function encode(value: string) {

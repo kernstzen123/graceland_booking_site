@@ -42,7 +42,7 @@ export async function GET(request: Request) {
 
     // Fetch seating info for all relevant bookings
     const bookingIds = [...new Set((tickets || []).map(t => t.booking_id))];
-    let seatingMap: Record<string, string> = {};
+    const seatingMap: Record<string, string> = {};
 
     if (bookingIds.length > 0) {
       const { data: allSpots } = await supabase

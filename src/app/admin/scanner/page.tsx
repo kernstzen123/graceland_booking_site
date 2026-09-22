@@ -467,6 +467,7 @@ export default function Scanner() {
     };
     const onOffline = () => setIsOnline(false);
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initializing connection state on mount based on browser API; not derived state.
     setIsOnline(navigator.onLine);
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);

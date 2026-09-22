@@ -11,6 +11,7 @@ export default function ReviewProofs() {
   const [message, setMessage] = useState('Loading proofs…');
   const [actionMessage, setActionMessage] = useState<{ proofId: string; text: string; type: 'success' | 'warning' | 'error' } | null>(null);
   const load = async () => { const session = (await supabaseBrowser.auth.getSession()).data.session; if (!session) return; const res = await fetch(`/api/admin/proofs?status=${status}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: 'no-store' }); const data = await res.json(); if (!res.ok) throw new Error(data.error); setProofs(data.proofs); setMessage(data.proofs.length ? '' : 'No proofs in this queue.'); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
   useEffect(() => { load().catch(error => setMessage(error.message)); }, [status]);
   const act = async (proof: Proof, action: 'approve' | 'reject', force = false) => {
     const booking = Array.isArray(proof.bookings) ? proof.bookings[0] : proof.bookings;

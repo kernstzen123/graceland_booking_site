@@ -53,8 +53,10 @@ export default function ConflictsPage() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
     loadConflicts();
-  }, [selectedDate, showResolved]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, showResolved]);
 
   const resolveConflict = async (id: string, notes?: string) => {
     try {

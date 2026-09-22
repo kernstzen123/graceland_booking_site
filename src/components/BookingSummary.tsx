@@ -6,7 +6,7 @@ interface BookingSummaryProps {
   selectedDate: string;
   selections: Record<string, number>;
   party: PartyDetails;
-  customerDetails: any;
+  customerDetails: { firstName: string; lastName: string; email: string; phone: string };
   onBack: () => void;
   onConfirm: () => void;
   submitting?: boolean;
@@ -19,7 +19,7 @@ interface BookingSummaryProps {
 
 export function BookingSummary({ selectedDate, selections, party, customerDetails, onBack, onConfirm, submitting = false, termsAccepted, privacyAccepted, onTermsChange, onPrivacyChange, onVoucherApplied }: BookingSummaryProps) {
   let total = 0;
-  const items: any[] = [];
+  const items: Array<{ id: string; name: string; price: number; type?: string; qty: number }> = [];
   
   PACKAGES.forEach(group => {
     group.items.forEach(item => {

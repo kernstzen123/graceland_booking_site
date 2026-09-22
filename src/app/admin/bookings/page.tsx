@@ -12,6 +12,7 @@ export default function BookingsAdmin() {
   const [query, setQuery] = useState(''); const [bookings, setBookings] = useState<Booking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...'); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
   const load = async (search = query) => { const response = await fetch(`/api/admin/bookings?q=${encodeURIComponent(search)}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' }); const data = await response.json(); if (!response.ok) throw new Error(data.error); setBookings(data.bookings); setSelected(current => current ? data.bookings.find((booking: Booking) => booking.id === current.id) || null : null); setMessage(data.bookings.length ? '' : 'No bookings found.'); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
   useEffect(() => { load().catch(error => setMessage(error.message)); }, []);
   const showToast = (text: string) => { setToast(text); window.setTimeout(() => setToast(''), 6000); };
   const action = async (type: Action, ticketId?: string) => {

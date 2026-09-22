@@ -28,6 +28,7 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initializing loading state before async fetch
     setLoading(true); setError('');
     const params = new URLSearchParams({
       date: selectedDate,
@@ -40,6 +41,7 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
       .catch(loadError => { if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'Seating availability could not be loaded.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Dependencies are correctly omitted to avoid unwanted refetches
   }, [selectedDate]);
 
   const toggleSpot = (spot: Spot) => {
@@ -65,6 +67,7 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
     {!loading && !error && <>
       <div aria-label="Scrollable venue seating map" style={{ overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain', touchAction: 'pan-x pinch-zoom', borderRadius: 10, border: '1px solid var(--border-color)', background: '#e2e8f0' }}>
         <div style={{ position: 'relative', width: 900, minWidth: 900, lineHeight: 0, touchAction: 'pan-x pinch-zoom' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- External SVG map where next/image adds unnecessary complexity */}
           <img src="/venue-seating-map.jpeg" alt="Venue seating map" draggable={false} style={{ display: 'block', width: '100%', height: 'auto', userSelect: 'none' }} />
           {spots.map(spot => {
             const isSelected = selectedSpotIds.includes(spot.id);

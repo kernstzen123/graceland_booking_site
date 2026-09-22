@@ -11,6 +11,7 @@ export default function UploadProof() {
     // Auto-fill reference from URL if they click the link in the email
     const params = new URLSearchParams(window.location.search);
     const refParam = params.get('ref');
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initializing from URL param on mount; not derived state.
     if (refParam) setReference(refParam);
   }, []);
 
@@ -36,7 +37,7 @@ export default function UploadProof() {
       } else {
         setStatus(`Error: ${data.error}`);
       }
-    } catch (e) {
+    } catch {
       setStatus('Failed to upload file. Please try again.');
     }
   };
@@ -56,7 +57,7 @@ export default function UploadProof() {
             type="text" 
             value={reference} 
             onChange={e => setReference(e.target.value)}
-            placeholder="e.g. BK-2026-123456"
+            placeholder="e.g. BK-2026-A7F3K2M9"
             style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}
           />
         </div>

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
+import { requireEnv } from '@/lib/env';
 
 function isValidSignature(params: URLSearchParams) {
   const received = params.get('signature');
@@ -15,7 +16,7 @@ function isValidSignature(params: URLSearchParams) {
     // PayFast includes empty ITN fields in the signature string.
     if (key !== 'signature') values.push(`${key}=${encodeURIComponent(value).replace(/%20/g, '+')}`);
   }
-  const passphrase = process.env.PAYFAST_PASSPHRASE?.trim();
+  const passphrase = requireEnv('PAYFAST_PASSPHRASE', '').trim();
   if (passphrase) values.push(`passphrase=${encodeURIComponent(passphrase).replace(/%20/g, '+')}`);
   const expected = crypto.createHash('md5').update(values.join('&')).digest('hex');
   const expectedBuffer = Buffer.from(expected);
@@ -26,7 +27,7 @@ function isValidSignature(params: URLSearchParams) {
 async function verifyWithPayFast(params: URLSearchParams) {
   // The unsigned local simulator is deliberately supported only in development.
   if (!params.get('signature') && process.env.NODE_ENV !== 'production') return true;
-  const processUrl = process.env.PAYFAST_URL || 'https://sandbox.payfast.co.za/eng/process';
+  const processUrl = requireEnv('PAYFAST_URL', 'https://sandbox.payfast.co.za/eng/process');
   const validationUrl = processUrl.replace(/\/eng\/process(?:\?.*)?\/?$/i, '/eng/query/validate');
   const response = await fetch(validationUrl, {
     method: 'POST',

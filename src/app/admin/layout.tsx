@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useState, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { cacheSession, getCachedSession, clearCachedSession, initDB } from '@/lib/offline-db';
@@ -14,6 +14,48 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [error, setError] = useState('');
   const [offlineMode, setOfflineMode] = useState(false);
   const pathname = usePathname();
+
+  const tryOfflineSession = useCallback(async () => {
+    try {
+      const cached = await getCachedSession();
+      if (cached) {
+        setRole(cached.role);
+        setOfflineMode(true);
+        // Create a minimal session-like object for child components
+        setSession({
+          access_token: cached.access_token,
+          user: { email: cached.email },
+        } as typeof session);
+      }
+    } catch { /* no cached session available */ }
+  }, []);
+
+  const loadRole = useCallback(async (token: string) => {
+    try {
+      const response = await fetch('/api/admin/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) {
+        // On the set-password page, don't sign out — the user may be setting
+        // their password for the first time before their role check succeeds.
+        if (pathname !== '/admin/set-password') {
+          setError(data.error || 'Staff access is required');
+          await supabaseBrowser.auth.signOut();
+        }
+        return;
+      }
+      setRole(data.role);
+      // Cache session for offline use
+      try {
+        const sessionData = (await supabaseBrowser.auth.getSession()).data.session;
+        if (sessionData) {
+          await cacheSession(sessionData, data.role, sessionData.user?.email || '');
+        }
+      } catch { /* caching is best-effort */ }
+    } catch {
+      // Network error — try offline fallback
+      await tryOfflineSession();
+    }
+  }, [pathname, tryOfflineSession]);
 
   useEffect(() => {
     let active = true;
@@ -48,49 +90,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       }
     });
     return () => { active = false; listener.subscription.unsubscribe(); };
-  }, []);
-
-  const loadRole = async (token: string) => {
-    try {
-      const response = await fetch('/api/admin/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
-      const data = await response.json();
-      if (!response.ok) {
-        // On the set-password page, don't sign out — the user may be setting
-        // their password for the first time before their role check succeeds.
-        if (pathname !== '/admin/set-password') {
-          setError(data.error || 'Staff access is required');
-          await supabaseBrowser.auth.signOut();
-        }
-        return;
-      }
-      setRole(data.role);
-      // Cache session for offline use
-      try {
-        const sessionData = (await supabaseBrowser.auth.getSession()).data.session;
-        if (sessionData) {
-          await cacheSession(sessionData, data.role, sessionData.user?.email || '');
-        }
-      } catch { /* caching is best-effort */ }
-    } catch {
-      // Network error — try offline fallback
-      await tryOfflineSession();
-    }
-  };
-
-  const tryOfflineSession = async () => {
-    try {
-      const cached = await getCachedSession();
-      if (cached) {
-        setRole(cached.role);
-        setOfflineMode(true);
-        // Create a minimal session-like object for child components
-        setSession({
-          access_token: cached.access_token,
-          user: { email: cached.email },
-        } as typeof session);
-      }
-    } catch { /* no cached session available */ }
-  };
+  }, [loadRole, tryOfflineSession]);
 
   const signIn = async (event: FormEvent) => {
     event.preventDefault(); setError('');
@@ -101,6 +101,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const signOut = async () => {
     await clearCachedSession().catch(() => {});
     await supabaseBrowser.auth.signOut();
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Intentionally triggering a full reload to clear all client state after signout
     window.location.assign('/');
   };
 

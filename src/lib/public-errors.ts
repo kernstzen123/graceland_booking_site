@@ -15,6 +15,8 @@ export function customerError(error: unknown, fallback: string) {
     'Prices have been updated. Please refresh the page and try again.',
     'Invalid party field:',
     'Unknown booking item:',
+    'Too many requests. Please wait a moment and try again.',
+    'Booking reference is required',
   ];
   if (safeMessages.some(safe => message === safe || message.startsWith(safe))) return message;
   if (/capacity exceeded/i.test(message)) return 'This date is full. Please choose another date or contact support.';

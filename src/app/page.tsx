@@ -84,24 +84,34 @@ export default function Home() {
           setStep(9);
         }
       }, 0);
+      // Restore customer details from sessionStorage (persisted before the PayFast redirect)
+      // so the retry flow works without the status API exposing PII.
+      const restoreFromSession = () => {
+        try {
+          const saved = window.sessionStorage.getItem('graceland-booking-context');
+          if (saved) {
+            const ctx = JSON.parse(saved);
+            if (ctx.customerDetails) setCustomerDetails(ctx.customerDetails);
+            if (ctx.selectedDate) setSelectedDate(ctx.selectedDate);
+            if (ctx.amountDue && Number(ctx.amountDue) > 0) setServerAmountDue(Number(ctx.amountDue));
+          }
+        } catch { /* sessionStorage may be unavailable */ }
+      };
       const checkStatus = async () => {
         if (!paymentPollingActive.current) return;
         try {
           const response = await fetch(`/api/bookings/status?reference=${encodeURIComponent(returnedReference)}`, {
             cache: 'no-store',
             signal: controller.signal,
-            headers: { 'ngrok-skip-browser-warning': '1' },
           });
           if (!response.ok) return;
           const data = await response.json();
           if (!cancelled && (data.paymentState === 'FAILED' || data.paymentState === 'EXPIRED')) {
             paymentPollingActive.current = false;
             setPaymentFailure({ expired: data.paymentState === 'EXPIRED', message: data.paymentState === 'EXPIRED' ? 'The payment window expired before PayFast confirmed your payment.' : 'PayFast reported that the payment did not complete.' });
-            // Restore booking details from the server (client state is lost
-            // after the PayFast redirect) so the retry flow works correctly.
             if (data.amountDue && Number(data.amountDue) > 0) setServerAmountDue(Number(data.amountDue));
-            if (data.customer) setCustomerDetails({ firstName: data.customer.firstName || '', lastName: data.customer.lastName || '', email: data.customer.email || '', phone: data.customer.phone || '' });
             if (data.visitDate) setSelectedDate(data.visitDate);
+            restoreFromSession();
             setStep(10);
             return;
           }
@@ -121,15 +131,7 @@ export default function Home() {
         if (!cancelled) {
           paymentPollingActive.current = false;
           setPaymentFailure({ expired: false, message: 'We could not confirm the payment within five minutes.' });
-          // Fetch booking details so the retry flow has the correct amount and customer info.
-          fetch(`/api/bookings/status?reference=${encodeURIComponent(returnedReference)}`, { cache: 'no-store', headers: { 'ngrok-skip-browser-warning': '1' } })
-            .then(r => r.json())
-            .then(data => {
-              if (data.amountDue && Number(data.amountDue) > 0) setServerAmountDue(Number(data.amountDue));
-              if (data.customer) setCustomerDetails({ firstName: data.customer.firstName || '', lastName: data.customer.lastName || '', email: data.customer.email || '', phone: data.customer.phone || '' });
-              if (data.visitDate) setSelectedDate(data.visitDate);
-            })
-            .catch(() => {});
+          restoreFromSession();
           setStep(10);
         }
       }, 5 * 60 * 1000);
@@ -142,36 +144,20 @@ export default function Home() {
         window.clearTimeout(timeout);
       };
     } else if (statusParam === 'cancel') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Initializing from URL params on page load after PayFast redirect; this is not derived state.
       if (returnedReference) setReference(returnedReference);
       setPaymentFailure({ expired: false, message: 'The PayFast payment was cancelled before it was completed.' });
       setStep(10);
-      // Fetch the real amount due and customer details from the server so that
-      // the retry flow shows the correct total and has the customer info needed
-      // for PayFast / EFT emails (all client state is lost after the redirect).
-      if (returnedReference) {
-        fetch(`/api/bookings/status?reference=${encodeURIComponent(returnedReference)}`, {
-          cache: 'no-store',
-          headers: { 'ngrok-skip-browser-warning': '1' },
-        })
-          .then(r => r.json())
-          .then(data => {
-            if (data.amountDue && Number(data.amountDue) > 0) {
-              setServerAmountDue(Number(data.amountDue));
-            }
-            if (data.customer) {
-              setCustomerDetails({
-                firstName: data.customer.firstName || '',
-                lastName: data.customer.lastName || '',
-                email: data.customer.email || '',
-                phone: data.customer.phone || '',
-              });
-            }
-            if (data.visitDate) {
-              setSelectedDate(data.visitDate);
-            }
-          })
-          .catch(() => { /* non-critical – PayFast generate will still use the DB values */ });
-      }
+      // Restore booking context from sessionStorage (persisted before redirect)
+      try {
+        const saved = window.sessionStorage.getItem('graceland-booking-context');
+        if (saved) {
+          const ctx = JSON.parse(saved);
+          if (ctx.amountDue && Number(ctx.amountDue) > 0) setServerAmountDue(Number(ctx.amountDue));
+          if (ctx.customerDetails) setCustomerDetails(ctx.customerDetails);
+          if (ctx.selectedDate) setSelectedDate(ctx.selectedDate);
+        }
+      } catch { /* sessionStorage may be unavailable */ }
     }
   }, []);
 
@@ -190,7 +176,7 @@ export default function Home() {
   };
 
   const totalAmount = calculateTotal();
-  const selectedPeople = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('adult') || id.includes('pensioner') || id.includes('infant') || id.includes('toddler') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.adults + party.additionalChildren : 0);
+
   const requiredTables = Number(selections['hut-shaded'] || 0);
   const requiredHuts = Number(selections['hut-covered'] || 0) + (party.enabled ? 1 : 0);
   const requiresSeating = requiredTables > 0 || requiredHuts > 0;
@@ -219,7 +205,7 @@ export default function Home() {
       } else {
         alert("Error: " + data.error);
       }
-    } catch (e) {
+    } catch {
       alert("Failed to reserve booking");
     } finally {
       setBookingSubmitting(false);
@@ -229,13 +215,22 @@ export default function Home() {
   const handlePayFast = async () => {
     if (paying) return;
     setPaying(true);
+    // Persist booking context to sessionStorage before redirecting to PayFast.
+    // On return, page.tsx restores from here instead of fetching PII from the
+    // status API (which no longer exposes customer details).
+    try {
+      window.sessionStorage.setItem('graceland-booking-context', JSON.stringify({
+        customerDetails,
+        selectedDate,
+        amountDue: appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount,
+      }));
+    } catch { /* sessionStorage may be unavailable */ }
     try {
       const res = await fetch('/api/payfast/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reference,
-          totalAmount: appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount,
           name_first: customerDetails.firstName,
           name_last: customerDetails.lastName,
           email_address: customerDetails.email
@@ -263,33 +258,28 @@ export default function Home() {
 
       document.body.appendChild(form);
       form.submit();
-    } catch (e) {
-      console.error(e);
+    } catch {
+      console.error("Error setting up PayFast");
       alert("Error contacting secure payment server.");
       setPaying(false);
     }
   };
 
   const handleManualEFT = async () => {
-    // Trigger the automated email with EFT instructions
+    // Trigger the automated email with EFT instructions.
+    // Only send the reference — the server looks up the customer email from the DB.
     try {
       const response = await fetch('/api/send-eft-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: customerDetails.email,
-          name: customerDetails.firstName,
-          reference: reference,
-          totalAmount: appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount,
-          visitDate: selectedDate,
-        })
+        body: JSON.stringify({ reference })
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         alert(`We could not send the EFT instructions email: ${data.error || 'Please try again.'}`);
       }
-    } catch (e) {
-      console.error("Failed to send EFT email", e);
+    } catch {
+      console.error("Failed to send EFT email");
     }
     setStep(7);
   };

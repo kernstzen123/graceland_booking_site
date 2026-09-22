@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getPartySlots, PartyDetails } from '@/lib/parties';
@@ -122,8 +123,10 @@ export async function POST(request: Request) {
       if (tableSpots.length !== selectedTableCount || hutSpots.length !== requiredHutCount) throw new Error('Please select the correct number and type of seating spots.');
     }
 
-    // 2. Generate a unique booking reference
-    const reference = `BK-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    // 2. Generate a unique booking reference using crypto for sufficient entropy.
+    // 8 alphanumeric characters ≈ 41 bits of entropy vs the old 6-digit (~20 bit) format.
+    const refChars = crypto.randomBytes(5).toString('base64url').replace(/[_-]/g, '').slice(0, 8).toUpperCase().padEnd(8, '0');
+    const reference = `BK-${new Date().getFullYear()}-${refChars}`;
     const requestIdempotencyKey = typeof idempotencyKey === 'string' && idempotencyKey.trim() ? idempotencyKey.trim() : null;
     if (requestIdempotencyKey) {
       const { data: existingBooking } = await supabase.from('bookings').select('id,reference').eq('idempotency_key', requestIdempotencyKey).maybeSingle();
