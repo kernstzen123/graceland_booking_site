@@ -390,10 +390,10 @@ export default function Home() {
           <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Please transfer <strong>R {appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount}</strong> to the following account:</p>
           
           <div style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '1px solid var(--border-color)', fontSize: '1.1rem' }}>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Bank:</strong> FNB</p>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Account Name:</strong> Graceland Venues</p>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Account Number:</strong> 62000000000</p>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Branch Code:</strong> 250655</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Bank:</strong> Nedbank LTD</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Account Name:</strong> ACE contractors</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Account Number:</strong> 1039028861</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Branch Code:</strong> 103910</p>
             <p><strong>Payment Reference:</strong> {reference}</p>
           </div>
           
