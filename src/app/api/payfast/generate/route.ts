@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     
     const merchant_id = requireEnv('PAYFAST_MERCHANT_ID');
     const merchant_key = requireEnv('PAYFAST_MERCHANT_KEY');
-    const passphrase = requireEnv('PAYFAST_PASSPHRASE');
+    const passphrase = process.env.PAYFAST_PASSPHRASE?.trim();
     const payfast_url = requireEnv('PAYFAST_URL', 'https://sandbox.payfast.co.za/eng/process');
     
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');

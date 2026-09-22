@@ -16,7 +16,7 @@ function isValidSignature(params: URLSearchParams) {
     // PayFast includes empty ITN fields in the signature string.
     if (key !== 'signature') values.push(`${key}=${encodeURIComponent(value).replace(/%20/g, '+')}`);
   }
-  const passphrase = requireEnv('PAYFAST_PASSPHRASE', '').trim();
+  const passphrase = process.env.PAYFAST_PASSPHRASE?.trim();
   if (passphrase) values.push(`passphrase=${encodeURIComponent(passphrase).replace(/%20/g, '+')}`);
   const expected = crypto.createHash('md5').update(values.join('&')).digest('hex');
   const expectedBuffer = Buffer.from(expected);
