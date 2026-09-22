@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { supabase } from './supabase';
+import { escapeHtml, renderEmailLayout, calloutBox, statusBadge } from './email-layout';
 
 export type VoucherEmail = {
   bookingReference: string;
@@ -10,14 +11,32 @@ export type VoucherEmail = {
   originalAmount: number;
 };
 
-const escapeHtml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
-
 export async function sendVoucherEmail(credit: VoucherEmail) {
   if (!credit.customerEmail) throw new Error('Customer email address is missing');
   const bookingUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'conny@gracelandvenues.co.za';
   const subject = 'Important update about your Graceland Venues booking';
-  const html = `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;color:#0f172a"><h2 style="color:#0EA5E9">Important update about your Graceland Venues booking</h2><p>Hi ${escapeHtml(credit.customerName || 'there')},</p><p>The waterpark is closed on <strong>${escapeHtml(credit.visitDate)}</strong>, so booking <strong>${escapeHtml(credit.bookingReference)}</strong> has been cancelled.</p><p>We do not process cash refunds. Instead, we have issued a rebooking voucher for the full amount paid: <strong>R ${credit.originalAmount.toFixed(2)}</strong>.</p><div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:18px;text-align:center"><p style="margin:0;color:#1d4ed8">Your voucher code</p><p style="font-size:26px;font-weight:bold;letter-spacing:2px;margin:8px 0">${escapeHtml(credit.creditCode)}</p></div><p>This voucher never expires and may be used across multiple future bookings until the balance is depleted. It is valid for ticket purchases only and cannot be used at the kiosk for food, drinks, or merchandise.</p><p>To use it, visit <a href="${escapeHtml(bookingUrl)}">${escapeHtml(bookingUrl)}</a>, choose a date, and enter the voucher code at checkout. If your new booking costs more than the remaining voucher balance, pay the difference by EFT as usual.</p><p>For questions, contact us at <a href="mailto:${escapeHtml(supportEmail)}">${escapeHtml(supportEmail)}</a> or 072 264 4009.</p><p>We apologise for the inconvenience.</p></div>`;
+  const html = renderEmailLayout({
+    preheader: `Booking ${credit.bookingReference} was cancelled — a rebooking voucher is waiting for you`,
+    supportEmail,
+    bodyHtml: `
+      ${statusBadge('BOOKING CANCELLED', 'red')}
+      <h1 style="margin:0 0 4px;font-size:20px;color:#0f172a;">Important update about your booking</h1>
+      <p style="margin:0 0 18px;color:#64748b;font-size:13px;">Booking reference ${escapeHtml(credit.bookingReference)}</p>
+      <p>Hi ${escapeHtml(credit.customerName || 'there')},</p>
+      <p>The waterpark is closed on <strong>${escapeHtml(credit.visitDate)}</strong>, so your booking has been cancelled.</p>
+      <p>We do not process cash refunds. Instead, we have issued a rebooking voucher for the full amount paid: <strong>R ${credit.originalAmount.toFixed(2)}</strong>.</p>
+      ${calloutBox({ label: 'Your voucher code', value: escapeHtml(credit.creditCode), tone: 'blue' })}
+      <p style="font-size:13px;color:#475569;background:#f8fafc;border-radius:8px;padding:14px 16px;margin:0 0 18px;">This voucher never expires and may be used across multiple future bookings until the balance is depleted. It is valid for ticket purchases only and cannot be used at the kiosk for food, drinks, or merchandise.</p>
+      <p style="margin:0 0 8px;font-weight:700;color:#0f172a;font-size:14px;">How to use it</p>
+      <ol style="margin:0 0 18px;padding-left:18px;color:#334155;">
+        <li style="margin-bottom:6px;">Visit <a href="${escapeHtml(bookingUrl)}" style="color:#0EA5E9;">${escapeHtml(bookingUrl)}</a> and choose a new date.</li>
+        <li style="margin-bottom:6px;">Enter your voucher code at checkout.</li>
+        <li>If your new booking costs more than the remaining voucher balance, pay the difference by EFT as usual.</li>
+      </ol>
+      <p>We apologise for the inconvenience.</p>
+    `,
+  });
   const fromEmail = process.env.NODE_ENV !== 'production' ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za') : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');
 
   if (process.env.BREVO_API_KEY) {

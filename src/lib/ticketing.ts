@@ -4,6 +4,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import QRCode from 'qrcode';
 import { supabase } from './supabase';
 import { createQrToken } from './qr-token';
+import { escapeHtml, renderEmailLayout, calloutBox, statusBadge } from './email-layout';
 
 type BookingItem = {
   quantity: number;
@@ -121,9 +122,6 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
   if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
   if (!email) throw new Error('Customer email address is missing');
 
-  const escapeHtml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
-
   // Extract the visit date from the first ticket for the email header
   const rawVisitDate = String(tickets[0]?.visit_date || '');
   const formattedVisitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : '';
@@ -132,23 +130,48 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     const scanUrl = `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(scanUrl)}`;
     const attendeeName = String(ticket.attendee_name || '');
-    return `<div style="border:2px solid #0EA5E9;border-radius:8px;padding:20px;margin-bottom:20px;text-align:center;background:#f8fafc">
-      <h3 style="color:#0EA5E9">TICKET ${index + 1}</h3>
-      ${attendeeName ? `<p style="font-size:1.3rem;font-weight:bold;color:#0f172a;margin-bottom:4px">${escapeHtml(attendeeName)}</p>` : ''}
-      <p style="font-size:1.1rem;font-weight:600;color:#334155">${escapeHtml(String(ticket.display_name || 'Entrance Ticket'))}</p>
-      <p style="color:#64748b"><strong>Ticket ID:</strong> ${escapeHtml(String(ticket.ticket_uid))}</p>
-      <img src="${qrUrl}" alt="QR Code for Ticket" width="200" height="200" />
-      <p style="color:#64748b">Present this QR code at the entrance scanner.</p>
-    </div>`;
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;margin-bottom:16px;overflow:hidden;">
+      <tr>
+        <td style="background:#0EA5E9;padding:8px 16px;">
+          <p style="margin:0;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:1px;">TICKET ${index + 1} OF ${tickets.length}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:18px 20px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="vertical-align:top;">
+                ${attendeeName ? `<p style="margin:0 0 4px;font-size:16px;font-weight:700;color:#0f172a;">${escapeHtml(attendeeName)}</p>` : ''}
+                <p style="margin:0 0 10px;font-size:13px;font-weight:600;color:#334155;">${escapeHtml(String(ticket.display_name || 'Entrance Ticket'))}</p>
+                <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Ticket ID</p>
+                <p style="margin:0 0 12px;font-size:13px;font-family:'Courier New',monospace;color:#0f172a;">${escapeHtml(String(ticket.ticket_uid))}</p>
+                <p style="margin:0;font-size:11px;color:#94a3b8;">Present this QR code at the entrance scanner.</p>
+              </td>
+              <td width="112" style="vertical-align:top;text-align:center;padding-left:14px;">
+                <img src="${qrUrl}" alt="QR Code for Ticket" width="104" height="104" style="border:1px solid #e2e8f0;border-radius:8px;" />
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>`;
   }).join('');
-  const voucherNotice = voucherRemaining !== null ? `<p style="background:#eff6ff;border:1px solid #93c5fd;padding:12px;border-radius:6px;color:#1d4ed8"><strong>Voucher balance remaining:</strong> R ${voucherRemaining.toFixed(2)}. Vouchers never expire and are valid for ticket purchases only.</p>` : '';
-  const visitDateBanner = formattedVisitDate ? `<div style="background:#f0fdf4;border:2px solid #22c55e;border-radius:8px;padding:16px;margin-bottom:20px;text-align:center"><p style="margin:0;font-size:1.15rem;color:#15803d;font-weight:700">📅 Visit Date: ${escapeHtml(formattedVisitDate)}</p></div>` : '';
-  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#0f172a">
-    <h2 style="color:#0EA5E9">Your Graceland Venues Tickets</h2><p>Hi ${escapeHtml(name)},</p>${voucherNotice}
-    <p>Your payment was successful and your booking is confirmed.</p>
-    ${visitDateBanner}
-    <p>Each person requires their own ticket to enter.</p>${ticketsHtml}<p>We look forward to seeing you!</p>
-  </div>`;
+  const voucherNotice = voucherRemaining !== null ? `<div style="background:#eff6ff;border:1px solid #93c5fd;padding:14px 16px;border-radius:8px;color:#1d4ed8;font-size:13px;margin-bottom:18px;"><strong>Voucher balance remaining:</strong> R ${voucherRemaining.toFixed(2)}. Vouchers never expire and are valid for ticket purchases only.</div>` : '';
+  const visitDateBanner = formattedVisitDate ? calloutBox({ label: 'Visit Date', value: `📅 ${escapeHtml(formattedVisitDate)}`, tone: 'green' }) : '';
+  const html = renderEmailLayout({
+    preheader: formattedVisitDate ? `Your tickets for ${formattedVisitDate} are ready` : 'Your Graceland Venues tickets are ready',
+    bodyHtml: `
+      ${statusBadge('BOOKING CONFIRMED', 'green')}
+      <h1 style="margin:0 0 16px;font-size:20px;color:#0f172a;">Your tickets are ready</h1>
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>Your payment was successful and your booking is confirmed.</p>
+      ${voucherNotice}
+      ${visitDateBanner}
+      <p>Each person requires their own ticket to enter${tickets.length > 1 ? ` — you have <strong>${tickets.length} tickets</strong> below` : ''}. A PDF copy of every ticket is also attached to this email.</p>
+      ${ticketsHtml}
+      <p>We look forward to seeing you!</p>
+    `,
+  });
   const attachments = await Promise.all(tickets.map((ticket, index) => createTicketPdf(ticket, appUrl, index)));
   const fromEmail = process.env.NODE_ENV !== 'production'
     ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za')

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { supabase } from '@/lib/supabase';
 import { checkRateLimit, getClientAddress } from '@/lib/request-security';
+import { escapeHtml, renderEmailLayout, calloutBox, statusBadge, buttonHtml } from '@/lib/email-layout';
 
 export async function POST(request: Request) {
   try {
@@ -50,8 +51,8 @@ export async function POST(request: Request) {
 
     // Extend the hold window for EFT bookings so capacity is not released
     // before the customer has time to pay and upload proof.
+    const holdHours = Number(process.env.EFT_HOLD_HOURS) || 48;
     if (booking.status === 'UNPAID') {
-      const holdHours = Number(process.env.EFT_HOLD_HOURS) || 48;
       await supabase.from('bookings').update({
         expires_at: new Date(Date.now() + holdHours * 60 * 60 * 1000).toISOString(),
       }).eq('reference', ref);
@@ -59,9 +60,35 @@ export async function POST(request: Request) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
-    const escapeHtml = (value: unknown) => String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
     const uploadUrl = `${appUrl}/upload-proof?ref=${encodeURIComponent(ref)}`;
-    const htmlContent = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#0f172a"><h2 style="color:#0EA5E9">Graceland Venues - Payment Instructions</h2><p>Hi ${escapeHtml(customer?.first_name || 'there')},</p><p>Thank you for booking with us. Your booking reference is <strong>${escapeHtml(ref)}</strong>.</p><p>Visit date: <strong>${escapeHtml(booking.visit_date || 'As selected during booking')}</strong></p><p>Please transfer <strong>R ${escapeHtml(payableAmount)}</strong> to the following account:</p><ul style="background:#f8fafc;padding:15px;list-style:none;border-radius:5px"><li><strong>Bank:</strong> Nedbank LTD</li><li><strong>Account Name:</strong> ACE contractors</li><li><strong>Account Number:</strong> 1039028861</li><li><strong>Branch Code:</strong> 103910</li></ul><p style="color:#ef4444"><strong>IMPORTANT:</strong> Use <strong>${escapeHtml(ref)}</strong> as your payment reference.</p><p>After payment, upload your proof using the link below:</p><p><a href="${uploadUrl}" style="display:inline-block;padding:10px 20px;background:#0EA5E9;color:white;text-decoration:none;border-radius:5px">Upload Proof of Payment</a></p><p>Your booking will only be confirmed and tickets issued after your proof has been reviewed and approved by our team.</p></div>`;
+    const htmlContent = renderEmailLayout({
+      preheader: `Complete your EFT payment of R ${payableAmount.toFixed(2)} for booking ${ref}`,
+      bodyHtml: `
+        ${statusBadge('PAYMENT PENDING', 'amber')}
+        <h1 style="margin:0 0 4px;font-size:20px;color:#0f172a;">Complete your EFT payment</h1>
+        <p style="margin:0 0 18px;color:#64748b;font-size:13px;">Booking reference ${escapeHtml(ref)}</p>
+        <p>Hi ${escapeHtml(customer?.first_name || 'there')},</p>
+        <p>Thank you for booking with us. Please transfer the amount below to secure your booking for your visit on <strong>${escapeHtml(booking.visit_date || 'the date selected during booking')}</strong>.</p>
+        ${calloutBox({ label: 'Amount to pay', value: `R ${escapeHtml(payableAmount.toFixed(2))}`, tone: 'amber' })}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:10px;margin:0 0 18px;">
+          <tr><td style="padding:16px 20px;">
+            <p style="margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#64748b;">Banking Details</p>
+            <table role="presentation" width="100%" cellpadding="4" cellspacing="0" style="font-size:14px;color:#0f172a;">
+              <tr><td style="color:#64748b;">Bank</td><td style="text-align:right;font-weight:600;">Nedbank LTD</td></tr>
+              <tr><td style="color:#64748b;">Account Name</td><td style="text-align:right;font-weight:600;">ACE contractors</td></tr>
+              <tr><td style="color:#64748b;">Account Number</td><td style="text-align:right;font-weight:600;">1039028861</td></tr>
+              <tr><td style="color:#64748b;">Branch Code</td><td style="text-align:right;font-weight:600;">103910</td></tr>
+            </table>
+          </td></tr>
+        </table>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin:0 0 18px;">
+          <p style="margin:0;color:#b91c1c;font-size:13px;"><strong>Important:</strong> Use <strong>${escapeHtml(ref)}</strong> as your payment reference so we can match your payment.</p>
+        </div>
+        <p>Once you have paid, upload your proof of payment so we can confirm your booking:</p>
+        ${buttonHtml(uploadUrl, 'Upload Proof of Payment')}
+        <p style="font-size:13px;color:#64748b;">Your booking is held for <strong>${holdHours} hours</strong> while we wait for proof of payment. Tickets are issued once our team has reviewed and approved it.</p>
+      `,
+    });
     const fromEmail = process.env.NODE_ENV !== 'production' ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za') : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');
 
     if (process.env.NODE_ENV !== 'production') {
