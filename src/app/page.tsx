@@ -398,7 +398,7 @@ export default function Home() {
           </div>
           
           <div style={{ backgroundColor: '#fef2f2', color: 'var(--danger)', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
-            <strong>Important:</strong> You must use the exact reference (<strong>{reference}</strong>) so we can allocate your payment. Your booking is not confirmed until proof of payment is uploaded and verified.
+            <strong>Important:</strong> You must use the exact reference (<strong>{reference}</strong>) so we can allocate your payment. Your booking is not confirmed until proof of payment is uploaded and verified. Please note that verification of proof of payment can take up to 48 hours.
           </div>
           
           <button className="btn btn-primary" style={{ width: '100%', fontSize: '1.1rem', padding: '1rem' }} onClick={() => window.location.reload()}>
