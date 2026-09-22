@@ -53,7 +53,7 @@ export function AttendeeNames({ selections, attendeeNames, onChange, onNext, onB
     onChange(updated);
   };
 
-  const allComplete = attendeeNames.length > 0 && attendeeNames.every(a => a.firstName.trim() && a.lastName.trim());
+  const allComplete = attendeeNames.length > 0 && attendeeNames.every(a => a.firstName.trim().length >= 2 && a.lastName.trim().length >= 2);
 
   // Friendly label that extracts the item name and water-activity context
   const friendlyLabel = (ticketType: string) => {
