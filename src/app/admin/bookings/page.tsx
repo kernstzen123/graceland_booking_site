@@ -16,10 +16,10 @@ export default function BookingsAdmin() {
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
   useEffect(() => { load().catch(error => setMessage(error.message)); }, []);
   const showToast = (text: string) => { setToast(text); window.setTimeout(() => setToast(''), 6000); };
-  const action = async (type: Action, ticketId?: string) => {
+  const action = async (type: Action, ticketId?: string, deductionPercentage?: number) => {
     if (!selected || busy) return;
     if (type === 'delete' && !window.confirm(`Permanently delete booking ${selected.reference}?`)) return;
-    if (type === 'refund' && !window.confirm(`Cancel ${selected.reference} and issue a voucher for R ${Number(selected.total_amount).toFixed(2)}? All valid tickets will be invalidated.`)) return;
+    if (type === 'mark_paid' && !window.confirm(`Mark booking ${selected.reference} as paid and issue tickets?`)) return;
     if (type === 'mark_paid' && !window.confirm(`Mark booking ${selected.reference} as paid and issue tickets?`)) return;
     if (type === 'resend_tickets' && !window.confirm(`Resend tickets for ${selected.reference} to the customer's email?`)) return;
     setBusy(type); setMessage(type === 'refund' ? 'Issuing voucher refund... please wait.' : type === 'resend_tickets' ? 'Resending tickets...' : 'Processing booking action... please wait.');
@@ -31,7 +31,7 @@ export default function BookingsAdmin() {
         body = undefined;
       } else if (type === 'refund') {
         endpoint = `/api/admin/bookings/${selected.id}/refund`;
-        body = undefined;
+        body = JSON.stringify({ deductionPercentage: deductionPercentage || 0 });
       } else {
         endpoint = '/api/admin/bookings';
         body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason: window.prompt('Reason (optional):') || null });
@@ -104,4 +104,65 @@ export default function BookingsAdmin() {
   </main>;
 }
 
-function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (action: Action, ticketId?: string) => void }) { const customer = customerOf(booking); return <section className="card"><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}><div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>{booking.reference}</p><h2>Booking details</h2></div><span style={{ padding: '0.35rem 0.65rem', borderRadius: 20, background: booking.voucher_issued ? '#dbeafe' : booking.status === 'PAID' ? '#dcfce7' : '#fef3c7' }}>{booking.voucher_issued ? 'Voucher issued' : booking.status}</span></div><div style={{ marginTop: '1rem', display: 'grid', gap: '0.5rem' }}><p><strong>Customer:</strong> {customer?.first_name} {customer?.last_name}</p><p><strong>Email:</strong> <span style={{ wordBreak: 'break-all' }}>{customer?.email}</span></p><p><strong>Phone:</strong> {customer?.phone}</p><p><strong>Visit date:</strong> {booking.visit_date}</p><p><strong>Total:</strong> R {Number(booking.total_amount).toFixed(2)}</p><p><strong>People:</strong> {booking.people_count}</p><p><strong>Payment:</strong> {booking.payment_method || 'Pending'}</p>{booking.refunded_at && <p><strong>Voucher issued:</strong> {new Date(booking.refunded_at).toLocaleString()}</p>}</div><h3 style={{ marginTop: '1.5rem' }}>Items</h3>{booking.booking_items?.map((item, index) => <p key={index} style={{ borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>{item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item'} × {item.quantity} · R {Number(item.subtotal).toFixed(2)}</p>)}<h3 style={{ marginTop: '1.5rem' }}>Tickets</h3>{booking.tickets?.length ? booking.tickets.map(ticket => <div key={ticket.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', flexWrap: 'wrap' }}><span style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>{ticket.ticket_uid} · <strong>{ticket.status}</strong></span>{ticket.status === 'VALID' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onAction('cancel_ticket', ticket.id)}>Invalidate</button>}</div>) : <p style={{ color: 'var(--text-muted)' }}>No tickets issued.</p>}<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: '1.5rem' }}><button className="btn btn-primary" onClick={() => onAction('resend_tickets')}>Resend tickets</button><button className="btn" onClick={() => onAction('mark_paid')} style={{ border: '1px solid var(--border-color)' }}>Mark paid</button>{!booking.voucher_issued && <button className="btn" style={{ color: '#b91c1c', border: '1px solid #b91c1c' }} onClick={() => onAction('refund')}>Voucher refund</button>}<button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)' }} onClick={() => onAction('delete')}>Delete</button></div></section>; }
+function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (action: Action, ticketId?: string, deductionPercentage?: number) => void }) {
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const customer = customerOf(booking);
+  
+  const handleRefundOption = (feePercent: number) => {
+    const originalAmount = Number(booking.total_amount);
+    const finalAmount = Math.max(0, originalAmount * ((100 - feePercent) / 100));
+    const confirmMessage = feePercent === 0 
+      ? `Refund ${booking.reference} for exactly R ${finalAmount.toFixed(2)} (Full Refund)? All valid tickets will be invalidated.`
+      : `Apply a ${feePercent}% fee and refund ${booking.reference} for exactly R ${finalAmount.toFixed(2)}? All valid tickets will be invalidated.`;
+    
+    if (window.confirm(confirmMessage)) {
+      setShowRefundModal(false);
+      onAction('refund', undefined, feePercent);
+    }
+  };
+
+  return <section className="card">
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+      <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>{booking.reference}</p><h2>Booking details</h2></div>
+      <span style={{ padding: '0.35rem 0.65rem', borderRadius: 20, background: booking.voucher_issued ? '#dbeafe' : booking.status === 'PAID' ? '#dcfce7' : '#fef3c7' }}>{booking.voucher_issued ? 'Voucher issued' : booking.status}</span>
+    </div>
+    <div style={{ marginTop: '1rem', display: 'grid', gap: '0.5rem' }}>
+      <p><strong>Customer:</strong> {customer?.first_name} {customer?.last_name}</p>
+      <p><strong>Email:</strong> <span style={{ wordBreak: 'break-all' }}>{customer?.email}</span></p>
+      <p><strong>Phone:</strong> {customer?.phone}</p>
+      <p><strong>Visit date:</strong> {booking.visit_date}</p>
+      <p><strong>Total:</strong> R {Number(booking.total_amount).toFixed(2)}</p>
+      <p><strong>People:</strong> {booking.people_count}</p>
+      <p><strong>Payment:</strong> {booking.payment_method || 'Pending'}</p>
+      {booking.refunded_at && <p><strong>Voucher issued:</strong> {new Date(booking.refunded_at).toLocaleString()}</p>}
+    </div>
+    <h3 style={{ marginTop: '1.5rem' }}>Items</h3>
+    {booking.booking_items?.map((item, index) => <p key={index} style={{ borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>{item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item'} × {item.quantity} · R {Number(item.subtotal).toFixed(2)}</p>)}
+    <h3 style={{ marginTop: '1.5rem' }}>Tickets</h3>
+    {booking.tickets?.length ? booking.tickets.map(ticket => <div key={ticket.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', flexWrap: 'wrap' }}><span style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>{ticket.ticket_uid} · <strong>{ticket.status}</strong></span>{ticket.status === 'VALID' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onAction('cancel_ticket', ticket.id)}>Invalidate</button>}</div>) : <p style={{ color: 'var(--text-muted)' }}>No tickets issued.</p>}
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: '1.5rem' }}>
+      <button className="btn btn-primary" onClick={() => onAction('resend_tickets')}>Resend tickets</button>
+      <button className="btn" onClick={() => onAction('mark_paid')} style={{ border: '1px solid var(--border-color)' }}>Mark paid</button>
+      {!booking.voucher_issued && <button className="btn" style={{ color: '#b91c1c', border: '1px solid #b91c1c' }} onClick={() => setShowRefundModal(true)}>Voucher refund</button>}
+      <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)' }} onClick={() => onAction('delete')}>Delete</button>
+    </div>
+
+    {showRefundModal && (
+      <div onClick={e => { if (e.target === e.currentTarget) setShowRefundModal(false); }} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', padding: 16 }}>
+        <div className="card" style={{ width: '100%', maxWidth: 400, animation: 'fadeInUp 0.2s ease' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h2 style={{ margin: 0, fontSize: '1.25rem' }}>Select Refund Option</h2>
+            <button onClick={() => setShowRefundModal(false)} style={{ fontSize: 22, lineHeight: 1, color: 'var(--text-muted)', padding: 4 }}>✕</button>
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>Choose the fee percentage to deduct. The customer will receive a voucher for the remaining balance.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button className="btn" onClick={() => handleRefundOption(10)} style={{ border: '1px solid var(--border-color)', justifyContent: 'center' }}>-10% fee</button>
+            <button className="btn" onClick={() => handleRefundOption(15)} style={{ border: '1px solid var(--border-color)', justifyContent: 'center' }}>-15% fee</button>
+            <button className="btn" onClick={() => handleRefundOption(20)} style={{ border: '1px solid var(--border-color)', justifyContent: 'center' }}>-20% fee</button>
+            <button className="btn" onClick={() => handleRefundOption(0)} style={{ border: '1px solid var(--primary)', color: 'var(--primary)', justifyContent: 'center', marginTop: 8 }}>Full refund</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </section>;
+}
