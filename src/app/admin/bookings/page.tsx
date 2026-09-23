@@ -10,6 +10,7 @@ const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? book
 
 export default function BookingsAdmin() {
   const [query, setQuery] = useState(''); const [bookings, setBookings] = useState<Booking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...'); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
+  const [showExport, setShowExport] = useState(false); const [exportMode, setExportMode] = useState<'all' | 'range'>('all'); const [exportFrom, setExportFrom] = useState(''); const [exportTo, setExportTo] = useState(''); const [exporting, setExporting] = useState(false);
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
   const load = async (search = query) => { const response = await fetch(`/api/admin/bookings?q=${encodeURIComponent(search)}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' }); const data = await response.json(); if (!response.ok) throw new Error(data.error); setBookings(data.bookings); setSelected(current => current ? data.bookings.find((booking: Booking) => booking.id === current.id) || null : null); setMessage(data.bookings.length ? '' : 'No bookings found.'); };
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
@@ -43,12 +44,54 @@ export default function BookingsAdmin() {
     } finally { setBusy(''); }
   };
   const refundAll = async () => { if (busy) return; const eligible = bookings.filter(booking => booking.visit_date === refundDate && ['PAID', 'CONFIRMED'].includes(booking.status) && !booking.voucher_issued); const total = eligible.reduce((sum, booking) => sum + Number(booking.total_amount), 0); if (!eligible.length) return setMessage('No paid, unrefunded bookings found for that date.'); if (!window.confirm(`Issue vouchers for ${eligible.length} bookings on ${refundDate}, totalling R ${total.toFixed(2)}? This will cancel them and invalidate their tickets.`)) return; setBusy('refund-all'); setMessage('Issuing vouchers for the selected date... please wait.'); try { const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { showToast(data.message); await load(); } } finally { setBusy(''); } };
+  const exportBookings = async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (exportMode === 'range') {
+        if (exportFrom) params.set('date_from', exportFrom);
+        if (exportTo) params.set('date_to', exportTo);
+      }
+      const accessToken = await token();
+      const response = await fetch(`/api/admin/export-excel?${params.toString()}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!response.ok) { const data = await response.json().catch(() => ({ error: 'Export failed' })); showToast(data.error || 'Export failed'); return; }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url;
+      const disposition = response.headers.get('Content-Disposition');
+      a.download = disposition?.match(/filename="(.+)"/)?.[1] || 'graceland-bookings.xlsx';
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      showToast('Excel file downloaded successfully');
+      setShowExport(false);
+    } catch { showToast('Export failed — please try again'); }
+    finally { setExporting(false); }
+  };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     {toast && <div role="status" style={{ position: 'fixed', top: 24, right: 24, left: 24, zIndex: 20, background: '#065f46', color: 'white', padding: '1rem 1.25rem', borderRadius: 10, textAlign: 'center' }}>✓ {toast}</div>}
     <div className="admin-header">
       <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>OPERATIONS</p><h1>All bookings</h1></div>
-      <div className="admin-nav"><a className="btn" href="/admin/vouchers" style={{ border: '1px solid var(--border-color)' }}>Vouchers</a><a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</a></div>
+      <div className="admin-nav"><button className="btn" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ background: 'var(--primary)', color: 'white', border: 'none', gap: 6 }}>📥 Export</button><a className="btn" href="/admin/vouchers" style={{ border: '1px solid var(--border-color)' }}>Vouchers</a><a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</a></div>
     </div>
+    {/* ── Export Modal ─── */}
+    {showExport && <div onClick={e => { if (e.target === e.currentTarget) setShowExport(false); }} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', padding: 16 }}>
+      <div className="card" style={{ width: '100%', maxWidth: 440, animation: 'fadeInUp 0.2s ease' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ margin: 0 }}>Export Bookings</h2>
+          <button onClick={() => setShowExport(false)} style={{ fontSize: 22, lineHeight: 1, color: 'var(--text-muted)', padding: 4 }}>✕</button>
+        </div>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>Download an Excel file with all booking details, customer info, items, and ticket IDs.</p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <button onClick={() => setExportMode('all')} className="btn" style={{ flex: 1, background: exportMode === 'all' ? 'var(--primary)' : 'transparent', color: exportMode === 'all' ? 'white' : 'var(--text-main)', border: `1px solid ${exportMode === 'all' ? 'var(--primary)' : 'var(--border-color)'}`, transition: 'all 0.15s' }}>All Bookings</button>
+          <button onClick={() => setExportMode('range')} className="btn" style={{ flex: 1, background: exportMode === 'range' ? 'var(--primary)' : 'transparent', color: exportMode === 'range' ? 'white' : 'var(--text-main)', border: `1px solid ${exportMode === 'range' ? 'var(--primary)' : 'var(--border-color)'}`, transition: 'all 0.15s' }}>Date Range</button>
+        </div>
+        {exportMode === 'range' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>From<input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)} style={{ padding: '0.6rem', border: '1px solid var(--border-color)', borderRadius: 8 }} /></label>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>To<input type="date" value={exportTo} onChange={e => setExportTo(e.target.value)} style={{ padding: '0.6rem', border: '1px solid var(--border-color)', borderRadius: 8 }} /></label>
+        </div>}
+        {exportMode === 'range' && !exportFrom && !exportTo && <p style={{ color: 'var(--warning)', fontSize: '0.8rem', marginBottom: 12 }}>Select at least one date to filter, or switch to &quot;All Bookings&quot;.</p>}
+        <button className="btn btn-primary" disabled={exporting || (exportMode === 'range' && !exportFrom && !exportTo)} onClick={exportBookings} style={{ width: '100%', opacity: exporting || (exportMode === 'range' && !exportFrom && !exportTo) ? 0.6 : 1, gap: 8 }}>{exporting ? '⏳ Generating…' : '📥 Download Excel'}</button>
+      </div>
+    </div>}
     <div className="card" style={{ marginBottom: '1rem' }}>
       <form onSubmit={event => { event.preventDefault(); load().catch(error => setMessage(error.message)); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search ref, ticket, name, or email" style={{ flex: '1 1 200px', padding: '0.8rem', border: '1px solid var(--border-color)', borderRadius: 8 }} /><button className="btn btn-primary">Search</button></form>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>Refund all for <input type="date" value={refundDate} onChange={event => setRefundDate(event.target.value)} style={{ padding: 8, marginLeft: 4 }} /></label><button className="btn" onClick={refundAll} style={{ color: '#b91c1c', border: '1px solid #b91c1c' }}>Refund all for date</button></div>
