@@ -7,6 +7,7 @@ import { customerError } from '@/lib/public-errors';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { BOOKABLE_ITEMS, calculateServerTotal, validatePartyFields } from '@/lib/pricing';
+import { validateVisitDate } from '@/lib/opening-rules';
 
 export async function POST(request: Request) {
   try {
@@ -18,6 +19,7 @@ export async function POST(request: Request) {
     }
     if (termsAccepted !== true || privacyAccepted !== true) throw new Error('You must accept both the Terms and Conditions and Privacy Policy before booking');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate) || new Date(`${selectedDate}T00:00:00Z`).toISOString().slice(0, 10) !== selectedDate) throw new Error('Invalid visit date');
+    validateVisitDate(selectedDate);
     const firstName = cleanText(customerDetails.firstName, 80);
     const lastName = cleanText(customerDetails.lastName, 80);
     const email = cleanText(customerDetails.email, 254).toLowerCase();

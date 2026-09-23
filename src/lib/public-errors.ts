@@ -17,6 +17,8 @@ export function customerError(error: unknown, fallback: string) {
     'Unknown booking item:',
     'Too many requests. Please wait a moment and try again.',
     'Booking reference is required',
+    'Graceland is closed on the selected date. Please choose another date.',
+    'The selected visit date has already passed. Please choose a future date.',
   ];
   if (safeMessages.some(safe => message === safe || message.startsWith(safe))) return message;
   if (/capacity exceeded/i.test(message)) return 'This date is full. Please choose another date or contact support.';

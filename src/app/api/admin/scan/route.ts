@@ -3,6 +3,7 @@ import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { checkRateLimit, cleanText } from '@/lib/request-security';
 import { verifyQrToken } from '@/lib/qr-token';
+import { johannesburgToday } from '@/lib/opening-rules';
 
 export async function POST(request: Request) {
   try {
@@ -61,7 +62,7 @@ export async function POST(request: Request) {
     }).filter(Boolean).join(', ');
     const base = { ticketUid: ticket.ticket_uid, ...(role !== 'SCANNER' ? { customerName: [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || 'Guest' } : {}), packageName: resolvedPackageName || 'Entrance Ticket', ...(seating ? { seating } : {}) };
     if (ticket.status !== 'VALID') return NextResponse.json({ success: false, status: ticket.status === 'USED' ? 'USED' : 'INVALID', ...base });
-    if (ticket.visit_date !== new Date().toISOString().slice(0, 10)) return NextResponse.json({ success: false, status: 'EXPIRED', ...base });
+    if (ticket.visit_date !== johannesburgToday()) return NextResponse.json({ success: false, status: 'EXPIRED', ...base });
 
     const { data: consumedTicket, error: updateError } = await supabase.from('tickets')
       .update({ status: 'USED' }).eq('id', ticket.id).eq('status', 'VALID').select('id').maybeSingle();

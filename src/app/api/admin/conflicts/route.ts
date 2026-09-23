@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
+import { johannesburgToday } from '@/lib/opening-rules';
 
 /**
  * GET  /api/admin/conflicts?date=YYYY-MM-DD — list unresolved conflicts
@@ -12,7 +13,7 @@ export async function GET(request: Request) {
     await requireAdmin(request, ['ADMIN', 'MANAGER']);
 
     const url = new URL(request.url);
-    const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
+    const date = url.searchParams.get('date') || johannesburgToday();
     const showResolved = url.searchParams.get('resolved') === 'true';
 
     let query = supabase

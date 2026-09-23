@@ -12,6 +12,11 @@
 const DB_NAME = 'graceland-scanner';
 const DB_VERSION = 2;
 
+/** Returns today's date as YYYY-MM-DD in the Africa/Johannesburg timezone. */
+function johannesburgTodayClient(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date());
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type OfflineTicket = {
@@ -174,7 +179,7 @@ export async function clearCachedSession(): Promise<void> {
 // ── Sync tickets from server ───────────────────────────────────────────────
 
 export async function syncTicketsFromServer(authToken: string, date?: string): Promise<{ count: number; synced_at: string }> {
-  const targetDate = date || new Date().toISOString().slice(0, 10);
+  const targetDate = date || johannesburgTodayClient();
   const response = await fetch(`/api/admin/scan/sync-tickets?date=${targetDate}`, {
     headers: { Authorization: `Bearer ${authToken}` },
     cache: 'no-store',
@@ -318,7 +323,7 @@ export async function checkInLocally(ticketUid: string, deviceId: string): Promi
     return { success: false, error: 'Ticket not found in local database' };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = johannesburgTodayClient();
   if (ticket.visit_date !== today) {
     return { success: false, ticket, error: 'WRONG DATE' };
   }

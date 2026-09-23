@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server';
 import { getPartySlots } from '@/lib/parties';
 import { supabase } from '@/lib/supabase';
+import { validateVisitDate } from '@/lib/opening-rules';
 
 export async function GET(request: Request) {
   const date = new URL(request.url).searchParams.get('date') || '';
+
+  // Reject closed or invalid dates before querying party slots
+  try { validateVisitDate(date); } catch {
+    return NextResponse.json({ date, slots: [], bookedSlots: [], availableSlots: [], nextAvailableDate: null });
+  }
+
   const slots = getPartySlots(date);
 
   // Fetch all venue spots to count total huts
