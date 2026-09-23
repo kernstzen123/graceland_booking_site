@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 type Proof = { id: string; file_url: string; signed_url: string | null; status: string; admin_notes: string | null; uploaded_at: string; bookings?: { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> } | { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> }[] };
 
@@ -10,15 +11,26 @@ export default function ReviewProofs() {
   const [proofs, setProofs] = useState<Proof[]>([]);
   const [message, setMessage] = useState('Loading proofs…');
   const [actionMessage, setActionMessage] = useState<{ proofId: string; text: string; type: 'success' | 'warning' | 'error' } | null>(null);
+  const { confirm, dialog } = useConfirm();
   const load = async () => { const session = (await supabaseBrowser.auth.getSession()).data.session; if (!session) return; const res = await fetch(`/api/admin/proofs?status=${status}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: 'no-store' }); const data = await res.json(); if (!res.ok) throw new Error(data.error); setProofs(data.proofs); setMessage(data.proofs.length ? '' : 'No proofs in this queue.'); };
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
   useEffect(() => { load().catch(error => setMessage(error.message)); }, [status]);
   const act = async (proof: Proof, action: 'approve' | 'reject', force = false) => {
     const booking = Array.isArray(proof.bookings) ? proof.bookings[0] : proof.bookings;
-    const reason = action === 'reject' ? window.prompt('Reason for rejection:') : '';
-    if (action === 'reject' && !reason) return;
-    if (action === 'approve' && !force && !window.confirm(`Approve ${booking?.reference || 'this proof'} and issue tickets?`)) return;
-    if (force && !window.confirm(`⚠️ FORCE APPROVE: The day may be full. Are you sure you want to force-approve ${booking?.reference || 'this proof'}?`)) return;
+    let reason = '';
+    if (action === 'reject') {
+      const result = await confirm({ title: 'Reject proof of payment', message: `Reject the proof of payment for ${booking?.reference || 'this booking'}?`, confirmLabel: 'Reject proof', tone: 'danger', promptLabel: 'Reason for rejection', promptPlaceholder: 'e.g. Amount does not match, unclear reference...', promptRequired: true });
+      if (!result.confirmed) return;
+      reason = result.value;
+    }
+    if (action === 'approve' && !force) {
+      const result = await confirm({ title: 'Approve proof of payment', message: `Approve ${booking?.reference || 'this proof'} and issue tickets?`, confirmLabel: 'Approve', tone: 'primary' });
+      if (!result.confirmed) return;
+    }
+    if (force) {
+      const result = await confirm({ title: 'Force approve', message: `The day may be at capacity. Are you sure you want to force-approve ${booking?.reference || 'this proof'}?`, confirmLabel: 'Force approve', tone: 'danger' });
+      if (!result.confirmed) return;
+    }
     setActionMessage(null);
     const session = (await supabaseBrowser.auth.getSession()).data.session;
     if (!session) return;
@@ -65,5 +77,6 @@ export default function ReviewProofs() {
       {status === 'PENDING' && <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}><button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', flex: '1 1 120px' }} onClick={() => act(proof, 'reject')}>Reject</button><button className="btn btn-primary" style={{ flex: '1 1 120px' }} onClick={() => act(proof, 'approve')}>Approve &amp; issue tickets</button></div>}
     </article>; })}</div>
     <a href="/admin" className="btn" style={{ marginTop: '2rem', border: '1px solid var(--border-color)' }}>Back to dashboard</a>
+    {dialog}
   </main>;
 }

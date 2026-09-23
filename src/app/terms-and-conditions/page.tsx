@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { MailIcon, PhoneIcon } from '@/components/icons';
 
 const SECTIONS = [
   { id: 'introduction', title: 'Introduction' },
@@ -16,11 +17,11 @@ export default function TermsAndConditions() {
   return (
     <main className="container legal-page">
       <article className="card legal-doc">
-        <div className="legal-hero">
+        <div className="legal-header">
           <p className="legal-kicker">Graceland Venues</p>
           <h1>Booking Terms and Conditions</h1>
           <p>Please read these terms carefully before booking your visit.</p>
-          <span className="legal-updated-badge">🕑 Last updated: September 9, 2026</span>
+          <p className="legal-updated">Last updated: <strong>September 9, 2026</strong></p>
         </div>
 
         <div className="legal-body">
@@ -54,7 +55,7 @@ export default function TermsAndConditions() {
             <h2>Cancellation policy</h2>
 
             <h3>Graceland venues cancellation</h3>
-            <div className="legal-callout legal-callout-info">
+            <div className="callout callout-info">
               <p>In the event of Graceland Venues cancelling the client&apos;s reservation due to unforeseen circumstances i.e. severe weather, acts of nature, the client will have the option to postpone a date within the applicable summer season or receive a full refund within 30 days.</p>
             </div>
 
@@ -87,7 +88,7 @@ export default function TermsAndConditions() {
 
           <section id="no-show" className="legal-section">
             <h2>No show policy</h2>
-            <div className="legal-callout legal-callout-danger">
+            <div className="callout callout-danger">
               <p>Bookings are non-refundable and non-transferable if the client fails to arrive for their scheduled booking. No refunds, credits, or postponements will be provided for missed bookings or no shows.</p>
             </div>
           </section>
@@ -139,8 +140,8 @@ export default function TermsAndConditions() {
             <h2>Contact information</h2>
             <p>For any inquiries, cancellations, or assistance, please contact us at:</p>
             <div className="legal-contact-card">
-              <span>✉️ <a href="mailto:info@gracelandvenues.co.za">info@gracelandvenues.co.za</a></span>
-              <span>📞 072 264 4009</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MailIcon /> <a href="mailto:info@gracelandvenues.co.za">info@gracelandvenues.co.za</a></span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><PhoneIcon /> 072 264 4009</span>
             </div>
           </section>
 

@@ -9,6 +9,21 @@
   --success: #10b981;
   --danger: #ef4444;
   --warning: #f59e0b;
+
+  /* Semantic tint tokens — one source of truth for info/success/warning/danger
+     surfaces, used by .callout-* below and reused across booking + legal pages. */
+  --info-bg: #f0f9ff;
+  --info-border: #bae6fd;
+  --info-text: #0369a1;
+  --success-bg: #f0fdf4;
+  --success-border: #bbf7d0;
+  --success-text: #15803d;
+  --warning-bg: #fff7ed;
+  --warning-border: #fed7aa;
+  --warning-text: #9a3412;
+  --danger-bg: #fef2f2;
+  --danger-border: #fecaca;
+  --danger-text: #991b1b;
 }
 
 * {
@@ -76,6 +91,15 @@ button {
   color: var(--white);
 }
 
+.btn-danger {
+  background-color: var(--danger);
+  color: var(--white);
+}
+
+.btn-danger:hover {
+  background-color: #dc2626;
+}
+
 .btn-primary:hover {
   background-color: var(--primary-hover);
   transform: translateY(-1px);
@@ -89,7 +113,55 @@ button {
 
 .btn-secondary:hover {
   border-color: var(--primary);
-  background-color: #f0f9ff;
+  background-color: var(--info-bg);
+}
+
+/* ── Callouts — shared semantic surfaces used across booking + legal pages ── */
+
+.callout {
+  border-radius: 0.65rem;
+  padding: 1rem 1.15rem;
+  margin: 1rem 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  border: 1px solid;
+}
+
+.callout p {
+  margin: 0 0 0.5rem;
+  color: inherit;
+}
+
+.callout p:last-child {
+  margin-bottom: 0;
+}
+
+.callout strong {
+  color: inherit;
+}
+
+.callout-info {
+  background: var(--info-bg);
+  border-color: var(--info-border);
+  color: var(--info-text);
+}
+
+.callout-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.callout-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
+.callout-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
 }
 
 /* ── Legal document pages (Privacy Policy, Terms & Conditions) ──────────── */
@@ -102,13 +174,11 @@ button {
   max-width: 760px;
   margin: 0 auto;
   padding: 0;
-  overflow: hidden;
 }
 
-.legal-hero {
-  background: linear-gradient(135deg, var(--primary), var(--primary-hover));
-  padding: 2.5rem 2rem;
-  color: var(--white);
+.legal-header {
+  padding: 2.5rem 2rem 1.75rem;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .legal-kicker {
@@ -116,33 +186,30 @@ button {
   letter-spacing: 0.12em;
   font-size: 0.75rem;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
-  margin-bottom: 0.5rem;
+  color: var(--primary);
+  margin-bottom: 0.6rem;
 }
 
-.legal-hero h1 {
+.legal-header h1 {
   font-size: 2rem;
   font-weight: 800;
-  margin-bottom: 0.85rem;
+  color: var(--text-main);
+  margin-bottom: 0.6rem;
   line-height: 1.2;
 }
 
-.legal-hero p {
-  color: rgba(255, 255, 255, 0.85);
-  margin-bottom: 1rem;
+.legal-header p {
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
 }
 
-.legal-updated-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  padding: 0.35rem 0.75rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--white);
+.legal-updated {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.legal-updated strong {
+  color: var(--text-main);
 }
 
 .legal-body {
@@ -275,42 +342,6 @@ button {
   background: var(--primary);
 }
 
-.legal-callout {
-  border-radius: 0.65rem;
-  padding: 1rem 1.15rem;
-  margin: 1rem 0;
-  font-size: 0.92rem;
-  line-height: 1.6;
-  border: 1px solid;
-}
-
-.legal-callout p {
-  margin: 0;
-  color: inherit;
-}
-
-.legal-callout-warning {
-  background: #fffbeb;
-  border-color: #fcd34d;
-  color: #92400e;
-}
-
-.legal-callout-danger {
-  background: #fef2f2;
-  border-color: #fecaca;
-  color: #991b1b;
-}
-
-.legal-callout-info {
-  background: #eff6ff;
-  border-color: #bae6fd;
-  color: #075985;
-}
-
-.legal-callout strong {
-  color: inherit;
-}
-
 .legal-fee-table {
   width: 100%;
   border-collapse: collapse;
@@ -336,6 +367,39 @@ button {
 .legal-fee-table td:last-child {
   font-weight: 700;
   color: var(--primary);
+  white-space: nowrap;
+}
+
+/* Generic bordered table for label/value and multi-column reference data
+   (e.g. "Who we are", "Who we share information with"). */
+.legal-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.88rem;
+}
+
+.legal-table th,
+.legal-table td {
+  text-align: left;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+}
+
+.legal-table th {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--bg-color);
+}
+
+.legal-table .legal-table-label {
+  font-weight: 700;
+  color: var(--text-main);
+  background: var(--bg-color);
+  width: 32%;
   white-space: nowrap;
 }
 
@@ -392,11 +456,11 @@ button {
 }
 
 @media (max-width: 640px) {
-  .legal-hero {
-    padding: 1.75rem 1.25rem;
+  .legal-header {
+    padding: 1.75rem 1.25rem 1.5rem;
   }
 
-  .legal-hero h1 {
+  .legal-header h1 {
     font-size: 1.5rem;
   }
 
@@ -406,6 +470,303 @@ button {
 
   .legal-toc {
     padding: 1rem 1.15rem;
+  }
+}
+
+/* ── Birthday parties section (booking flow, step 2) ─────────────────────── */
+
+.party-section {
+  background: var(--white);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.party-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.party-section h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-main);
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--primary);
+}
+
+.party-subtitle {
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.party-checklist {
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 0 1.25rem;
+  padding: 0;
+}
+
+.party-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  color: var(--text-main);
+}
+
+.party-checklist svg {
+  flex-shrink: 0;
+}
+
+.party-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1.5px solid var(--border-color);
+  border-radius: 0.65rem;
+  cursor: pointer;
+  margin-bottom: 1.25rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.party-toggle-row:hover {
+  border-color: var(--primary);
+}
+
+.party-toggle-row.active {
+  border-color: var(--primary);
+  background: var(--info-bg);
+}
+
+.party-toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.party-toggle-row span {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-main);
+}
+
+.party-fieldset {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 0.4rem;
+}
+
+.field-input {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  background: var(--white);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+}
+
+.party-grid-2 {
+  display: grid;
+  gap: 1.1rem;
+}
+
+@media (min-width: 560px) {
+  .party-grid-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.party-option-cards {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 560px) {
+  .party-option-cards {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.party-option-card {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  border: 1.5px solid var(--border-color);
+  border-radius: 0.65rem;
+  padding: 0.9rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.party-option-card:hover {
+  border-color: var(--primary);
+}
+
+.party-option-card.selected {
+  border-color: var(--primary);
+  background: var(--info-bg);
+}
+
+.party-option-card input {
+  margin-top: 3px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.party-option-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--text-main);
+  margin-bottom: 2px;
+}
+
+.party-option-desc {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+}
+
+.party-entry-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.party-entry-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  font-size: 0.88rem;
+  color: var(--text-main);
+}
+
+.party-entry-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.party-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin-top: 0.25rem;
+}
+
+/* ── Modals — shared dialog shell for confirmations and admin popups ────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  padding: 16px;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--white);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: 0 20px 40px -12px rgba(15, 23, 42, 0.35);
+  animation: fadeInUp 0.2s ease;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 0.75rem;
+}
+
+.modal-header h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.modal-close {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.modal-close:hover {
+  background: var(--bg-color);
+  color: var(--text-main);
+}
+
+.modal-message {
+  color: #334155;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  margin-bottom: 1.1rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
+}
+
+@media (max-width: 480px) {
+  .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .modal-actions .btn {
+    width: 100%;
   }
 }
 

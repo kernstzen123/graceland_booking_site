@@ -157,7 +157,7 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     </table>`;
   }).join('');
   const voucherNotice = voucherRemaining !== null ? `<div style="background:#eff6ff;border:1px solid #93c5fd;padding:14px 16px;border-radius:8px;color:#1d4ed8;font-size:13px;margin-bottom:18px;"><strong>Voucher balance remaining:</strong> R ${voucherRemaining.toFixed(2)}. Vouchers never expire and are valid for ticket purchases only.</div>` : '';
-  const visitDateBanner = formattedVisitDate ? calloutBox({ label: 'Visit Date', value: `📅 ${escapeHtml(formattedVisitDate)}`, tone: 'green' }) : '';
+  const visitDateBanner = formattedVisitDate ? calloutBox({ label: 'Visit Date', value: escapeHtml(formattedVisitDate), tone: 'green' }) : '';
   const html = renderEmailLayout({
     preheader: formattedVisitDate ? `Your tickets for ${formattedVisitDate} are ready` : 'Your Graceland Venues tickets are ready',
     bodyHtml: `

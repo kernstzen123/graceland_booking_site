@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 type Redemption = { id: string; booking_id: string; amount_used: number; created_at: string; bookings?: { reference: string; visit_date: string } | Array<{ reference: string; visit_date: string }> };
 type Voucher = { id: string; credit_code: string; original_amount: number; remaining_balance: number; status: string; created_at: string; issued_by?: string; bookings?: { reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> } | Array<{ reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> }>; credit_redemptions?: Redemption[] };
@@ -11,12 +12,19 @@ const first = <T,>(value: T | T[] | undefined) => Array.isArray(value) ? value[0
 
 export default function VouchersAdmin() {
   const [vouchers, setVouchers] = useState<Voucher[]>([]); const [summary, setSummary] = useState<Summary | null>(null); const [failures, setFailures] = useState<Failure[]>([]); const [query, setQuery] = useState(''); const [status, setStatus] = useState(''); const [message, setMessage] = useState('Loading vouchers...'); const [busy, setBusy] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
   const load = async () => { const headers = { Authorization: `Bearer ${await token()}` }; const [listResponse, summaryResponse, failuresResponse] = await Promise.all([fetch(`/api/admin/vouchers?q=${encodeURIComponent(query)}&status=${status}`, { headers, cache: 'no-store' }), fetch('/api/admin/vouchers/summary', { headers, cache: 'no-store' }), fetch('/api/admin/notifications', { headers, cache: 'no-store' })]); const list = await listResponse.json(); const totals = await summaryResponse.json(); const failed = await failuresResponse.json(); if (!listResponse.ok) throw new Error(list.error); setVouchers(list.vouchers); setSummary(totals.summary); setFailures(failed.failures || []); setMessage(list.vouchers.length ? '' : 'No vouchers found.'); };
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
   useEffect(() => { load().catch(error => setMessage(error.message)); }, [status]);
   const retry = async (failureId: string) => { if (busy) return; setBusy('retry'); setMessage('Retrying email... please wait.'); try { const response = await fetch('/api/admin/notifications', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ failureId }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) await load(); } finally { setBusy(''); } };
-  const voidVoucher = async (voucher: Voucher) => { if (busy) return; const reason = window.prompt('Reason for voiding this voucher:'); if (!reason?.trim() || !window.confirm(`Permanently void ${voucher.credit_code}? Its remaining balance will be retained for audit purposes.`)) return; setBusy('void'); setMessage('Voiding voucher... please wait.'); try { const response = await fetch(`/api/admin/vouchers/${voucher.id}/void`, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) await load(); } finally { setBusy(''); } };
+  const voidVoucher = async (voucher: Voucher) => {
+    if (busy) return;
+    const result = await confirm({ title: 'Void voucher', message: `Permanently void ${voucher.credit_code}? Its remaining balance will be retained for audit purposes.`, confirmLabel: 'Void voucher', tone: 'danger', promptLabel: 'Reason for voiding', promptPlaceholder: 'e.g. Issued in error, duplicate booking...', promptRequired: true });
+    if (!result.confirmed) return;
+    setBusy('void'); setMessage('Voiding voucher... please wait.');
+    try { const response = await fetch(`/api/admin/vouchers/${voucher.id}/void`, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: result.value }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) await load(); } finally { setBusy(''); }
+  };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     <div className="admin-header"><div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>FINANCE OPERATIONS</p><h1>Rebooking vouchers</h1></div><a className="btn" href="/admin/bookings" style={{ border: '1px solid var(--border-color)' }}>All bookings</a></div>
     {summary && <div className="admin-stats">{[['Outstanding', summary.outstanding], ['Total issued', summary.totalIssued], ['Total redeemed', summary.totalRedeemed], ['Total voided', summary.totalVoided]].map(([label, value]) => <div className="card" key={String(label)}><p style={{ color: 'var(--text-muted)' }}>{label}</p><strong style={{ fontSize: '1.6rem', color: label === 'Outstanding' ? 'var(--warning)' : 'var(--primary)' }}>R {Number(value).toFixed(2)}</strong></div>)}</div>}
@@ -48,5 +56,6 @@ export default function VouchersAdmin() {
         {expanded === voucher.id && <div style={{ marginTop: 10 }}>{redemptions.length ? redemptions.map(redemption => { const usedBooking = first(redemption.bookings); return <p key={redemption.id} style={{ borderTop: '1px solid var(--border-color)', padding: '6px 0', fontSize: 13 }}>{usedBooking?.reference || redemption.booking_id} · R {Number(redemption.amount_used).toFixed(2)} · {new Date(redemption.created_at).toLocaleString()}</p>; }) : <p style={{ color: 'var(--text-muted)' }}>No redemptions.</p>}</div>}
       </div>;
     })}</div>
+    {dialog}
   </main>;
 }

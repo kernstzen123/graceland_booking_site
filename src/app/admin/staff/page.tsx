@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 type Staff = { id: string; name: string; email: string; role: 'ADMIN' | 'MANAGER' | 'SCANNER'; active: boolean; created_at: string; last_login: string | null };
 type Activity = { id: string; action: string; entity_type: string; entity_id: string; created_at: string };
@@ -9,16 +10,29 @@ const roleName = (role: Staff['role']) => role === 'SCANNER' ? 'Gate Staff' : ro
 
 export default function StaffManagement() {
   const [staff, setStaff] = useState<Staff[]>([]); const [selected, setSelected] = useState<Staff | null>(null); const [query, setQuery] = useState(''); const [roleFilter, setRoleFilter] = useState(''); const [message, setMessage] = useState('Loading staff…'); const [activity, setActivity] = useState<Activity[]>([]); const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [role, setRole] = useState<Staff['role']>('SCANNER'); const [editName, setEditName] = useState(''); const [editEmail, setEditEmail] = useState('');
+  const { confirm, dialog } = useConfirm();
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
   const load = async () => { const response = await fetch(`/api/admin/staff?q=${encodeURIComponent(query)}&role=${roleFilter}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' }); const data = await response.json(); if (!response.ok) throw new Error(data.error); setStaff(data.staff); setMessage(data.staff.length ? '' : 'No staff members found.'); };
   const loadActivity = async (member: Staff) => { setSelected(member); setEditName(member.name); setEditEmail(member.email); const response = await fetch(`/api/admin/audit?userId=${member.id}&limit=100`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' }); const data = await response.json(); if (response.ok) setActivity(data.entries); };
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
   useEffect(() => { load().catch(error => setMessage(error.message)); }, [roleFilter]);
   const invite = async (event: React.FormEvent) => { event.preventDefault(); const response = await fetch('/api/admin/staff', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, role }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { setName(''); setEmail(''); await load(); } };
-  const update = async (changes: Record<string, unknown>) => { if (!selected) return; if (changes.active === false && !window.confirm(`Deactivate ${selected.name}? Their active sessions will be revoked.`)) return; const response = await fetch('/api/admin/staff', { method: 'PATCH', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: selected.id, ...changes }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { await load(); const refreshed = staff.find(member => member.id === selected.id); if (refreshed) loadActivity({ ...refreshed, ...changes } as Staff); } };
+  const update = async (changes: Record<string, unknown>) => {
+    if (!selected) return;
+    if (changes.active === false) {
+      const result = await confirm({ title: 'Deactivate staff member', message: `Deactivate ${selected.name}? Their active sessions will be revoked.`, confirmLabel: 'Deactivate', tone: 'danger' });
+      if (!result.confirmed) return;
+    }
+    const response = await fetch('/api/admin/staff', { method: 'PATCH', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: selected.id, ...changes }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { await load(); const refreshed = staff.find(member => member.id === selected.id); if (refreshed) loadActivity({ ...refreshed, ...changes } as Staff); }
+  };
   const resend = async () => { if (!selected) return; const response = await fetch('/api/admin/staff', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resend_invite', userId: selected.id }) }); const data = await response.json(); setMessage(data.message || data.error); };
   const saveDetails = () => update({ name: editName, email: editEmail });
-  const deleteStaff = async () => { if (!selected || !window.confirm(`Permanently delete ${selected.name}? This removes their login and role. Historical audit entries will be retained.`)) return; const response = await fetch(`/api/admin/staff?userId=${selected.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${await token()}` } }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { setSelected(null); await load(); } };
+  const deleteStaff = async () => {
+    if (!selected) return;
+    const result = await confirm({ title: 'Delete staff member', message: `Permanently delete ${selected.name}? This removes their login and role. Historical audit entries will be retained.`, confirmLabel: 'Delete', tone: 'danger' });
+    if (!result.confirmed) return;
+    const response = await fetch(`/api/admin/staff?userId=${selected.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${await token()}` } }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { setSelected(null); await load(); }
+  };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     <div className="admin-header"><div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>SECURITY &amp; ACCESS</p><h1>Staff management</h1></div><a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</a></div>
     <div className="card" style={{ marginBottom: '1rem' }}>
@@ -44,5 +58,6 @@ export default function StaffManagement() {
         <h3 style={{ marginTop: 24 }}>Recent activity</h3>{activity.length ? activity.slice(0, 20).map(item => <p key={item.id} style={{ borderBottom: '1px solid var(--border-color)', padding: '8px 0', fontSize: 13 }}><strong>{item.action}</strong> · {item.entity_type} · {new Date(item.created_at).toLocaleString()}<br /><span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{item.entity_id}</span></p>) : <p style={{ color: 'var(--text-muted)' }}>No recent activity.</p>}
       </aside>}
     </div>
+    {dialog}
   </main>;
 }

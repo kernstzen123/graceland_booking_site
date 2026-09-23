@@ -27,11 +27,11 @@ export function renderEmailLayout(options: { preheader?: string; bodyHtml: strin
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef2f7;padding:32px 12px;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,0.08);">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
             <tr>
-              <td style="background:linear-gradient(135deg,#0EA5E9,#0369a1);padding:30px 32px;text-align:center;">
-                <p style="margin:0;font-size:22px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">GRACELAND VENUES</p>
-                <p style="margin:6px 0 0;font-size:11px;font-weight:600;color:#e0f2fe;text-transform:uppercase;letter-spacing:2px;">Waterpark &amp; Event Venue</p>
+              <td style="background-color:#0EA5E9;padding:24px 32px;text-align:center;border-bottom:3px solid #0369a1;">
+                <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;letter-spacing:0.5px;">GRACELAND VENUES</p>
+                <p style="margin:4px 0 0;font-size:11px;font-weight:600;color:#e0f2fe;text-transform:uppercase;letter-spacing:1.5px;">Waterpark &amp; Event Venue</p>
               </td>
             </tr>
             <tr>
@@ -69,8 +69,8 @@ export function statusBadge(label: string, tone: keyof typeof BADGES = 'green') 
 
 export function buttonHtml(href: string, label: string) {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px auto;">
-    <tr><td style="border-radius:8px;background:linear-gradient(135deg,#0EA5E9,#0369a1);">
-      <a href="${href}" style="display:inline-block;padding:13px 28px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px;">${escapeHtml(label)}</a>
+    <tr><td style="border-radius:6px;background-color:#0EA5E9;">
+      <a href="${href}" style="display:inline-block;padding:13px 28px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:6px;">${escapeHtml(label)}</a>
     </td></tr>
   </table>`;
 }

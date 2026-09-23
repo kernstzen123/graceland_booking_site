@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import { useConfirm } from '@/components/ConfirmDialog';
+import { DownloadIcon } from '@/components/icons';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; customers?: Customer | Customer[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }> };
@@ -11,6 +13,7 @@ const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? book
 export default function BookingsAdmin() {
   const [query, setQuery] = useState(''); const [bookings, setBookings] = useState<Booking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...'); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
   const [showExport, setShowExport] = useState(false); const [exportMode, setExportMode] = useState<'all' | 'range'>('all'); const [exportFrom, setExportFrom] = useState(''); const [exportTo, setExportTo] = useState(''); const [exporting, setExporting] = useState(false);
+  const { confirm, dialog } = useConfirm();
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
   const load = async (search = query) => { const response = await fetch(`/api/admin/bookings?q=${encodeURIComponent(search)}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' }); const data = await response.json(); if (!response.ok) throw new Error(data.error); setBookings(data.bookings); setSelected(current => current ? data.bookings.find((booking: Booking) => booking.id === current.id) || null : null); setMessage(data.bookings.length ? '' : 'No bookings found.'); };
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
@@ -18,10 +21,23 @@ export default function BookingsAdmin() {
   const showToast = (text: string) => { setToast(text); window.setTimeout(() => setToast(''), 6000); };
   const action = async (type: Action, ticketId?: string, deductionPercentage?: number) => {
     if (!selected || busy) return;
-    if (type === 'delete' && !window.confirm(`Permanently delete booking ${selected.reference}?`)) return;
-    if (type === 'mark_paid' && !window.confirm(`Mark booking ${selected.reference} as paid and issue tickets?`)) return;
-    if (type === 'mark_paid' && !window.confirm(`Mark booking ${selected.reference} as paid and issue tickets?`)) return;
-    if (type === 'resend_tickets' && !window.confirm(`Resend tickets for ${selected.reference} to the customer's email?`)) return;
+    let reason: string | null = null;
+    if (type === 'delete') {
+      const result = await confirm({ title: 'Delete booking', message: `Permanently delete booking ${selected.reference}? This cannot be undone.`, confirmLabel: 'Delete booking', tone: 'danger', promptLabel: 'Reason (optional)', promptPlaceholder: 'Internal note for the audit log', promptRequired: false });
+      if (!result.confirmed) return;
+      reason = result.value || null;
+    } else if (type === 'mark_paid') {
+      const result = await confirm({ title: 'Mark booking as paid', message: `Mark booking ${selected.reference} as paid and issue tickets?`, confirmLabel: 'Mark as paid', tone: 'primary', promptLabel: 'Reason (optional)', promptPlaceholder: 'Internal note for the audit log', promptRequired: false });
+      if (!result.confirmed) return;
+      reason = result.value || null;
+    } else if (type === 'resend_tickets') {
+      const result = await confirm({ title: 'Resend tickets', message: `Resend tickets for ${selected.reference} to the customer's email?`, confirmLabel: 'Resend tickets', tone: 'primary' });
+      if (!result.confirmed) return;
+    } else if (type === 'cancel_ticket') {
+      const result = await confirm({ title: 'Invalidate ticket', message: 'This ticket will no longer scan as valid at the gate. This cannot be undone.', confirmLabel: 'Invalidate ticket', tone: 'danger', promptLabel: 'Reason (optional)', promptPlaceholder: 'Internal note for the audit log', promptRequired: false });
+      if (!result.confirmed) return;
+      reason = result.value || null;
+    }
     setBusy(type); setMessage(type === 'refund' ? 'Issuing voucher refund... please wait.' : type === 'resend_tickets' ? 'Resending tickets...' : 'Processing booking action... please wait.');
     try {
       let endpoint: string;
@@ -34,7 +50,7 @@ export default function BookingsAdmin() {
         body = JSON.stringify({ deductionPercentage: deductionPercentage || 0 });
       } else {
         endpoint = '/api/admin/bookings';
-        body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason: window.prompt('Reason (optional):') || null });
+        body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason });
       }
       const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body });
       const data = await response.json(); setMessage(data.message || data.error); if (!response.ok) return;
@@ -43,7 +59,16 @@ export default function BookingsAdmin() {
       if (type === 'refund') showToast(data.emailSent ? 'Voucher issued and email sent' : 'Voucher issued; email queued for retry');
     } finally { setBusy(''); }
   };
-  const refundAll = async () => { if (busy) return; const eligible = bookings.filter(booking => booking.visit_date === refundDate && ['PAID', 'CONFIRMED'].includes(booking.status) && !booking.voucher_issued); const total = eligible.reduce((sum, booking) => sum + Number(booking.total_amount), 0); if (!eligible.length) return setMessage('No paid, unrefunded bookings found for that date.'); if (!window.confirm(`Issue vouchers for ${eligible.length} bookings on ${refundDate}, totalling R ${total.toFixed(2)}? This will cancel them and invalidate their tickets.`)) return; setBusy('refund-all'); setMessage('Issuing vouchers for the selected date... please wait.'); try { const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { showToast(data.message); await load(); } } finally { setBusy(''); } };
+  const refundAll = async () => {
+    if (busy) return;
+    const eligible = bookings.filter(booking => booking.visit_date === refundDate && ['PAID', 'CONFIRMED'].includes(booking.status) && !booking.voucher_issued);
+    const total = eligible.reduce((sum, booking) => sum + Number(booking.total_amount), 0);
+    if (!eligible.length) return setMessage('No paid, unrefunded bookings found for that date.');
+    const result = await confirm({ title: 'Refund all bookings for date', message: `Issue vouchers for ${eligible.length} bookings on ${refundDate}, totalling R ${total.toFixed(2)}? This will cancel them and invalidate their tickets.`, confirmLabel: 'Issue vouchers', tone: 'danger' });
+    if (!result.confirmed) return;
+    setBusy('refund-all'); setMessage('Issuing vouchers for the selected date... please wait.');
+    try { const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { showToast(data.message); await load(); } } finally { setBusy(''); }
+  };
   const exportBookings = async () => {
     setExporting(true);
     try {
@@ -70,16 +95,16 @@ export default function BookingsAdmin() {
     {toast && <div role="status" style={{ position: 'fixed', top: 24, right: 24, left: 24, zIndex: 20, background: '#065f46', color: 'white', padding: '1rem 1.25rem', borderRadius: 10, textAlign: 'center' }}>✓ {toast}</div>}
     <div className="admin-header">
       <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>OPERATIONS</p><h1>All bookings</h1></div>
-      <div className="admin-nav"><button className="btn" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ background: 'var(--primary)', color: 'white', border: 'none', gap: 6 }}>📥 Export</button><a className="btn" href="/admin/vouchers" style={{ border: '1px solid var(--border-color)' }}>Vouchers</a><a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</a></div>
+      <div className="admin-nav"><button className="btn" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ background: 'var(--primary)', color: 'white', border: 'none', gap: 6 }}><DownloadIcon size={15} /> Export</button><a className="btn" href="/admin/vouchers" style={{ border: '1px solid var(--border-color)' }}>Vouchers</a><a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</a></div>
     </div>
     {/* ── Export Modal ─── */}
-    {showExport && <div onClick={e => { if (e.target === e.currentTarget) setShowExport(false); }} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', padding: 16 }}>
-      <div className="card" style={{ width: '100%', maxWidth: 440, animation: 'fadeInUp 0.2s ease' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ margin: 0 }}>Export Bookings</h2>
-          <button onClick={() => setShowExport(false)} style={{ fontSize: 22, lineHeight: 1, color: 'var(--text-muted)', padding: 4 }}>✕</button>
+    {showExport && <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowExport(false); }}>
+      <div className="modal-card" role="dialog" aria-modal="true">
+        <div className="modal-header">
+          <h2>Export Bookings</h2>
+          <button className="modal-close" onClick={() => setShowExport(false)} aria-label="Close">✕</button>
         </div>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>Download an Excel file with all booking details, customer info, items, and ticket IDs.</p>
+        <p className="modal-message">Download an Excel file with all booking details, customer info, items, and ticket IDs.</p>
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
           <button onClick={() => setExportMode('all')} className="btn" style={{ flex: 1, background: exportMode === 'all' ? 'var(--primary)' : 'transparent', color: exportMode === 'all' ? 'white' : 'var(--text-main)', border: `1px solid ${exportMode === 'all' ? 'var(--primary)' : 'var(--border-color)'}`, transition: 'all 0.15s' }}>All Bookings</button>
           <button onClick={() => setExportMode('range')} className="btn" style={{ flex: 1, background: exportMode === 'range' ? 'var(--primary)' : 'transparent', color: exportMode === 'range' ? 'white' : 'var(--text-main)', border: `1px solid ${exportMode === 'range' ? 'var(--primary)' : 'var(--border-color)'}`, transition: 'all 0.15s' }}>Date Range</button>
@@ -89,7 +114,7 @@ export default function BookingsAdmin() {
           <label style={{ display: 'grid', gap: 4, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>To<input type="date" value={exportTo} onChange={e => setExportTo(e.target.value)} style={{ padding: '0.6rem', border: '1px solid var(--border-color)', borderRadius: 8 }} /></label>
         </div>}
         {exportMode === 'range' && !exportFrom && !exportTo && <p style={{ color: 'var(--warning)', fontSize: '0.8rem', marginBottom: 12 }}>Select at least one date to filter, or switch to &quot;All Bookings&quot;.</p>}
-        <button className="btn btn-primary" disabled={exporting || (exportMode === 'range' && !exportFrom && !exportTo)} onClick={exportBookings} style={{ width: '100%', opacity: exporting || (exportMode === 'range' && !exportFrom && !exportTo) ? 0.6 : 1, gap: 8 }}>{exporting ? '⏳ Generating…' : '📥 Download Excel'}</button>
+        <button className="btn btn-primary" disabled={exporting || (exportMode === 'range' && !exportFrom && !exportTo)} onClick={exportBookings} style={{ width: '100%', opacity: exporting || (exportMode === 'range' && !exportFrom && !exportTo) ? 0.6 : 1, gap: 8 }}>{exporting ? 'Generating…' : <><DownloadIcon size={15} /> Download Excel</>}</button>
       </div>
     </div>}
     <div className="card" style={{ marginBottom: '1rem' }}>
@@ -101,21 +126,23 @@ export default function BookingsAdmin() {
       <div style={{ display: 'grid', gap: '0.75rem', alignContent: 'start' }}>{bookings.map(booking => { const customer = customerOf(booking); return <button key={booking.id} onClick={() => setSelected(booking)} style={{ textAlign: 'left', background: selected?.id === booking.id ? '#e0f2fe' : 'white', border: '1px solid var(--border-color)', borderRadius: 10, padding: '1rem' }}><strong style={{ color: 'var(--primary)' }}>{booking.reference}</strong><p>{customer?.first_name} {customer?.last_name}</p><p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{booking.visit_date} · R {Number(booking.total_amount).toFixed(2)} · {booking.voucher_issued ? 'Voucher issued' : booking.status}</p></button>; })}</div>
       {selected && <BookingDetail booking={selected} onAction={action} />}
     </div>
+    {dialog}
   </main>;
 }
 
 function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (action: Action, ticketId?: string, deductionPercentage?: number) => void }) {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const customer = customerOf(booking);
-  
-  const handleRefundOption = (feePercent: number) => {
+  const { confirm, dialog } = useConfirm();
+
+  const handleRefundOption = async (feePercent: number) => {
     const originalAmount = Number(booking.total_amount);
     const finalAmount = Math.max(0, originalAmount * ((100 - feePercent) / 100));
-    const confirmMessage = feePercent === 0 
-      ? `Refund ${booking.reference} for exactly R ${finalAmount.toFixed(2)} (Full Refund)? All valid tickets will be invalidated.`
+    const message = feePercent === 0
+      ? `Refund ${booking.reference} for exactly R ${finalAmount.toFixed(2)} (full refund)? All valid tickets will be invalidated.`
       : `Apply a ${feePercent}% fee and refund ${booking.reference} for exactly R ${finalAmount.toFixed(2)}? All valid tickets will be invalidated.`;
-    
-    if (window.confirm(confirmMessage)) {
+    const result = await confirm({ title: 'Confirm voucher refund', message, confirmLabel: 'Issue voucher', tone: 'danger' });
+    if (result.confirmed) {
       setShowRefundModal(false);
       onAction('refund', undefined, feePercent);
     }
@@ -148,13 +175,13 @@ function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (act
     </div>
 
     {showRefundModal && (
-      <div onClick={e => { if (e.target === e.currentTarget) setShowRefundModal(false); }} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', padding: 16 }}>
-        <div className="card" style={{ width: '100%', maxWidth: 400, animation: 'fadeInUp 0.2s ease' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h2 style={{ margin: 0, fontSize: '1.25rem' }}>Select Refund Option</h2>
-            <button onClick={() => setShowRefundModal(false)} style={{ fontSize: 22, lineHeight: 1, color: 'var(--text-muted)', padding: 4 }}>✕</button>
+      <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowRefundModal(false); }}>
+        <div className="modal-card" style={{ maxWidth: 400 }} role="dialog" aria-modal="true">
+          <div className="modal-header">
+            <h2>Select refund option</h2>
+            <button className="modal-close" onClick={() => setShowRefundModal(false)} aria-label="Close">✕</button>
           </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>Choose the fee percentage to deduct. The customer will receive a voucher for the remaining balance.</p>
+          <p className="modal-message">Choose the fee percentage to deduct. The customer will receive a voucher for the remaining balance.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button className="btn" onClick={() => handleRefundOption(10)} style={{ border: '1px solid var(--border-color)', justifyContent: 'center' }}>-10% fee</button>
             <button className="btn" onClick={() => handleRefundOption(15)} style={{ border: '1px solid var(--border-color)', justifyContent: 'center' }}>-15% fee</button>
@@ -164,5 +191,6 @@ function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (act
         </div>
       </div>
     )}
+    {dialog}
   </section>;
 }
