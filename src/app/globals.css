@@ -1233,3 +1233,220 @@ button {
     font-size: 1.15rem !important;
   }
 }
+
+/* ── Walk-in sales ──────────────────────────────────────────────────────── */
+
+.walkin-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.walkin-checkout {
+  position: sticky;
+  top: 1rem;
+}
+
+.walkin-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 0.55rem 0.5rem;
+  border-radius: 8px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.walkin-item.active {
+  background: var(--info-bg);
+}
+
+.walkin-stepper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.walkin-stepper button {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--white);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-main);
+}
+
+.walkin-stepper button:not(:disabled):hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.walkin-stepper button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.walkin-stepper span {
+  min-width: 28px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.walkin-spots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 0.75rem;
+}
+
+.walkin-spot {
+  min-width: 84px;
+  min-height: 40px;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--white);
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.walkin-spot.selected {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--white);
+}
+
+.walkin-spot:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+
+.walkin-customer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 0.75rem;
+}
+
+.walkin-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 1.1rem;
+  border-top: 2px solid var(--text-main);
+  padding-top: 0.5rem;
+}
+
+.walkin-total strong {
+  font-size: 1.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.walkin-methods {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 0.75rem;
+}
+
+.walkin-method {
+  min-height: 48px;
+  padding: 0.4rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--white);
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-main);
+  font-size: 0.85rem;
+}
+
+.walkin-method.selected {
+  border: 2px solid var(--primary);
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.walkin-change {
+  font-size: 1.3rem;
+  margin-top: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.walkin-submit {
+  width: 100%;
+  min-height: 56px;
+  font-size: 1.1rem;
+  margin-top: 1rem;
+}
+
+.walkin-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.walkin-receipt {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.walkin-tickets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  margin-top: 1rem;
+}
+
+.walkin-ticket {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 0.75rem;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  text-align: center;
+  break-inside: avoid;
+}
+
+@media (max-width: 800px) {
+  .walkin-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .walkin-checkout {
+    position: static;
+  }
+}
+
+@media print {
+  .no-print,
+  .admin-bottom-nav,
+  nextjs-portal {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .admin-content-pad {
+    padding: 0;
+  }
+
+  .print-area {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: none;
+    padding: 0 !important;
+  }
+}

@@ -253,7 +253,10 @@ export default function ReportsPage() {
       </div>
 
       <div className="report-grid">
-        <Section title="How customers pay" table={report.paymentMethods}>
+        <Section title="How customers pay" table={[...report.channels, ...report.paymentMethods]}>
+          <h3 className="report-group-heading">Online vs walk-in</h3>
+          <BarList rows={report.channels} labelKey="Channel" valueKey="Revenue (R)" detailKey="Paid bookings" />
+          <h3 className="report-group-heading" style={{ marginTop: '1rem' }}>Payment method</h3>
           <BarList rows={report.paymentMethods} labelKey="Method" valueKey="Booking value (R)" detailKey="Bookings" />
         </Section>
         <Section title="Birthday parties" subtitle={`${partyValue('Party bookings')} parties · ${rand(partyValue('Party revenue (R)'))} · ${whole(partyValue('Share of revenue %'))}% of revenue`} table={[...report.parties.summary, ...report.parties.slots.map(row => ({ Measure: `Parties at ${row['Time slot']}`, Value: row.Parties })), ...report.parties.options.map(row => ({ Measure: `${row.Package} parties`, Value: row.Parties }))]}>

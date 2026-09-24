@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetch-all';
 import { getClosedDates, applyClosure } from '@/lib/closed-dates';
 import { johannesburgToday } from '@/lib/opening-rules';
+import { GATE_PAYMENT_LABELS, isGateSale } from '@/lib/walk-ins';
 
 export type ReportBasis = 'visit' | 'booked';
 
@@ -41,6 +42,7 @@ export type Report = {
   packages: Row[];
   visitorMix: Row[];
   paymentMethods: Row[];
+  channels: Row[];
   parties: { summary: Row[]; slots: Row[]; options: Row[] };
   leadTime: Row[];
   bookingHours: Row[];
@@ -114,7 +116,7 @@ function outcome(booking: Pick<BookingRow, 'status' | 'expires_at'>) {
 const isPaid = (booking: Pick<BookingRow, 'status'>) => PAID.includes(booking.status);
 const cashCollected = (booking: BookingRow) => money(booking.amount_due ?? Number(booking.total_amount) - Number(booking.voucher_amount_used || 0));
 
-const PAYMENT_LABELS: Record<string, string> = { PAYFAST: 'PayFast (card / instant EFT)', MANUAL_EFT: 'Manual EFT', VOUCHER: 'Voucher only', ADMIN_OVERRIDE: 'Marked paid by staff' };
+const PAYMENT_LABELS: Record<string, string> = { PAYFAST: 'PayFast (card / instant EFT)', MANUAL_EFT: 'Manual EFT', VOUCHER: 'Voucher only', ADMIN_OVERRIDE: 'Marked paid by staff', ...GATE_PAYMENT_LABELS };
 
 /** Age group and water option for a booking line, based on its item id or name. */
 function visitorCategory(item: Item): { age: string; water: string } | null {
@@ -180,6 +182,8 @@ export async function buildReport(from: string, to: string, basis: ReportBasis):
   const previousRevenue = money(previousPaid.reduce((sum, b) => sum + Number(b.total_amount), 0));
   const previousVisitors = previousPaid.reduce((sum, b) => sum + Number(b.people_count || 0), 0);
   const partyBookings = paid.filter(b => b.party_slot);
+  const walkIns = paid.filter(b => isGateSale(b.payment_method));
+  const walkInRevenue = money(walkIns.reduce((sum, b) => sum + Number(b.total_amount), 0));
   const cancelled = bookings.filter(b => outcome(b) === 'Cancelled / refunded');
 
   // Check-ins only make sense once the visit date has passed.
@@ -208,6 +212,7 @@ export async function buildReport(from: string, to: string, basis: ReportBasis):
     { label: 'Check-in rate', value: ratio(ticketsUsed, ticketsIssued), format: 'percent', hint: 'Tickets scanned at the gate, for visit dates that have passed.' },
     { label: 'No-show bookings', value: noShowBookings, format: 'number', hint: 'Paid bookings for past dates where no ticket was scanned.' },
     { label: 'Party bookings', value: partyBookings.length, format: 'number' },
+    { label: 'Walk-in sales', value: walkInRevenue, format: 'currency', hint: `${walkIns.length} sale${walkIns.length === 1 ? '' : 's'} at the gate, ${ratio(walkInRevenue, revenue)}% of revenue.` },
     { label: 'Vouchers redeemed', value: voucherRedeemed, format: 'currency' },
     { label: 'Cancelled / refunded', value: cancelled.length, format: 'number', hint: `R ${money(cancelled.reduce((sum, b) => sum + Number(b.total_amount), 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in value.` },
     { label: 'Average days booked ahead', value: avg(leadTimes.reduce((a, b) => a + b, 0), leadTimes.length), format: 'days' },
@@ -351,6 +356,14 @@ export async function buildReport(from: string, to: string, basis: ReportBasis):
     methods.set(key, entry);
   }
   const paymentMethods = [...methods.entries()].sort((a, b) => b[1].revenue - a[1].revenue).map(([method, entry]) => ({ Method: method, Bookings: entry.bookings, 'Share %': ratio(entry.bookings, paid.length), 'Booking value (R)': money(entry.revenue), 'Cash collected (R)': money(entry.collected) }));
+
+  // ── Sales channel ──
+  const online = paid.filter(b => !isGateSale(b.payment_method));
+  const channels = ([['Online bookings', online], ['Walk-in (gate) sales', walkIns]] as const).map(([channel, rows]) => {
+    const value = rows.reduce((sum, b) => sum + Number(b.total_amount), 0);
+    const guests = rows.reduce((sum, b) => sum + Number(b.people_count || 0), 0);
+    return { Channel: channel, 'Paid bookings': rows.length, Visitors: guests, 'Revenue (R)': money(value), 'Share of revenue %': ratio(value, revenue), 'Average sale (R)': avg(value, rows.length) };
+  });
 
   // ── Parties ──
   const slotMap = new Map<string, { bookings: number; revenue: number; children: number }>();
@@ -515,6 +528,7 @@ export async function buildReport(from: string, to: string, basis: ReportBasis):
     packages: packageRows,
     visitorMix,
     paymentMethods,
+    channels,
     parties,
     leadTime,
     bookingHours,

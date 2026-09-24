@@ -16,7 +16,11 @@ type BookingItem = {
   bookings?: { visit_date?: string; customer_id?: string; voucher_credit_id?: string | null } | null;
 };
 
-export async function generateTicketsAndSendEmail(bookingId: string, customerEmail: string, customerName: string) {
+/**
+ * Create the booking's tickets (reusing any that already exist) and email them.
+ * Pass { sendEmail: false } to only create them, e.g. for walk-in sales without an email address.
+ */
+export async function generateTicketsAndSendEmail(bookingId: string, customerEmail: string, customerName: string, options: { sendEmail?: boolean } = {}) {
   const { data: existingTickets, error: existingTicketsError } = await supabase
     .from('tickets')
     .select('ticket_uid, qr_token, visit_date')
@@ -57,7 +61,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
       display_name: displayNames[index] || 'Entrance Ticket',
       attendee_name: attendeeFullNames[index] || '',
     }));
-    await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining);
+    if (options.sendEmail !== false) await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining);
     return labelledTickets;
   }
 
@@ -84,7 +88,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     ticket_uid: ticket.ticket_uid, qr_token: ticket.qr_token, visit_date: ticket.visit_date,
   })));
   if (insertError) throw new Error(`Could not create tickets: ${insertError.message}`);
-  await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining);
+  if (options.sendEmail !== false) await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining);
   return newTickets;
 }
 

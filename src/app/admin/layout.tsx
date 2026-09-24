@@ -131,7 +131,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     </main></>
   );
 
-  if (role === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/set-password') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role only has access to the ticket scanner.</p><a className="btn btn-primary" href="/admin/scanner">Open scanner</a></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
+  if (role === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/walk-ins' && pathname !== '/admin/set-password') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role has access to the ticket scanner and walk-in sales.</p><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><a className="btn btn-primary" href="/admin/scanner">Open scanner</a><a className="btn" href="/admin/walk-ins" style={{ border: '1px solid var(--border-color)' }}>Walk-in sales</a></div></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
   if (pathname === '/admin/staff' && role !== 'ADMIN') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Admin access required</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Only administrators can manage staff accounts.</p></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
 
   return <>
@@ -153,6 +153,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     {role !== 'SCANNER' && (
       <div className="admin-bottom-nav">
         <a href="/admin" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Dashboard</a>
+        <a href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-ins</a>
         <a href="/admin/reports" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Reports</a>
         <a href="/admin/settings" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Prices &amp; dates</a>
         {role === 'ADMIN' && <a href="/admin/staff" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Staff</a>}
@@ -163,6 +164,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     )}
     {role === 'SCANNER' && (
       <div className="admin-bottom-nav">
+        <a href="/admin/scanner" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Scanner</a>
+        <a href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-in sales</a>
         <div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div>
       </div>
     )}

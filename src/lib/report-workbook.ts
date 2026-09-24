@@ -176,7 +176,9 @@ export function buildReportWorkbook(report: Report) {
   row = addTable(packages, row, report.packages, { totals: true });
   addTable(packages, row, report.visitorMix, { heading: 'Visitor mix' });
   const payments = addSheet(workbook, 'Payments');
-  addTable(payments, addTitle(payments, 'Payment methods', report, 'Paid bookings only. Booking value includes the part paid with vouchers.'), report.paymentMethods, { totals: true });
+  row = addTitle(payments, 'Sales channels and payment methods', report, 'Paid bookings only. Booking value includes the part paid with vouchers.');
+  row = addTable(payments, row, report.channels, { heading: 'Online vs walk-in', totals: true });
+  addTable(payments, row, report.paymentMethods, { heading: 'Payment methods', totals: true });
   const parties = addSheet(workbook, 'Parties');
   row = addTitle(parties, 'Birthday parties', report);
   row = addTable(parties, row, report.parties.summary, { heading: 'Overview' });
