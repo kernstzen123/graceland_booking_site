@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { Calendar } from '../components/Calendar';
-import { PackageSelection, PACKAGES } from '../components/PackageSelection';
+import { PackageSelection } from '../components/PackageSelection';
 import { AttendeeNames, buildInitialAttendeeNames } from '../components/AttendeeNames';
 import type { AttendeeName } from '../components/AttendeeNames';
 import { CustomerForm } from '../components/CustomerForm';
@@ -9,6 +9,7 @@ import { BookingSummary } from '../components/BookingSummary';
 import { PaymentSelection } from '../components/PaymentSelection';
 import { SeatingMap } from '../components/SeatingMap';
 import { calculatePartyTotal, PartyDetails } from '@/lib/parties';
+import { buildPackageGroups, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
 import { SupportContact } from '@/components/SupportContact';
 
 export default function Home() {
@@ -43,8 +44,19 @@ export default function Home() {
   const [selectedSpotIds, setSelectedSpotIds] = useState<string[]>([]);
   const [seatingDone, setSeatingDone] = useState(false);
   const [serverAmountDue, setServerAmountDue] = useState<number | null>(null);
+  const [prices, setPrices] = useState<PriceList>(DEFAULT_PRICES);
   const paymentPollingActive = useRef(false);
   const idempotencyKey = useRef('');
+
+  useEffect(() => {
+    // Admins can change prices; load the live list so the basket matches what the server charges.
+    let cancelled = false;
+    fetch('/api/prices', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('Prices unavailable')))
+      .then(data => { if (!cancelled && data.prices) setPrices(data.prices); })
+      .catch(() => { /* keep the default prices; the server rejects a stale total with a refresh prompt */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const startNewBooking = () => {
     paymentPollingActive.current = false;
@@ -167,12 +179,12 @@ export default function Home() {
 
   const calculateTotal = () => {
     let total = 0;
-    PACKAGES.forEach(group => {
+    buildPackageGroups(prices).forEach(group => {
       group.items.forEach(item => {
         total += (selections[item.id] || 0) * item.price;
       });
     });
-    return total + calculatePartyTotal(party);
+    return total + calculatePartyTotal(party, prices);
   };
 
   const totalAmount = calculateTotal();
@@ -303,6 +315,7 @@ export default function Home() {
         <PackageSelection 
           selections={selections} 
           selectedDate={selectedDate || ''}
+          prices={prices}
           party={party}
           onPartyChange={setParty}
           onUpdateSelection={handleUpdateSelection}
@@ -356,6 +369,7 @@ export default function Home() {
           selectedDate={selectedDate}
           selections={selections}
           party={party}
+          prices={prices}
           customerDetails={customerDetails}
           onBack={() => setStep(4)}
           onConfirm={handleConfirmBooking}

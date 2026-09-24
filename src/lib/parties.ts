@@ -1,12 +1,4 @@
-import {
-  PARTY_CHILD_RATE_OPTION_1,
-  PARTY_CHILD_RATE_OPTION_2,
-  PARTY_SWIMMING_ADULT_RATE,
-  PARTY_NON_SWIMMING_ADULT_RATE,
-  PARTY_ADDITIONAL_SWIMMING_CHILD_RATE,
-  PARTY_ADDITIONAL_NON_SWIMMING_CHILD_RATE,
-  PARTY_PACK_RATE,
-} from './pricing';
+import { calculatePartyTotalFromPricing, DEFAULT_PRICES, type PriceList } from './pricing';
 
 export type PartyOption = 'option-1' | 'option-2';
 
@@ -94,14 +86,8 @@ export function getPartySlots(dateValue: string) {
   return [];
 }
 
-export function calculatePartyTotal(party: PartyDetails) {
-  if (!party.enabled) return 0;
-  const childRate = party.option === 'option-2' ? PARTY_CHILD_RATE_OPTION_2 : PARTY_CHILD_RATE_OPTION_1;
-  const swimmingAdults = party.adultsWater.filter(Boolean).length;
-  const nonSwimmingAdults = Math.max(0, party.adults - swimmingAdults);
-  const swimmingChildren = party.additionalChildrenWater.filter(Boolean).length;
-  const nonSwimmingChildren = Math.max(0, party.additionalChildren - swimmingChildren);
-  return party.children * childRate + swimmingAdults * PARTY_SWIMMING_ADULT_RATE + nonSwimmingAdults * PARTY_NON_SWIMMING_ADULT_RATE + swimmingChildren * PARTY_ADDITIONAL_SWIMMING_CHILD_RATE + nonSwimmingChildren * PARTY_ADDITIONAL_NON_SWIMMING_CHILD_RATE + party.partyPacks * PARTY_PACK_RATE;
+export function calculatePartyTotal(party: PartyDetails, prices: PriceList = DEFAULT_PRICES) {
+  return calculatePartyTotalFromPricing(party, prices);
 }
 
 export function nextPartyDate(fromDate: string) {

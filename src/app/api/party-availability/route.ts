@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getPartySlots } from '@/lib/parties';
 import { supabase } from '@/lib/supabase';
 import { validateVisitDate } from '@/lib/opening-rules';
+import { getClosedDates } from '@/lib/closed-dates';
 
 export async function GET(request: Request) {
   const date = new URL(request.url).searchParams.get('date') || '';
@@ -10,8 +11,11 @@ export async function GET(request: Request) {
   try { validateVisitDate(date); } catch {
     return NextResponse.json({ date, slots: [], bookedSlots: [], availableSlots: [], nextAvailableDate: null });
   }
+  const searchEnd = new Date(`${date}T00:00:00Z`);
+  searchEnd.setUTCDate(searchEnd.getUTCDate() + 370);
+  const closedDates = await getClosedDates(date, searchEnd.toISOString().slice(0, 10));
 
-  const slots = getPartySlots(date);
+  const slots = closedDates.has(date) ? [] : getPartySlots(date);
 
   // Fetch all venue spots to count total huts
   const { data: allSpots, error: spotsError } = await supabase
@@ -26,7 +30,7 @@ export async function GET(request: Request) {
   // Actually, to make it efficient, we can extract the check logic into a function.
 
   async function checkSlotsForDate(checkDate: string): Promise<string[]> {
-    const candidateSlots = getPartySlots(checkDate);
+    const candidateSlots = closedDates.has(checkDate) ? [] : getPartySlots(checkDate);
     if (candidateSlots.length === 0) return [];
 
     const { data: reserved } = await supabase

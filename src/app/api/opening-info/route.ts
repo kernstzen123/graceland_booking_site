@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/request-security';
-import { getOpeningStatus } from '@/lib/opening-rules';
+import { applyClosure, getClosedDates } from '@/lib/closed-dates';
 
 /**
  * GET /api/opening-info?from=YYYY-MM&months=N
@@ -26,6 +26,9 @@ export async function GET(request: Request) {
     const months = Math.min(Math.max(1, monthsParam), 6);
     const [startYear, startMonth] = from.split('-').map(Number);
 
+    const lastMonth = new Date(Date.UTC(startYear, startMonth - 1 + months, 0));
+    const closed = await getClosedDates(`${from}-01`, lastMonth.toISOString().slice(0, 10));
+
     const dates: Array<{ date: string; open: boolean; hours?: { open: string; close: string; poolsClose: string } }> = [];
 
     for (let offset = 0; offset < months; offset++) {
@@ -38,7 +41,7 @@ export async function GET(request: Request) {
 
       for (let d = 1; d <= daysInMonth; d++) {
         const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const status = getOpeningStatus(dateStr);
+        const status = applyClosure(dateStr, closed);
         dates.push({
           date: dateStr,
           open: status.open,

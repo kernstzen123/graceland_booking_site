@@ -4,7 +4,11 @@
 // This file is the SINGLE SOURCE OF TRUTH for day-visitor opening/closing
 // logic. It contains no database calls and no imports from Supabase.
 //
-// MAINTENANCE: This system has no admin UI. To add 2028+ school holidays or
+// Staff can close extra one-off dates from the admin panel (Prices & dates);
+// those closures live in the closed_dates table and are applied on top of
+// these rules by src/lib/closed-dates.ts.
+//
+// MAINTENANCE: The regular rules below have no admin UI. To add 2028+ school holidays or
 // public holidays, a developer must edit the SCHOOL_HOLIDAYS and
 // PUBLIC_HOLIDAYS arrays directly in this file and redeploy. See the arrays
 // below for the exact format.

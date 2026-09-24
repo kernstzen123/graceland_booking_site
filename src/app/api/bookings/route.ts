@@ -7,7 +7,8 @@ import { customerError } from '@/lib/public-errors';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { BOOKABLE_ITEMS, calculateServerTotal, validatePartyFields } from '@/lib/pricing';
-import { validateVisitDate } from '@/lib/opening-rules';
+import { getCurrentPrices } from '@/lib/price-store';
+import { validateBookableDate } from '@/lib/closed-dates';
 
 export async function POST(request: Request) {
   try {
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
     }
     if (termsAccepted !== true || privacyAccepted !== true) throw new Error('You must accept both the Terms and Conditions and Privacy Policy before booking');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate) || new Date(`${selectedDate}T00:00:00Z`).toISOString().slice(0, 10) !== selectedDate) throw new Error('Invalid visit date');
-    validateVisitDate(selectedDate);
+    await validateBookableDate(selectedDate);
     const firstName = cleanText(customerDetails.firstName, 80);
     const lastName = cleanText(customerDetails.lastName, 80);
     const email = cleanText(customerDetails.email, 254).toLowerCase();
@@ -61,7 +62,8 @@ export async function POST(request: Request) {
       const qty = Number(value);
       if (qty > 0) serverSelections[key] = qty;
     }
-    const { total: serverTotal } = calculateServerTotal(serverSelections, validatedParty);
+    const prices = await getCurrentPrices();
+    const { lineItems, total: serverTotal } = calculateServerTotal(serverSelections, validatedParty, prices);
 
     // Reject if the server total is zero or negative
     if (serverTotal <= 0) throw new Error('Invalid booking amount');
@@ -159,53 +161,38 @@ export async function POST(request: Request) {
 
     const items: Array<{ booking_id: string; quantity: number; price_per_unit: number; subtotal: number; metadata: Record<string, unknown> }> = [];
     let attendeeIdx = 0;
-    Object.entries(selections)
-      .filter(([, quantity]) => Number(quantity) > 0)
-      .forEach(([itemId, quantity]) => {
-        const item = BOOKABLE_ITEMS[itemId];
-        if (!item) throw new Error(`Unknown booking item: ${itemId}`);
-        const qty = Number(quantity);
-
+    for (const line of lineItems) {
+      if (!line.party) {
         // Attach attendee names to each individual unit of person-type items
         const attendeeNamesForItem: Array<{ firstName: string; lastName: string }> = [];
-        if (item.isPerson && sanitizedAttendeeNames.length > 0) {
-          for (let i = 0; i < qty; i++) {
+        if (line.isPerson && sanitizedAttendeeNames.length > 0) {
+          for (let i = 0; i < line.quantity; i++) {
             if (attendeeIdx < sanitizedAttendeeNames.length) {
               attendeeNamesForItem.push(sanitizedAttendeeNames[attendeeIdx]);
               attendeeIdx++;
             }
           }
         }
-
         items.push({
           booking_id: bookingId,
-          quantity: qty,
-          price_per_unit: item.price,
-          subtotal: item.price * qty,
+          quantity: line.quantity,
+          price_per_unit: line.pricePerUnit,
+          subtotal: line.subtotal,
           metadata: {
-            itemId,
-            name: item.name,
-            isPerson: item.isPerson,
+            itemId: line.itemId,
+            name: line.name,
+            isPerson: line.isPerson,
             ...(attendeeNamesForItem.length > 0 ? { attendeeNames: attendeeNamesForItem } : {}),
           },
         });
-      });
-
-    if (partyDetails?.enabled) {
-      const childRate = partyDetails.option === 'option-2' ? 225 : 200;
-      const swimmingAdults = partyDetails.adultsWater.filter(Boolean).slice(0, Number(partyDetails.adults)).length;
-      const swimmingChildren = partyDetails.additionalChildrenWater.filter(Boolean).slice(0, Number(partyDetails.additionalChildren)).length;
-      const adultRate = 80;
-      const extraChildRate = 100;
-      items.push(
-        { booking_id: bookingId, quantity: Number(partyDetails.children), price_per_unit: childRate, subtotal: Number(partyDetails.children) * childRate, metadata: { party: true, partySlot: partyDetails.slot, name: partyDetails.option === 'option-2' ? 'Kiddy Party Option 2 (hotdog included)' : 'Kiddy Party Option 1', isPerson: false } },
-        { booking_id: bookingId, quantity: Number(partyDetails.children), price_per_unit: 0, subtotal: 0, metadata: { party: true, partySlot: partyDetails.slot, name: 'Birthday party child entrance', isPerson: true } },
-      );
-      if (swimmingAdults > 0) items.push({ booking_id: bookingId, quantity: swimmingAdults, price_per_unit: 180, subtotal: swimmingAdults * 180, metadata: { party: true, partySlot: partyDetails.slot, name: 'Birthday party adult entrance (swimming)', isPerson: true } });
-      if (Number(partyDetails.adults) - swimmingAdults > 0) items.push({ booking_id: bookingId, quantity: Number(partyDetails.adults) - swimmingAdults, price_per_unit: adultRate, subtotal: (Number(partyDetails.adults) - swimmingAdults) * adultRate, metadata: { party: true, partySlot: partyDetails.slot, name: 'Birthday party adult entrance (non-swimming)', isPerson: true } });
-      if (swimmingChildren > 0) items.push({ booking_id: bookingId, quantity: swimmingChildren, price_per_unit: 200, subtotal: swimmingChildren * 200, metadata: { party: true, partySlot: partyDetails.slot, name: 'Additional birthday party child entrance (swimming)', isPerson: true } });
-      if (Number(partyDetails.additionalChildren) - swimmingChildren > 0) items.push({ booking_id: bookingId, quantity: Number(partyDetails.additionalChildren) - swimmingChildren, price_per_unit: extraChildRate, subtotal: (Number(partyDetails.additionalChildren) - swimmingChildren) * extraChildRate, metadata: { party: true, partySlot: partyDetails.slot, name: 'Additional birthday party child entrance (non-swimming)', isPerson: true } });
-      if (Number(partyDetails.partyPacks) > 0) items.push({ booking_id: bookingId, quantity: Number(partyDetails.partyPacks), price_per_unit: 50, subtotal: Number(partyDetails.partyPacks) * 50, metadata: { party: true, partySlot: partyDetails.slot, name: 'Optional party pack', isPerson: false } });
+        continue;
+      }
+      const partyMetadata = { party: true, partySlot: partyDetails?.slot, name: line.name, isPerson: line.isPerson };
+      items.push({ booking_id: bookingId, quantity: line.quantity, price_per_unit: line.pricePerUnit, subtotal: line.subtotal, metadata: partyMetadata });
+      // The party package is priced per child; each party child also gets a free entrance ticket.
+      if (line.itemId === 'party-children') {
+        items.push({ booking_id: bookingId, quantity: line.quantity, price_per_unit: 0, subtotal: 0, metadata: { ...partyMetadata, name: 'Birthday party child entrance', isPerson: true } });
+      }
     }
 
     if (!items.length) throw new Error('At least one booking item is required');

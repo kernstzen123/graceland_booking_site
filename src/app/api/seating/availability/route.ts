@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { checkRateLimit } from '@/lib/request-security';
-import { validateVisitDate } from '@/lib/opening-rules';
+import { validateBookableDate } from '@/lib/closed-dates';
 
 export async function GET(request: Request) {
   try {
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     const partySlot = params.get('partySlot') || '';
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ success: false, error: 'A valid visit date is required.' }, { status: 400 });
-    validateVisitDate(date);
+    await validateBookableDate(date);
     const [{ data: spots, error: spotsError }, { data: reserved, error: reservedError }] = await Promise.all([
       supabase.from('venue_spots').select('id,number,type,capacity,x_percent,y_percent').order('number'),
       supabase.from('booking_spots').select('spot_id,booking_id,bookings!inner(status,expires_at,party_slot)').eq('visit_date', date),

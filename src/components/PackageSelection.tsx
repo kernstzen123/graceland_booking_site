@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties';
-import { PACKAGE_GROUPS } from '@/lib/pricing';
+import { buildPackageGroups, PACKAGE_GROUPS, priceOf, type PriceList } from '@/lib/pricing';
 import { CheckIcon } from '@/components/icons';
 
 const PARTY_INCLUDES = [
@@ -13,11 +13,13 @@ const PARTY_INCLUDES = [
   'A party hut',
 ];
 
+/** Package names and default prices. Use buildPackageGroups(prices) wherever prices are shown. */
 export const PACKAGES = PACKAGE_GROUPS;
 
 interface PackageSelectionProps {
   selectedDate: string;
   selections: Record<string, number>;
+  prices: PriceList;
   party: PartyDetails;
   onPartyChange: (party: PartyDetails) => void;
   onUpdateSelection: (id: string, quantity: number) => void;
@@ -25,7 +27,7 @@ interface PackageSelectionProps {
   onBack: () => void;
 }
 
-export function PackageSelection({ selectedDate, selections, party, onPartyChange, onUpdateSelection, onNext, onBack }: PackageSelectionProps) {
+export function PackageSelection({ selectedDate, selections, prices, party, onPartyChange, onUpdateSelection, onNext, onBack }: PackageSelectionProps) {
   const [partyAvailability, setPartyAvailability] = useState<{ slots: string[]; availableSlots: string[]; nextAvailableDate: string | null } | null>(null);
   const [partyError, setPartyError] = useState('');
   const [selectionError, setSelectionError] = useState('');
@@ -41,9 +43,12 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
     return () => { cancelled = true; };
   }, [selectedDate]);
 
+  const packageGroups = buildPackageGroups(prices);
+  const price = (key: string) => priceOf(prices, key);
+
   const calculateTotal = () => {
     let total = 0;
-    PACKAGES.forEach(group => {
+    packageGroups.forEach(group => {
       group.items.forEach(item => {
         total += (selections[item.id] || 0) * item.price;
       });
@@ -81,7 +86,7 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
       <div className="card" style={{ flex: '1 1 700px', maxWidth: 'none', margin: 0 }}>
         <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Step 2: Select Packages</h2>
 
-        {PACKAGES.map((group, i) => (
+        {packageGroups.map((group, i) => (
           <div key={i} style={{ marginBottom: '2rem' }}>
             <h3 style={{ fontSize: '1.2rem', color: 'var(--primary)', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
               {group.category}
@@ -146,14 +151,14 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
                   <input type="radio" checked={party.option === 'option-1'} onChange={() => onPartyChange({ ...party, option: 'option-1' })} />
                   <div>
                     <p className="party-option-title">Option 1</p>
-                    <p className="party-option-desc">R200 per child (minimum 10 children)</p>
+                    <p className="party-option-desc">R{price('party-child-option-1')} per child (minimum 10 children)</p>
                   </div>
                 </label>
                 <label className={`party-option-card${party.option === 'option-2' ? ' selected' : ''}`}>
                   <input type="radio" checked={party.option === 'option-2'} onChange={() => onPartyChange({ ...party, option: 'option-2' })} />
                   <div>
                     <p className="party-option-title">Option 2</p>
-                    <p className="party-option-desc">R225 per child, including a hotdog (minimum 10 children)</p>
+                    <p className="party-option-desc">R{price('party-child-option-2')} per child, including a hotdog (minimum 10 children)</p>
                   </div>
                 </label>
               </div>
@@ -176,11 +181,11 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
                 {Array.from({ length: party.adults }, (_, index) => (
                   <label key={index} className="party-entry-row">
                     <input type="checkbox" checked={party.adultsWater[index] === true} onChange={event => { const water = [...party.adultsWater]; water[index] = event.target.checked; onPartyChange({ ...party, adultsWater: water }); }} />
-                    Adult {index + 1}: swimming and waterslides (R180)
+                    Adult {index + 1}: swimming and waterslides (R{price('party-adult-swimming')})
                   </label>
                 ))}
               </div>
-              <small style={{ color: 'var(--text-muted)' }}>Leave unchecked for non-swimming entrance (R80).</small>
+              <small style={{ color: 'var(--text-muted)' }}>Leave unchecked for non-swimming entrance (R{price('party-adult-non-swimming')}).</small>
             </div>}
 
             <label>
@@ -194,15 +199,15 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
                 {Array.from({ length: party.additionalChildren }, (_, index) => (
                   <label key={index} className="party-entry-row">
                     <input type="checkbox" checked={party.additionalChildrenWater[index] === true} onChange={event => { const water = [...party.additionalChildrenWater]; water[index] = event.target.checked; onPartyChange({ ...party, additionalChildrenWater: water }); }} />
-                    Child {index + 1}: swimming and waterslides (R200)
+                    Child {index + 1}: swimming and waterslides (R{price('party-child-swimming')})
                   </label>
                 ))}
               </div>
-              <small style={{ color: 'var(--text-muted)' }}>Leave unchecked for non-swimming entrance (R100).</small>
+              <small style={{ color: 'var(--text-muted)' }}>Leave unchecked for non-swimming entrance (R{price('party-child-non-swimming')}).</small>
             </div>}
 
             <label>
-              <span className="field-label">Optional party packs (R50 each)</span>
+              <span className="field-label">Optional party packs (R{price('party-pack')} each)</span>
               <input type="number" min="0" className="field-input" value={party.partyPacks} onChange={event => onPartyChange({ ...party, partyPacks: Math.max(0, Number(event.target.value) || 0) })} />
             </label>
 
@@ -226,7 +231,7 @@ export function PackageSelection({ selectedDate, selections, party, onPartyChang
 
             <div className="party-total">
               <span>Birthday party total</span>
-              <span>R {calculatePartyTotal(party)}</span>
+              <span>R {calculatePartyTotal(party, prices)}</span>
             </div>
           </div>}
         </section>

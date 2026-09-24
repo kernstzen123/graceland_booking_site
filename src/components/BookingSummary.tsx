@@ -1,11 +1,12 @@
 import React from 'react';
-import { PACKAGES } from './PackageSelection';
 import { calculatePartyTotal, PartyDetails } from '@/lib/parties';
+import { buildPackageGroups, partyChildRate, priceOf, type PriceList } from '@/lib/pricing';
 
 interface BookingSummaryProps {
   selectedDate: string;
   selections: Record<string, number>;
   party: PartyDetails;
+  prices: PriceList;
   customerDetails: { firstName: string; lastName: string; email: string; phone: string };
   onBack: () => void;
   onConfirm: () => void;
@@ -17,11 +18,11 @@ interface BookingSummaryProps {
   onVoucherApplied: (voucher: { code: string; amountUsed: number; amountDue: number; remainingBalance: number } | null) => void;
 }
 
-export function BookingSummary({ selectedDate, selections, party, customerDetails, onBack, onConfirm, submitting = false, termsAccepted, privacyAccepted, onTermsChange, onPrivacyChange, onVoucherApplied }: BookingSummaryProps) {
+export function BookingSummary({ selectedDate, selections, party, prices, customerDetails, onBack, onConfirm, submitting = false, termsAccepted, privacyAccepted, onTermsChange, onPrivacyChange, onVoucherApplied }: BookingSummaryProps) {
   let total = 0;
   const items: Array<{ id: string; name: string; price: number; type?: string; qty: number }> = [];
   
-  PACKAGES.forEach(group => {
+  buildPackageGroups(prices).forEach(group => {
     group.items.forEach(item => {
       const qty = selections[item.id] || 0;
       if (qty > 0) {
@@ -31,7 +32,9 @@ export function BookingSummary({ selectedDate, selections, party, customerDetail
     });
   });
 
-  const partyTotal = calculatePartyTotal(party);
+  const partyTotal = calculatePartyTotal(party, prices);
+  const swimmingAdults = party.adultsWater.filter(Boolean).length;
+  const swimmingChildren = party.additionalChildrenWater.filter(Boolean).length;
   const bookingTotal = total + partyTotal;
   const [voucherInput, setVoucherInput] = React.useState('');
   const [voucher, setVoucher] = React.useState<{ code: string; amountUsed: number; amountDue: number; remainingBalance: number } | null>(null);
@@ -75,10 +78,10 @@ export function BookingSummary({ selectedDate, selections, party, customerDetail
             </div>
           ))}
           {party.enabled && <>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.children}x Birthday party children ({party.option === 'option-2' ? 'with hotdog' : 'Option 1'})</span><span>R {party.children * (party.option === 'option-2' ? 220 : 195)}</span></div>
-            {party.adults > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.adults}x Party adults ({party.adultsWater.filter(Boolean).length} swimming)</span><span>R {party.adultsWater.filter(Boolean).length * 175 + (party.adults - party.adultsWater.filter(Boolean).length) * 75}</span></div>}
-            {party.additionalChildren > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.additionalChildren}x Additional children ({party.additionalChildrenWater.filter(Boolean).length} swimming)</span><span>R {party.additionalChildrenWater.filter(Boolean).length * 195 + (party.additionalChildren - party.additionalChildrenWater.filter(Boolean).length) * 95}</span></div>}
-            {party.partyPacks > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.partyPacks}x Party packs</span><span>R {party.partyPacks * 50}</span></div>}
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.children}x Birthday party children ({party.option === 'option-2' ? 'with hotdog' : 'Option 1'})</span><span>R {party.children * partyChildRate(party, prices)}</span></div>
+            {party.adults > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.adults}x Party adults ({swimmingAdults} swimming)</span><span>R {swimmingAdults * priceOf(prices, 'party-adult-swimming') + (party.adults - swimmingAdults) * priceOf(prices, 'party-adult-non-swimming')}</span></div>}
+            {party.additionalChildren > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.additionalChildren}x Additional children ({swimmingChildren} swimming)</span><span>R {swimmingChildren * priceOf(prices, 'party-child-swimming') + (party.additionalChildren - swimmingChildren) * priceOf(prices, 'party-child-non-swimming')}</span></div>}
+            {party.partyPacks > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.partyPacks}x Party packs</span><span>R {party.partyPacks * priceOf(prices, 'party-pack')}</span></div>}
             <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Party slot: {party.slot}</p>
           </>}
         </div>

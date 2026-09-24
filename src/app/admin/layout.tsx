@@ -153,6 +153,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     {role !== 'SCANNER' && (
       <div className="admin-bottom-nav">
         <a href="/admin" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Dashboard</a>
+        <a href="/admin/reports" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Reports</a>
+        <a href="/admin/settings" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Prices &amp; dates</a>
         {role === 'ADMIN' && <a href="/admin/staff" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Staff</a>}
         <a href="/admin/vouchers" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Vouchers</a>
         <a href="/admin/notifications" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Email retries</a>
