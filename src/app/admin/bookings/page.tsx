@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { DownloadIcon } from '@/components/icons';
@@ -8,17 +8,41 @@ import Link from 'next/link';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; customers?: Customer | Customer[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }> };
+type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued'> & { customers?: Partial<Customer> };
 type Action = 'resend_tickets' | 'delete' | 'mark_paid' | 'refund' | 'cancel_ticket';
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
+const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }];
 
 export default function BookingsAdmin() {
-  const [query, setQuery] = useState(''); const [bookings, setBookings] = useState<Booking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...'); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
+  const [query, setQuery] = useState(''); const [bookings, setBookings] = useState<ListBooking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...');
+  const [statusFilter, setStatusFilter] = useState(''); const [dateFilter, setDateFilter] = useState(''); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [pageSize, setPageSize] = useState(50); const [loadingDetail, setLoadingDetail] = useState(''); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
   const [showExport, setShowExport] = useState(false); const [exportMode, setExportMode] = useState<'all' | 'range'>('all'); const [exportFrom, setExportFrom] = useState(''); const [exportTo, setExportTo] = useState(''); const [exporting, setExporting] = useState(false);
   const { confirm, dialog } = useConfirm();
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
-  const load = async (search = query) => { const response = await fetch(`/api/admin/bookings?q=${encodeURIComponent(search)}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' }); const data = await response.json(); if (!response.ok) throw new Error(data.error); setBookings(data.bookings); setSelected(current => current ? data.bookings.find((booking: Booking) => booking.id === current.id) || null : null); setMessage(data.bookings.length ? '' : 'No bookings found.'); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
-  useEffect(() => { load().catch(error => setMessage(error.message)); }, []);
+  // The list holds one page of slim rows; the full booking loads when it is opened.
+  const load = useCallback(async (options: { page?: number; search?: string; status?: string; date?: string } = {}) => {
+    const params = new URLSearchParams({ page: String(options.page ?? 1) });
+    if (options.search) params.set('q', options.search);
+    if (options.status) params.set('status', options.status);
+    if (options.date) params.set('date', options.date);
+    const response = await fetch(`/api/admin/bookings?${params}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    setBookings(data.bookings); setTotal(data.total); setPageSize(data.pageSize); setPage(data.page);
+    setMessage(data.bookings.length ? '' : 'No bookings found.');
+  }, []);
+  const reload = (nextPage = page) => load({ page: nextPage, search: query.trim(), status: statusFilter, date: dateFilter }).catch(error => setMessage(error.message));
+  const openBooking = async (id: string) => {
+    setLoadingDetail(id);
+    try {
+      const response = await fetch(`/api/admin/bookings?id=${id}`, { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) { setMessage(data.error || 'Booking could not be loaded'); return; }
+      setSelected(data.booking);
+    } finally { setLoadingDetail(''); }
+  };
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- Reload page 1 when a filter changes; setState happens after the request
+  useEffect(() => { load({ page: 1, search: query.trim(), status: statusFilter, date: dateFilter }).catch(error => setMessage(error.message)); }, [statusFilter, dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps -- the search box only applies on submit
   const showToast = (text: string) => { setToast(text); window.setTimeout(() => setToast(''), 6000); };
   const action = async (type: Action, ticketId?: string, deductionPercentage?: number) => {
     if (!selected || busy) return;
@@ -55,20 +79,22 @@ export default function BookingsAdmin() {
       }
       const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body });
       const data = await response.json(); setMessage(data.message || data.error); if (!response.ok) return;
-      if (type === 'delete') setSelected(null); await load();
+      if (type === 'delete') setSelected(null); else await openBooking(selected.id);
+      await reload();
       if (type === 'resend_tickets') showToast('Tickets resent successfully');
       if (type === 'refund') showToast(data.emailSent ? 'Voucher issued and email sent' : 'Voucher issued; email queued for retry');
     } finally { setBusy(''); }
   };
   const refundAll = async () => {
     if (busy) return;
-    const eligible = bookings.filter(booking => booking.visit_date === refundDate && ['PAID', 'CONFIRMED'].includes(booking.status) && !booking.voucher_issued);
-    const total = eligible.reduce((sum, booking) => sum + Number(booking.total_amount), 0);
-    if (!eligible.length) return setMessage('No paid, unrefunded bookings found for that date.');
-    const result = await confirm({ title: 'Refund all bookings for date', message: `Issue vouchers for ${eligible.length} bookings on ${refundDate}, totalling R ${total.toFixed(2)}? This will cancel them and invalidate their tickets.`, confirmLabel: 'Issue vouchers', tone: 'danger' });
+    const previewResponse = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate, preview: true }) });
+    const preview = await previewResponse.json();
+    if (!previewResponse.ok) return setMessage(preview.error || 'Could not check bookings for that date.');
+    if (!preview.count) return setMessage('No paid, unrefunded bookings found for that date.');
+    const result = await confirm({ title: 'Refund all bookings for date', message: `Issue vouchers for ${preview.count} bookings on ${refundDate}, totalling R ${Number(preview.total).toFixed(2)}? This will cancel them and invalidate their tickets.`, confirmLabel: 'Issue vouchers', tone: 'danger' });
     if (!result.confirmed) return;
     setBusy('refund-all'); setMessage('Issuing vouchers for the selected date... please wait.');
-    try { const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { showToast(data.message); await load(); } } finally { setBusy(''); }
+    try { const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { showToast(data.message); await reload(); if (selected) await openBooking(selected.id); } } finally { setBusy(''); }
   };
   const exportBookings = async () => {
     setExporting(true);
@@ -119,12 +145,26 @@ export default function BookingsAdmin() {
       </div>
     </div>}
     <div className="card" style={{ marginBottom: '1rem' }}>
-      <form onSubmit={event => { event.preventDefault(); load().catch(error => setMessage(error.message)); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search ref, ticket, name, or email" style={{ flex: '1 1 200px', padding: '0.8rem', border: '1px solid var(--border-color)', borderRadius: 8 }} /><button className="btn btn-primary">Search</button></form>
+      <form onSubmit={event => { event.preventDefault(); reload(1); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search ref, ticket, name, or email" style={{ flex: '1 1 200px', padding: '0.8rem', border: '1px solid var(--border-color)', borderRadius: 8 }} />
+        <select aria-label="Status" value={statusFilter} onChange={event => setStatusFilter(event.target.value)} style={{ padding: '0.8rem', border: '1px solid var(--border-color)', borderRadius: 8 }}>{STATUS_FILTERS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+        <input aria-label="Visit date" type="date" value={dateFilter} onChange={event => setDateFilter(event.target.value)} style={{ padding: '0.7rem', border: '1px solid var(--border-color)', borderRadius: 8 }} />
+        {dateFilter && <button type="button" className="btn" onClick={() => setDateFilter('')} style={{ border: '1px solid var(--border-color)' }}>Any date</button>}
+        <button className="btn btn-primary">Search</button>
+      </form>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>Refund all for <input type="date" value={refundDate} onChange={event => setRefundDate(event.target.value)} style={{ padding: 8, marginLeft: 4 }} /></label><button className="btn" onClick={refundAll} style={{ color: '#b91c1c', border: '1px solid #b91c1c' }}>Refund all for date</button></div>
     </div>
     {message && <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>{message}</p>}
     <div className={`admin-panels${selected ? ' has-detail' : ''}`}>
-      <div style={{ display: 'grid', gap: '0.75rem', alignContent: 'start' }}>{bookings.map(booking => { const customer = customerOf(booking); return <button key={booking.id} onClick={() => setSelected(booking)} style={{ textAlign: 'left', background: selected?.id === booking.id ? '#e0f2fe' : 'white', border: '1px solid var(--border-color)', borderRadius: 10, padding: '1rem' }}><strong style={{ color: 'var(--primary)' }}>{booking.reference}</strong><p>{customer?.first_name} {customer?.last_name}</p><p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{booking.visit_date} · R {Number(booking.total_amount).toFixed(2)} · {booking.voucher_issued ? 'Voucher issued' : booking.status}</p></button>; })}</div>
+      <div style={{ display: 'grid', gap: '0.75rem', alignContent: 'start' }}>
+        {total > 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total} bookings</p>}
+        {bookings.map(booking => <button key={booking.id} onClick={() => openBooking(booking.id)} aria-busy={loadingDetail === booking.id} style={{ textAlign: 'left', background: selected?.id === booking.id ? '#e0f2fe' : 'white', border: '1px solid var(--border-color)', borderRadius: 10, padding: '1rem', opacity: loadingDetail === booking.id ? 0.6 : 1 }}><strong style={{ color: 'var(--primary)' }}>{booking.reference}</strong><p>{booking.customers?.first_name} {booking.customers?.last_name}</p><p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{booking.visit_date} · R {Number(booking.total_amount).toFixed(2)} · {booking.voucher_issued ? 'Voucher issued' : booking.status}</p></button>)}
+        {total > pageSize && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <button className="btn" disabled={page <= 1} onClick={() => reload(page - 1)} style={{ border: '1px solid var(--border-color)' }}>← Newer</button>
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Page {page} of {Math.ceil(total / pageSize)}</span>
+          <button className="btn" disabled={page * pageSize >= total} onClick={() => reload(page + 1)} style={{ border: '1px solid var(--border-color)' }}>Older →</button>
+        </div>}
+      </div>
       {selected && <BookingDetail booking={selected} onAction={action} />}
     </div>
     {dialog}
