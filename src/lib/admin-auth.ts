@@ -7,8 +7,16 @@ export async function requireAdmin(request: Request, allowedRoles?: AdminRole[])
   const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
   if (!token) throw new AdminAuthError('Authentication required', 401);
 
-  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-  if (userError || !user) throw new AdminAuthError('Invalid or expired session', 401);
+  // getClaims verifies the token's signature and expiry locally when the project
+  // uses asymmetric JWT signing keys (the public keys are fetched once and cached),
+  // saving a round trip to Supabase Auth on every admin request. With legacy
+  // shared-secret keys it falls back to the same server check as getUser().
+  // Deactivated or deleted staff are still rejected by the admin_roles check below.
+  // getClaims throws (rather than returning an error) on tokens it cannot decode.
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token).catch(() => ({ data: null, error: new Error('Malformed token') }));
+  const claims = claimsData?.claims;
+  if (claimsError || !claims?.sub || claims.role !== 'authenticated') throw new AdminAuthError('Invalid or expired session', 401);
+  const user = { id: claims.sub, email: typeof claims.email === 'string' ? claims.email : undefined };
 
   const { data: roleRow, error: roleError } = await supabase
     .from('admin_roles')

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import Link from 'next/link';
 
 type Conflict = {
   id: string;
@@ -104,7 +105,7 @@ export default function ConflictsPage() {
             These tickets were scanned on multiple offline devices before sync.
           </p>
         </div>
-        <a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>← Dashboard</a>
+        <Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>← Dashboard</Link>
       </div>
 
       {/* Controls */}

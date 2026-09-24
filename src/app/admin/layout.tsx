@@ -1,9 +1,10 @@
 'use client';
 
-import { FormEvent, useEffect, useState, useCallback } from 'react';
+import { FormEvent, useEffect, useRef, useState, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { cacheSession, getCachedSession, clearCachedSession, initDB } from '@/lib/offline-db';
+import Link from 'next/link';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabaseBrowser.auth.getSession>>['data']['session']>(null);
@@ -14,6 +15,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [error, setError] = useState('');
   const [offlineMode, setOfflineMode] = useState(false);
   const pathname = usePathname();
+  // Read the current path inside loadRole without making it a dependency:
+  // otherwise every client-side navigation would re-run the session check.
+  const pathnameRef = useRef(pathname);
+  useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
 
   const tryOfflineSession = useCallback(async () => {
     try {
@@ -37,7 +42,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       if (!response.ok) {
         // On the set-password page, don't sign out — the user may be setting
         // their password for the first time before their role check succeeds.
-        if (pathname !== '/admin/set-password') {
+        if (pathnameRef.current !== '/admin/set-password') {
           setError(data.error || 'Staff access is required');
           await supabaseBrowser.auth.signOut();
         }
@@ -55,7 +60,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       // Network error — try offline fallback
       await tryOfflineSession();
     }
-  }, [pathname, tryOfflineSession]);
+  }, [tryOfflineSession]);
 
   useEffect(() => {
     let active = true;
@@ -80,10 +85,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       if (active) setLoading(false);
     });
 
-    const { data: listener } = supabaseBrowser.auth.onAuthStateChange(async (_event, nextSession) => {
+    const { data: listener } = supabaseBrowser.auth.onAuthStateChange(async (event, nextSession) => {
       setSession(nextSession);
       if (nextSession) {
         setOfflineMode(false);
+        // The initial session is already checked above, and token refreshes do not
+        // change the staff role, so only re-check the role when someone signs in.
+        if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
         await loadRole(nextSession.access_token);
       } else {
         setRole('');
@@ -131,7 +139,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     </main></>
   );
 
-  if (role === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/walk-ins' && pathname !== '/admin/set-password') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role has access to the ticket scanner and walk-in sales.</p><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><a className="btn btn-primary" href="/admin/scanner">Open scanner</a><a className="btn" href="/admin/walk-ins" style={{ border: '1px solid var(--border-color)' }}>Walk-in sales</a></div></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
+  if (role === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/walk-ins' && pathname !== '/admin/set-password') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role has access to the ticket scanner and walk-in sales.</p><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><Link className="btn btn-primary" href="/admin/scanner">Open scanner</Link><Link className="btn" href="/admin/walk-ins" style={{ border: '1px solid var(--border-color)' }}>Walk-in sales</Link></div></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
   if (pathname === '/admin/staff' && role !== 'ADMIN') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Admin access required</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Only administrators can manage staff accounts.</p></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
 
   return <>
@@ -152,20 +160,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     </div>
     {role !== 'SCANNER' && (
       <div className="admin-bottom-nav">
-        <a href="/admin" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Dashboard</a>
-        <a href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-ins</a>
-        <a href="/admin/reports" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Reports</a>
-        <a href="/admin/settings" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Prices &amp; dates</a>
-        {role === 'ADMIN' && <a href="/admin/staff" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Staff</a>}
-        <a href="/admin/vouchers" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Vouchers</a>
-        <a href="/admin/notifications" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Email retries</a>
+        <Link href="/admin" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Dashboard</Link>
+        <Link href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-ins</Link>
+        <Link href="/admin/reports" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Reports</Link>
+        <Link href="/admin/settings" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Prices &amp; dates</Link>
+        {role === 'ADMIN' && <Link href="/admin/staff" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Staff</Link>}
+        <Link href="/admin/vouchers" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Vouchers</Link>
+        <Link href="/admin/notifications" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Email retries</Link>
         <div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div>
       </div>
     )}
     {role === 'SCANNER' && (
       <div className="admin-bottom-nav">
-        <a href="/admin/scanner" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Scanner</a>
-        <a href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-in sales</a>
+        <Link href="/admin/scanner" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Scanner</Link>
+        <Link href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-in sales</Link>
         <div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div>
       </div>
     )}

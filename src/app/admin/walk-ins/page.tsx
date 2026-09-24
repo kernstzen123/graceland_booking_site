@@ -6,6 +6,7 @@ import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { buildPackageGroups, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
 import { GATE_PAYMENT_METHODS, type GatePaymentKey, type WalkInReceipt } from '@/lib/walk-ins';
+import Link from 'next/link';
 
 type Spot = { id: string; number: string; type: 'hut' | 'table'; capacity: number; available: boolean; unavailableReason?: string };
 type Sale = { bookingId: string; reference: string; createdAt: string; status: string; paymentMethod: string; total: number; people: number; soldBy: string; customerName: string; items: string; ticketsScanned: number; tickets: number };
@@ -215,7 +216,7 @@ export default function WalkInsPage() {
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     <div className="admin-header no-print">
       <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>GATE</p><h1>Walk-in sales</h1><p style={{ color: 'var(--text-muted)' }}>Sell entry to guests at the gate for today, {new Date(`${today()}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}.</p></div>
-      <nav className="admin-nav"><a className="btn" href="/admin/scanner" style={{ border: '1px solid var(--border-color)' }}>Scanner</a></nav>
+      <nav className="admin-nav"><Link className="btn" href="/admin/scanner" style={{ border: '1px solid var(--border-color)' }}>Scanner</Link></nav>
     </div>
     {openingNote && <div className="callout callout-warning no-print" style={{ marginBottom: '1rem' }}><p>{openingNote}</p></div>}
 

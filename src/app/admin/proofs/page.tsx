@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
+import Link from 'next/link';
 
 type Proof = { id: string; file_url: string; signed_url: string | null; status: string; admin_notes: string | null; uploaded_at: string; bookings?: { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> } | { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> }[] };
 
@@ -76,7 +77,7 @@ export default function ReviewProofs() {
       )}
       {status === 'PENDING' && <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}><button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', flex: '1 1 120px' }} onClick={() => act(proof, 'reject')}>Reject</button><button className="btn btn-primary" style={{ flex: '1 1 120px' }} onClick={() => act(proof, 'approve')}>Approve &amp; issue tickets</button></div>}
     </article>; })}</div>
-    <a href="/admin" className="btn" style={{ marginTop: '2rem', border: '1px solid var(--border-color)' }}>Back to dashboard</a>
+    <Link href="/admin" className="btn" style={{ marginTop: '2rem', border: '1px solid var(--border-color)' }}>Back to dashboard</Link>
     {dialog}
   </main>;
 }

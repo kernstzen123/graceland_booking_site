@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { DownloadIcon } from '@/components/icons';
+import Link from 'next/link';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; customers?: Customer | Customer[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }> };
@@ -95,7 +96,7 @@ export default function BookingsAdmin() {
     {toast && <div role="status" style={{ position: 'fixed', top: 24, right: 24, left: 24, zIndex: 20, background: '#065f46', color: 'white', padding: '1rem 1.25rem', borderRadius: 10, textAlign: 'center' }}>✓ {toast}</div>}
     <div className="admin-header">
       <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>OPERATIONS</p><h1>All bookings</h1></div>
-      <div className="admin-nav"><button className="btn" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ background: 'var(--primary)', color: 'white', border: 'none', gap: 6 }}><DownloadIcon size={15} /> Export</button><a className="btn" href="/admin/vouchers" style={{ border: '1px solid var(--border-color)' }}>Vouchers</a><a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</a></div>
+      <div className="admin-nav"><button className="btn" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ background: 'var(--primary)', color: 'white', border: 'none', gap: 6 }}><DownloadIcon size={15} /> Export</button><Link className="btn" href="/admin/vouchers" style={{ border: '1px solid var(--border-color)' }}>Vouchers</Link><Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</Link></div>
     </div>
     {/* ── Export Modal ─── */}
     {showExport && <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowExport(false); }}>

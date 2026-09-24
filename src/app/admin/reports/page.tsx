@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type { Kpi, Report, Row } from '@/lib/reports';
+import Link from 'next/link';
 
 type Basis = 'visit' | 'booked';
 type Metric = 'Revenue (R)' | 'Visitors' | 'Paid bookings';
@@ -194,8 +195,8 @@ export default function ReportsPage() {
     <div className="admin-header">
       <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>INSIGHTS</p><h1>Reports</h1></div>
       <nav className="admin-nav">
-        <a className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</a>
-        <a className="btn" href="/admin/settings" style={{ border: '1px solid var(--border-color)' }}>Prices &amp; dates</a>
+        <Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</Link>
+        <Link className="btn" href="/admin/settings" style={{ border: '1px solid var(--border-color)' }}>Prices &amp; dates</Link>
         <button className="btn btn-primary" onClick={downloadExcel} disabled={exporting || loading || !report}>{exporting ? 'Preparing Excel…' : 'Download Excel'}</button>
       </nav>
     </div>
