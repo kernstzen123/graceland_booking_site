@@ -1,5 +1,6 @@
 'use client';
 
+import { PageHeader } from '@/components/admin/AdminShell';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
@@ -122,10 +123,7 @@ export default function SettingsPage() {
   const messageStyle = (tone: 'ok' | 'error') => ({ marginTop: '0.75rem', color: tone === 'ok' ? 'var(--success-text)' : 'var(--danger)', whiteSpace: 'pre-line' as const });
 
   return <main className="container" style={{ padding: '2rem 1rem' }}>
-    <div className="admin-header">
-      <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>VENUE SETTINGS</p><h1>Prices &amp; closed dates</h1></div>
-      <nav className="admin-nav"><Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</Link><Link className="btn" href="/admin/reports" style={{ border: '1px solid var(--border-color)' }}>Reports</Link></nav>
-    </div>
+    <PageHeader eyebrow="Settings" title="Prices & closed dates" description="What customers pay, and extra days the venue is closed." />
     {loadError && <div className="card" style={{ color: 'var(--danger)', marginBottom: '1rem' }}>{loadError}</div>}
 
     <section className="card" style={{ marginBottom: '1.5rem' }}>
@@ -149,7 +147,7 @@ export default function SettingsPage() {
             <tbody>{closedDates.map(entry => <tr key={entry.date} style={{ borderBottom: '1px solid var(--border-color)' }}>
               <td style={{ padding: 10, whiteSpace: 'nowrap', fontWeight: 600 }}>{formatDate(entry.date)}</td>
               <td style={{ padding: 10 }}>{entry.reason || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-              <td style={{ padding: 10 }}>{entry.activeBookings ? <Link href="/admin/bookings" style={{ color: 'var(--danger)', fontWeight: 600 }}>{entry.activeBookings} booking{entry.activeBookings === 1 ? '' : 's'} · {entry.activePeople} people →</Link> : <span style={{ color: 'var(--text-muted)' }}>None</span>}</td>
+              <td style={{ padding: 10 }}>{entry.activeBookings ? <Link href={`/admin/bookings?date=${entry.date}`} style={{ color: 'var(--danger)', fontWeight: 600 }}>{entry.activeBookings} booking{entry.activeBookings === 1 ? '' : 's'} · {entry.activePeople} people →</Link> : <span style={{ color: 'var(--text-muted)' }}>None</span>}</td>
               <td style={{ padding: 10, textAlign: 'right' }}><button className="btn" onClick={() => reopen(entry)} style={{ border: '1px solid var(--border-color)', padding: '0.35rem 0.75rem' }}>Reopen</button></td>
             </tr>)}</tbody>
           </table>}

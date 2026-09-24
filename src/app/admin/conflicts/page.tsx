@@ -1,8 +1,8 @@
 'use client';
 
+import { PageHeader } from '@/components/admin/AdminShell';
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import Link from 'next/link';
 
 type Conflict = {
   id: string;
@@ -97,16 +97,7 @@ export default function ConflictsPage() {
 
   return (
     <main className="container" style={{ padding: '2rem 1rem' }}>
-      <div className="admin-header" style={{ marginBottom: '2rem' }}>
-        <div>
-          <p style={{ color: 'var(--primary)', fontWeight: 700 }}>STAFF OPERATIONS</p>
-          <h1>Duplicate Check-in Alerts</h1>
-          <p style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: '0.9rem' }}>
-            These tickets were scanned on multiple offline devices before sync.
-          </p>
-        </div>
-        <Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>← Dashboard</Link>
-      </div>
+      <PageHeader eyebrow="Bookings" title="Check-in alerts" description="Tickets that were scanned on more than one offline device before syncing." />
 
       {/* Controls */}
       <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>

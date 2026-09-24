@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { PageHeader } from '@/components/admin/AdminShell';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { DownloadIcon } from '@/components/icons';
-import Link from 'next/link';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; customers?: Customer | Customer[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }> };
@@ -14,8 +15,17 @@ const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? book
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }];
 
 export default function BookingsAdmin() {
-  const [query, setQuery] = useState(''); const [bookings, setBookings] = useState<ListBooking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...');
-  const [statusFilter, setStatusFilter] = useState(''); const [dateFilter, setDateFilter] = useState(''); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [pageSize, setPageSize] = useState(50); const [loadingDetail, setLoadingDetail] = useState(''); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
+  // useSearchParams needs a Suspense boundary so the page can still be prerendered.
+  return <Suspense fallback={<main className="container" style={{ padding: '2rem 1rem' }}><div className="card">Loading bookings…</div></main>}><BookingsPage /></Suspense>;
+}
+
+function BookingsPage() {
+  // ?q= and ?date= come from the menu's "Find booking" search and the dashboard.
+  const searchParams = useSearchParams();
+  const urlQuery = searchParams.get('q') || '';
+  const urlDate = searchParams.get('date') || '';
+  const [query, setQuery] = useState(urlQuery); const [appliedQuery, setAppliedQuery] = useState(urlQuery); const [searchCount, setSearchCount] = useState(0); const [bookings, setBookings] = useState<ListBooking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...');
+  const [statusFilter, setStatusFilter] = useState(''); const [dateFilter, setDateFilter] = useState(urlDate); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [pageSize, setPageSize] = useState(50); const [loadingDetail, setLoadingDetail] = useState(''); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
   const [showExport, setShowExport] = useState(false); const [exportMode, setExportMode] = useState<'all' | 'range'>('all'); const [exportFrom, setExportFrom] = useState(''); const [exportTo, setExportTo] = useState(''); const [exporting, setExporting] = useState(false);
   const { confirm, dialog } = useConfirm();
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
@@ -31,7 +41,7 @@ export default function BookingsAdmin() {
     setBookings(data.bookings); setTotal(data.total); setPageSize(data.pageSize); setPage(data.page);
     setMessage(data.bookings.length ? '' : 'No bookings found.');
   }, []);
-  const reload = (nextPage = page) => load({ page: nextPage, search: query.trim(), status: statusFilter, date: dateFilter }).catch(error => setMessage(error.message));
+  const reload = (nextPage = page) => load({ page: nextPage, search: appliedQuery, status: statusFilter, date: dateFilter }).catch(error => setMessage(error.message));
   const openBooking = async (id: string) => {
     setLoadingDetail(id);
     try {
@@ -41,8 +51,12 @@ export default function BookingsAdmin() {
       setSelected(data.booking);
     } finally { setLoadingDetail(''); }
   };
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- Reload page 1 when a filter changes; setState happens after the request
-  useEffect(() => { load({ page: 1, search: query.trim(), status: statusFilter, date: dateFilter }).catch(error => setMessage(error.message)); }, [statusFilter, dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps -- the search box only applies on submit
+  // Follow the address bar when a search arrives from the menu or dashboard while this page is open.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing filters from the URL
+  useEffect(() => { setQuery(urlQuery); setAppliedQuery(urlQuery); setDateFilter(urlDate); }, [urlQuery, urlDate]);
+  // Back to page 1 whenever the search or a filter changes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- setState happens after the request
+  useEffect(() => { load({ page: 1, search: appliedQuery, status: statusFilter, date: dateFilter }).catch(error => setMessage(error.message)); }, [appliedQuery, statusFilter, dateFilter, searchCount, load]);
   const showToast = (text: string) => { setToast(text); window.setTimeout(() => setToast(''), 6000); };
   const action = async (type: Action, ticketId?: string, deductionPercentage?: number) => {
     if (!selected || busy) return;
@@ -120,10 +134,7 @@ export default function BookingsAdmin() {
   };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     {toast && <div role="status" style={{ position: 'fixed', top: 24, right: 24, left: 24, zIndex: 20, background: '#065f46', color: 'white', padding: '1rem 1.25rem', borderRadius: 10, textAlign: 'center' }}>✓ {toast}</div>}
-    <div className="admin-header">
-      <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>OPERATIONS</p><h1>All bookings</h1></div>
-      <div className="admin-nav"><button className="btn" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ background: 'var(--primary)', color: 'white', border: 'none', gap: 6 }}><DownloadIcon size={15} /> Export</button><Link className="btn" href="/admin/vouchers" style={{ border: '1px solid var(--border-color)' }}>Vouchers</Link><Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</Link></div>
-    </div>
+    <PageHeader eyebrow="Bookings" title="All bookings" description="Search, filter and manage every booking." actions={<button className="btn btn-primary" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ gap: 6 }}><DownloadIcon size={15} /> Export to Excel</button>} />
     {/* ── Export Modal ─── */}
     {showExport && <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowExport(false); }}>
       <div className="modal-card" role="dialog" aria-modal="true">
@@ -145,7 +156,7 @@ export default function BookingsAdmin() {
       </div>
     </div>}
     <div className="card" style={{ marginBottom: '1rem' }}>
-      <form onSubmit={event => { event.preventDefault(); reload(1); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <form onSubmit={event => { event.preventDefault(); setAppliedQuery(query.trim()); setSearchCount(count => count + 1); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search ref, ticket, name, or email" style={{ flex: '1 1 200px', padding: '0.8rem', border: '1px solid var(--border-color)', borderRadius: 8 }} />
         <select aria-label="Status" value={statusFilter} onChange={event => setStatusFilter(event.target.value)} style={{ padding: '0.8rem', border: '1px solid var(--border-color)', borderRadius: 8 }}>{STATUS_FILTERS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
         <input aria-label="Visit date" type="date" value={dateFilter} onChange={event => setDateFilter(event.target.value)} style={{ padding: '0.7rem', border: '1px solid var(--border-color)', borderRadius: 8 }} />

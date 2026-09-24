@@ -1,9 +1,9 @@
 'use client';
 
+import { PageHeader } from '@/components/admin/AdminShell';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type { Kpi, Report, Row } from '@/lib/reports';
-import Link from 'next/link';
 
 type Basis = 'visit' | 'booked';
 type Metric = 'Revenue (R)' | 'Visitors' | 'Paid bookings';
@@ -192,14 +192,7 @@ export default function ReportsPage() {
   const partyValue = (measure: string) => Number(report?.parties.summary.find(row => row.Measure === measure)?.Value || 0);
 
   return <main className="container" style={{ padding: '2rem 1rem' }}>
-    <div className="admin-header">
-      <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>INSIGHTS</p><h1>Reports</h1></div>
-      <nav className="admin-nav">
-        <Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</Link>
-        <Link className="btn" href="/admin/settings" style={{ border: '1px solid var(--border-color)' }}>Prices &amp; dates</Link>
-        <button className="btn btn-primary" onClick={downloadExcel} disabled={exporting || loading || !report}>{exporting ? 'Preparing Excel…' : 'Download Excel'}</button>
-      </nav>
-    </div>
+    <PageHeader eyebrow="Insights" title="Reports" description="Sales, visitors and trends for any period." actions={<button className="btn btn-primary" onClick={downloadExcel} disabled={exporting || loading || !report}>{exporting ? 'Preparing Excel…' : 'Download Excel'}</button>} />
 
     <div className="card report-filters">
       <div className="report-presets" role="group" aria-label="Date range">

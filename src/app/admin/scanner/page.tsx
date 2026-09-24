@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import Link from 'next/link';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useLiveBarcodeScanner, type DetectedBarcode } from '@/lib/qr-scanner';
 import {
@@ -907,14 +906,6 @@ export default function Scanner() {
 
 
 
-        {/* Navigation */}
-        <Link
-          href="/admin"
-          className="btn"
-          style={{ width: '100%', marginTop: '0.5rem', border: '1px solid #475569', color: 'white' }}
-        >
-          Back to dashboard
-        </Link>
       </div>
 
       {/* Inline styles for animations */}

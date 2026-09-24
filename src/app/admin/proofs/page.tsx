@@ -1,9 +1,9 @@
 'use client';
 
+import { PageHeader } from '@/components/admin/AdminShell';
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
-import Link from 'next/link';
 
 type Proof = { id: string; file_url: string; signed_url: string | null; status: string; admin_notes: string | null; uploaded_at: string; bookings?: { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> } | { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> }[] };
 
@@ -52,10 +52,7 @@ export default function ReviewProofs() {
     await load();
   };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
-    <div className="admin-header">
-      <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>FINANCE OPERATIONS</p><h1>Proofs of payment</h1></div>
-      <select value={status} onChange={e => setStatus(e.target.value)} style={{ padding: '0.7rem', border: '1px solid var(--border-color)', borderRadius: 8 }}><option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select>
-    </div>
+    <PageHeader eyebrow="Bookings" title="Proofs of payment" description="Check EFT payment proofs and approve or reject them." actions={<select aria-label="Show proofs" value={status} onChange={e => setStatus(e.target.value)} style={{ padding: '0.7rem', border: '1px solid var(--border-color)', borderRadius: 8 }}><option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select>} />
     {message && <div className="card" style={{ marginBottom: '1rem', color: 'var(--text-muted)' }}>{message}</div>}
     <div style={{ display: 'grid', gap: '1rem' }}>{proofs.map(proof => { const booking = Array.isArray(proof.bookings) ? proof.bookings[0] : proof.bookings; const customer = booking && (Array.isArray(booking.customers) ? booking.customers[0] : booking.customers); const displayAmount = Number(booking?.amount_due ?? booking?.total_amount ?? 0); return <article className="card" key={proof.id}>
       <div style={{ marginBottom: '1rem' }}>
@@ -77,7 +74,6 @@ export default function ReviewProofs() {
       )}
       {status === 'PENDING' && <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}><button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', flex: '1 1 120px' }} onClick={() => act(proof, 'reject')}>Reject</button><button className="btn btn-primary" style={{ flex: '1 1 120px' }} onClick={() => act(proof, 'approve')}>Approve &amp; issue tickets</button></div>}
     </article>; })}</div>
-    <Link href="/admin" className="btn" style={{ marginTop: '2rem', border: '1px solid var(--border-color)' }}>Back to dashboard</Link>
     {dialog}
   </main>;
 }

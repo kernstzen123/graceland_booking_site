@@ -1,9 +1,9 @@
 'use client';
 
+import { PageHeader } from '@/components/admin/AdminShell';
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
-import Link from 'next/link';
 
 type Redemption = { id: string; booking_id: string; amount_used: number; created_at: string; bookings?: { reference: string; visit_date: string } | Array<{ reference: string; visit_date: string }> };
 type Voucher = { id: string; credit_code: string; original_amount: number; remaining_balance: number; status: string; created_at: string; issued_by?: string; bookings?: { reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> } | Array<{ reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> }>; credit_redemptions?: Redemption[] };
@@ -27,7 +27,7 @@ export default function VouchersAdmin() {
     try { const response = await fetch(`/api/admin/vouchers/${voucher.id}/void`, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: result.value }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) await load(); } finally { setBusy(''); }
   };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
-    <div className="admin-header"><div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>FINANCE OPERATIONS</p><h1>Rebooking vouchers</h1></div><Link className="btn" href="/admin/bookings" style={{ border: '1px solid var(--border-color)' }}>All bookings</Link></div>
+    <PageHeader eyebrow="Bookings" title="Vouchers" description="Rebooking vouchers issued for refunds, and their remaining balances." />
     {summary && <div className="admin-stats">{[['Outstanding', summary.outstanding], ['Total issued', summary.totalIssued], ['Total redeemed', summary.totalRedeemed], ['Total voided', summary.totalVoided]].map(([label, value]) => <div className="card" key={String(label)}><p style={{ color: 'var(--text-muted)' }}>{label}</p><strong style={{ fontSize: '1.6rem', color: label === 'Outstanding' ? 'var(--warning)' : 'var(--primary)' }}>R {Number(value).toFixed(2)}</strong></div>)}</div>}
     <div className="card" style={{ marginBottom: '1rem' }}><form onSubmit={event => { event.preventDefault(); load().catch(error => setMessage(error.message)); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, customer, email" style={{ flex: '1 1 160px', padding: 10 }} /><select value={status} onChange={event => setStatus(event.target.value)} style={{ padding: 10 }}><option value="">All statuses</option><option value="active">Active</option><option value="depleted">Depleted</option><option value="void">Void</option></select><button className="btn btn-primary">Search</button></form></div>
     {failures.length > 0 && <div className="card" style={{ marginBottom: '1rem', border: '1px solid var(--danger)' }}><h2>Failed voucher emails</h2>{failures.map(failure => <div key={failure.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', borderTop: '1px solid var(--border-color)', padding: '0.75rem 0', alignItems: 'center' }}><span style={{ flex: '1 1 200px' }}>{failure.recipient || 'Unknown recipient'}<br /><small style={{ color: 'var(--danger)' }}>{failure.error_message}</small></span><button className="btn" onClick={() => retry(failure.id)} style={{ border: '1px solid var(--border-color)' }}>Retry email</button></div>)}</div>}

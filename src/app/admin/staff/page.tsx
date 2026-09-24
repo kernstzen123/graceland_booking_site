@@ -1,9 +1,9 @@
 'use client';
 
+import { PageHeader } from '@/components/admin/AdminShell';
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
-import Link from 'next/link';
 
 type Staff = { id: string; name: string; email: string; role: 'ADMIN' | 'MANAGER' | 'SCANNER'; active: boolean; created_at: string; last_login: string | null };
 type Activity = { id: string; action: string; entity_type: string; entity_id: string; created_at: string };
@@ -35,7 +35,7 @@ export default function StaffManagement() {
     const response = await fetch(`/api/admin/staff?userId=${selected.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${await token()}` } }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { setSelected(null); await load(); }
   };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
-    <div className="admin-header"><div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>SECURITY &amp; ACCESS</p><h1>Staff management</h1></div><Link className="btn" href="/admin" style={{ border: '1px solid var(--border-color)' }}>Dashboard</Link></div>
+    <PageHeader eyebrow="Settings" title="Staff" description="Invite staff, set their roles and review their activity." />
     <div className="card" style={{ marginBottom: '1rem' }}>
       <h2>Invite new staff</h2>
       <form onSubmit={invite} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}><input required value={name} onChange={event => setName(event.target.value)} placeholder="Full name" style={{ flex: '1 1 140px', padding: 10 }} /><input required type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="Email address" style={{ flex: '1 1 180px', padding: 10 }} /><select value={role} onChange={event => setRole(event.target.value as Staff['role'])} style={{ padding: 10 }}><option value="SCANNER">Gate Staff</option><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option></select><button className="btn btn-primary">Send invite</button></form>

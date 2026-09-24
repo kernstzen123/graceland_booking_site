@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { cacheSession, getCachedSession, clearCachedSession, initDB } from '@/lib/offline-db';
 import Link from 'next/link';
+import { AdminShell } from '@/components/admin/AdminShell';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabaseBrowser.auth.getSession>>['data']['session']>(null);
@@ -115,7 +116,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
 
 
-  if (loading) return <main className="container" style={{ padding: '4rem 1rem' }}>Loading staff portal…</main>;
+  if (loading) return <main className="admin-auth-screen"><p style={{ color: 'var(--text-muted)' }}>Loading staff portal…</p></main>;
 
   // Allow the set-password page to render unconditionally — the invited
   // user may not have a session yet (tokens are in the URL hash) and won't have a role.
@@ -124,58 +125,29 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   if (!session || !role) return (
-    <><main className="container" style={{ padding: '4rem 1rem' }}>
-      <div className="card" style={{ maxWidth: 430, margin: '0 auto' }}>
-        <h1 style={{ color: 'var(--primary)', marginBottom: '0.5rem' }}>Staff Sign In</h1>
-        <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Use your Supabase staff account to access the admin portal.</p>
-        <form onSubmit={signIn} style={{ display: 'grid', gap: '1rem' }}>
-          <input aria-label="Email" type="email" required placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 8 }} />
-          <input aria-label="Password" type="password" required placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 8 }} />
-          <button className="btn btn-primary" type="submit">Sign in</button>
+    <main className="admin-auth-screen">
+      <div className="card admin-auth-card">
+        <div className="admin-brand" style={{ marginBottom: '1.25rem' }}><span className="admin-brand-mark">G</span><span>Graceland<small>Staff portal</small></span></div>
+        <h1 style={{ fontSize: '1.4rem', marginBottom: '0.35rem' }}>Sign in</h1>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '1.25rem', fontSize: '0.9rem' }}>Use your staff account to access the portal.</p>
+        <form onSubmit={signIn} style={{ display: 'grid', gap: '0.75rem' }}>
+          <input aria-label="Email" type="email" autoComplete="username" required placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="field-input" />
+          <input aria-label="Password" type="password" autoComplete="current-password" required placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} className="field-input" />
+          <button className="btn btn-primary" type="submit" style={{ marginTop: '0.25rem' }}>Sign in</button>
         </form>
-        {error && <p style={{ color: 'var(--danger)', marginTop: '1rem' }}>{error}</p>}
-        {!navigator.onLine && <p style={{ color: 'var(--warning)', marginTop: '1rem' }}>You are offline. Sign in requires an internet connection.</p>}
+        {error && <p role="alert" style={{ color: 'var(--danger)', marginTop: '1rem' }}>{error}</p>}
+        {!navigator.onLine && <p style={{ color: 'var(--warning-text)', marginTop: '1rem' }}>You are offline. Sign in requires an internet connection.</p>}
       </div>
-    </main></>
+    </main>
   );
 
-  if (role === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/walk-ins' && pathname !== '/admin/set-password') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role has access to the ticket scanner and walk-in sales.</p><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><Link className="btn btn-primary" href="/admin/scanner">Open scanner</Link><Link className="btn" href="/admin/walk-ins" style={{ border: '1px solid var(--border-color)' }}>Walk-in sales</Link></div></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
-  if (pathname === '/admin/staff' && role !== 'ADMIN') return <><main className="container" style={{ padding: '4rem 1rem' }}><div className="card"><h1>Admin access required</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Only administrators can manage staff accounts.</p></div></main><div className="admin-bottom-nav"><div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div></div></>;
+  const staffRole = (['ADMIN', 'MANAGER', 'SCANNER'].includes(role) ? role : 'SCANNER') as 'ADMIN' | 'MANAGER' | 'SCANNER';
+  const gateOnly = staffRole === 'SCANNER' && pathname !== '/admin/scanner' && pathname !== '/admin/walk-ins';
+  const adminOnly = pathname === '/admin/staff' && staffRole !== 'ADMIN';
 
-  return <>
-    {offlineMode && (
-      <div style={{
-        background: '#f59e0b',
-        color: '#1a1a1a',
-        textAlign: 'center',
-        padding: '4px 12px',
-        fontSize: '0.8rem',
-        fontWeight: 700,
-      }}>
-        ⚡ Offline mode — using cached credentials
-      </div>
-    )}
-    <div className="admin-content-pad">
-      {children}
-    </div>
-    {role !== 'SCANNER' && (
-      <div className="admin-bottom-nav">
-        <Link href="/admin" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Dashboard</Link>
-        <Link href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-ins</Link>
-        <Link href="/admin/reports" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Reports</Link>
-        <Link href="/admin/settings" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Prices &amp; dates</Link>
-        {role === 'ADMIN' && <Link href="/admin/staff" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Staff</Link>}
-        <Link href="/admin/vouchers" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Vouchers</Link>
-        <Link href="/admin/notifications" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Email retries</Link>
-        <div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div>
-      </div>
-    )}
-    {role === 'SCANNER' && (
-      <div className="admin-bottom-nav">
-        <Link href="/admin/scanner" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Scanner</Link>
-        <Link href="/admin/walk-ins" className="btn" style={{ border: '1px solid var(--border-color)', color: 'var(--primary)', fontWeight: 700 }}>Walk-in sales</Link>
-        <div style={{ marginLeft: 'auto' }}><button onClick={signOut} className="btn" style={{ border: '1px solid var(--border-color)' }}>Log out</button></div>
-      </div>
-    )}
-  </>;
+  return <AdminShell role={staffRole} email={session.user?.email || ''} offlineMode={offlineMode} onSignOut={signOut}>
+    {gateOnly ? <main className="container" style={{ padding: '2rem 1rem' }}><div className="card"><h1>Gate staff access</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Your role has access to the ticket scanner and walk-in sales.</p><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><Link className="btn btn-primary" href="/admin/scanner">Open scanner</Link><Link className="btn btn-secondary" href="/admin/walk-ins">Walk-in sales</Link></div></div></main>
+      : adminOnly ? <main className="container" style={{ padding: '2rem 1rem' }}><div className="card"><h1>Admin access required</h1><p style={{ color: 'var(--text-muted)', margin: '1rem 0' }}>Only administrators can manage staff accounts.</p></div></main>
+      : children}
+  </AdminShell>;
 }
