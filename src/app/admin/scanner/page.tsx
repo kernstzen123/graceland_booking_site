@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import { useLiveBarcodeScanner, type DetectedBarcode } from '@/lib/qr-scanner';
 import {
   initDB,
   lookupTicket,
@@ -39,15 +39,21 @@ type ScanResult = {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-async function stopScanner(instance: Html5Qrcode | null) {
-  if (!instance || !instance.isScanning) return;
-  try { await instance.stop(); } catch { /* camera may already be stopped */ }
-}
+type Point = { x: number; y: number };
 
-async function disposeScanner(instance: Html5Qrcode | null) {
-  if (!instance) return;
-  await stopScanner(instance);
-  try { instance.clear(); } catch { /* the renderer may not have mounted yet */ }
+const OVERLAY_COLOR = '#10b981';
+const FLASH_HOLD_MS = 300;
+const FLASH_FADE_MS = 200;
+
+function traceRoundedPolygon(ctx: CanvasRenderingContext2D, points: Point[], radius: number) {
+  const last = points[points.length - 1];
+  ctx.beginPath();
+  ctx.moveTo((last.x + points[0].x) / 2, (last.y + points[0].y) / 2);
+  points.forEach((point, index) => {
+    const next = points[(index + 1) % points.length];
+    ctx.arcTo(point.x, point.y, next.x, next.y, radius);
+  });
+  ctx.closePath();
 }
 
 function formatTime(iso: string | null): string {
@@ -60,12 +66,14 @@ function formatTime(iso: string | null): string {
 
 export default function Scanner() {
   // Camera / scanner
-  const scanner = useRef<Html5Qrcode | null>(null);
-  const startPromise = useRef<Promise<void> | null>(null);
-  const startInstance = useRef<Html5Qrcode | null>(null);
-  const scannerGeneration = useRef(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCodes = useRef<DetectedBarcode[]>([]);
+  const flash = useRef<{ points: Point[]; startedAt: number } | null>(null);
+  const flashFrame = useRef<number | null>(null);
   const busy = useRef(false);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { start: startLiveScanner, pause: pauseLiveScanner, detectorKind } = useLiveBarcodeScanner(videoRef);
 
   // Torch
   const [torchOn, setTorchOn] = useState(false);
@@ -165,6 +173,77 @@ export default function Scanner() {
     }
   }, [getAuthToken, refreshSyncStatus]);
 
+  // ── Live detection overlay ───────────────────────────────────────────────
+
+  const drawOverlay = useCallback(() => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !video || !ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const { videoWidth, videoHeight } = video;
+    if (!videoWidth || !videoHeight) return;
+    // Map video pixels to the on-screen box, matching the video's object-fit: cover crop.
+    const scale = Math.max(width / videoWidth, height / videoHeight);
+    const offsetX = (width - videoWidth * scale) / 2;
+    const offsetY = (height - videoHeight * scale) / 2;
+    const toScreen = (point: Point) => ({ x: offsetX + point.x * scale, y: offsetY + point.y * scale });
+
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = OVERLAY_COLOR;
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+    for (const code of overlayCodes.current) {
+      traceRoundedPolygon(ctx, code.cornerPoints.map(toScreen), 10);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    if (flash.current) {
+      const elapsed = performance.now() - flash.current.startedAt;
+      const alpha = elapsed <= FLASH_HOLD_MS ? 0.85 : Math.max(0, 0.85 * (1 - (elapsed - FLASH_HOLD_MS) / FLASH_FADE_MS));
+      traceRoundedPolygon(ctx, flash.current.points.map(toScreen), 10);
+      ctx.fillStyle = `rgba(16, 185, 129, ${alpha})`;
+      ctx.fill();
+      ctx.globalAlpha = Math.min(1, alpha / 0.85);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }, []);
+
+  const startFlash = useCallback((points: Point[]) => {
+    flash.current = { points, startedAt: performance.now() };
+    if (flashFrame.current !== null) cancelAnimationFrame(flashFrame.current);
+    // Runs on its own frames so the flash still fades after the camera pauses.
+    const step = () => {
+      drawOverlay();
+      if (flash.current && performance.now() - flash.current.startedAt < FLASH_HOLD_MS + FLASH_FADE_MS) {
+        flashFrame.current = requestAnimationFrame(step);
+      } else {
+        flash.current = null;
+        flashFrame.current = null;
+        drawOverlay();
+      }
+    };
+    flashFrame.current = requestAnimationFrame(step);
+  }, [drawOverlay]);
+
+  const pauseCamera = useCallback(() => {
+    pauseLiveScanner();
+    overlayCodes.current = [];
+    if (!flash.current) drawOverlay();
+  }, [pauseLiveScanner, drawOverlay]);
+
   // ── Process a scanned / entered code ─────────────────────────────────────
 
   const processCode = useCallback(async (value: string) => {
@@ -194,7 +273,7 @@ export default function Scanner() {
             error: 'This ticket has already been scanned',
           });
           setMessage('Already scanned');
-          await stopScanner(scanner.current);
+          pauseCamera();
           return;
         }
 
@@ -210,7 +289,7 @@ export default function Scanner() {
             error: `Ticket is for ${ticket.visit_date}, not today`,
           });
           setMessage('Wrong date');
-          await stopScanner(scanner.current);
+          pauseCamera();
           return;
         }
 
@@ -225,7 +304,7 @@ export default function Scanner() {
             error: 'Ticket is cancelled',
           });
           setMessage('Cancelled ticket');
-          await stopScanner(scanner.current);
+          pauseCamera();
           return;
         }
 
@@ -273,7 +352,7 @@ export default function Scanner() {
           setMessage(checkinResult.error || 'Check-in failed');
         }
 
-        await stopScanner(scanner.current);
+        pauseCamera();
         return;
       }
 
@@ -320,79 +399,58 @@ export default function Scanner() {
         setMessage('Not found offline');
       }
 
-      await stopScanner(scanner.current);
+      pauseCamera();
     } catch (error) {
       playError();
       setMessage(error instanceof Error ? error.message : 'Could not process scan');
     } finally {
       busy.current = false;
     }
-  }, [getAuthToken, refreshSyncStatus, attemptSync]);
+  }, [getAuthToken, refreshSyncStatus, attemptSync, pauseCamera]);
+
+  // ── Live frames ──────────────────────────────────────────────────────────
+
+  // Runs every camera frame: only the overlay redraw happens per frame; a code
+  // reaches processCode at most once per debounce window.
+  const handleFrame = useCallback((codes: DetectedBarcode[]) => {
+    if (codes.length > 0 || overlayCodes.current.length > 0) {
+      overlayCodes.current = codes;
+      drawOverlay();
+    }
+
+    const code = codes.find(candidate => candidate.rawValue);
+    if (!code) return;
+
+    // Debounce: ignore scans for 2 seconds after a successful read
+    if (debounceTimer.current) return;
+    debounceTimer.current = setTimeout(() => {
+      debounceTimer.current = null;
+    }, 2000);
+    // processCode drops reads while it's busy (e.g. a slow online lookup), so
+    // don't give "got it" feedback for those.
+    if (!busy.current) {
+      if (typeof navigator.vibrate === 'function') navigator.vibrate(100);
+      startFlash(code.cornerPoints);
+    }
+    processCode(code.rawValue);
+  }, [drawOverlay, startFlash, processCode]);
 
   // ── Start scanner ────────────────────────────────────────────────────────
 
-  const startScanner = useCallback(async (instance: Html5Qrcode, generation = scannerGeneration.current) => {
-    if (instance.isScanning) return;
-    if (startInstance.current === instance && startPromise.current) return startPromise.current;
+  const startCamera = useCallback(async () => {
+    const track = await startLiveScanner(handleFrame);
+    if (!track) return; // superseded by a newer start/pause/unmount
+    setMessage('Point the camera at a ticket QR code');
 
-    const promise = instance.start(
-      { facingMode: 'environment' },
-      {
-        fps: 10,
-        qrbox: { width: 260, height: 260 },
-        aspectRatio: 1.0,
-        videoConstraints: {
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          // @ts-expect-error -- focusMode is valid but not in all TS definitions
-          focusMode: 'continuous',
-        },
-      },
-      (text) => {
-        // Debounce: ignore scans for 2 seconds after a successful read
-        if (debounceTimer.current) return;
-        debounceTimer.current = setTimeout(() => {
-          debounceTimer.current = null;
-        }, 2000);
-        processCode(text);
-      },
-      () => undefined,
-    ).then(async () => {
-      if (generation !== scannerGeneration.current) {
-        await disposeScanner(instance);
-        return;
-      }
-      setMessage('Point the camera at a ticket QR code');
-
-      // Check torch support
-      try {
-        const videoElement = document.querySelector('#qr-reader video') as HTMLVideoElement | null;
-        if (videoElement?.srcObject) {
-          const stream = videoElement.srcObject as MediaStream;
-          const track = stream.getVideoTracks()[0];
-          if (track) {
-            videoTrack.current = track;
-            const capabilities = track.getCapabilities?.();
-            if (capabilities && 'torch' in capabilities) {
-              setTorchSupported(true);
-            }
-          }
-        }
-      } catch { /* torch detection failed */ }
-    });
-
-    startInstance.current = instance;
-    startPromise.current = promise;
+    // Check torch support
     try {
-      await promise;
-    } finally {
-      if (startInstance.current === instance) {
-        startInstance.current = null;
-        startPromise.current = null;
+      videoTrack.current = track;
+      const capabilities = track.getCapabilities?.();
+      if (capabilities && 'torch' in capabilities) {
+        setTorchSupported(true);
       }
-    }
-  }, [processCode]);
+    } catch { /* torch detection failed */ }
+  }, [startLiveScanner, handleFrame]);
 
   // ── Torch toggle ─────────────────────────────────────────────────────────
 
@@ -498,17 +556,15 @@ export default function Scanner() {
 
   // ── Camera lifecycle ─────────────────────────────────────────────────────
 
+  // The stream itself is released by useLiveBarcodeScanner's own unmount cleanup,
+  // which also bumps its generation so a start still in flight can't reopen it.
   useEffect(() => {
-    const generation = scannerGeneration.current + 1;
-    scannerGeneration.current = generation;
-    const instance = new Html5Qrcode('qr-reader');
-    scanner.current = instance;
     let cancelled = false;
 
     const startupTimer = window.setTimeout(() => {
       if (cancelled) return;
-      startScanner(instance, generation).catch(() => {
-        if (!cancelled && generation === scannerGeneration.current) {
+      startCamera().catch(() => {
+        if (!cancelled) {
           setMessage('Camera unavailable. Use manual entry below.');
         }
       });
@@ -517,15 +573,13 @@ export default function Scanner() {
     return () => {
       cancelled = true;
       window.clearTimeout(startupTimer);
-      scannerGeneration.current += 1;
-      if (scanner.current === instance) scanner.current = null;
+      if (flashFrame.current !== null) cancelAnimationFrame(flashFrame.current);
+      flashFrame.current = null;
+      flash.current = null;
+      overlayCodes.current = [];
       videoTrack.current = null;
       setTorchSupported(false);
       setTorchOn(false);
-      void disposeScanner(instance).finally(() => {
-        const reader = document.getElementById('qr-reader');
-        if (reader && scannerGeneration.current !== generation) reader.replaceChildren();
-      });
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -539,9 +593,7 @@ export default function Scanner() {
       clearTimeout(debounceTimer.current);
       debounceTimer.current = null;
     }
-    if (scanner.current) {
-      await startScanner(scanner.current).catch(() => setMessage('Use manual entry below.'));
-    }
+    await startCamera().catch(() => setMessage('Use manual entry below.'));
   };
 
   // ── Render helpers ───────────────────────────────────────────────────────
@@ -746,13 +798,42 @@ export default function Scanner() {
         {/* Camera viewfinder */}
         <div style={{ position: 'relative', marginTop: '1rem' }}>
           <div
-            id="qr-reader"
             style={{
+              position: 'relative',
               overflow: 'hidden',
               borderRadius: 16,
               background: '#020617',
+              aspectRatio: '1 / 1',
             }}
-          />
+          >
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+            <canvas
+              ref={canvasRef}
+              aria-hidden="true"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            />
+            {detectorKind === 'polyfill' && (
+              <span style={{
+                position: 'absolute',
+                left: 10,
+                bottom: 8,
+                padding: '2px 8px',
+                borderRadius: 999,
+                fontSize: '0.7rem',
+                color: 'rgba(255,255,255,0.75)',
+                background: 'rgba(2, 6, 23, 0.55)',
+                pointerEvents: 'none',
+              }}>
+                Backup scanner
+              </span>
+            )}
+          </div>
 
           {/* Torch toggle */}
           {torchSupported && (

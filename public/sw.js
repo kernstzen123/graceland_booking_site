@@ -107,8 +107,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For other static assets (icons, etc.): cache-first
-  if (url.pathname.startsWith('/scanner-icon') || url.pathname === '/manifest.json') {
+  // For other static assets (icons, versioned scanner wasm, etc.): cache-first
+  if (url.pathname.startsWith('/scanner-icon') || url.pathname === '/manifest.json' || url.pathname.startsWith('/zxing/')) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
         return cached || fetch(event.request).then((response) => {
