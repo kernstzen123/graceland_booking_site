@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { AdminAuthError, requireAdmin } from '@/lib/admin-auth';
+import { AdminAuthError, redactAuditDetails, requireAdmin } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 
 export async function GET(request: Request) {
@@ -11,7 +11,8 @@ export async function GET(request: Request) {
     const userId = params.get('userId'); if (userId) query = query.eq('actor_id', userId);
     const { data, error } = await query;
     if (error) throw error;
-    return NextResponse.json({ success: true, entries: data || [] });
+    // Entries written before voucher codes were masked still hold the full code.
+    return NextResponse.json({ success: true, entries: (data || []).map(entry => ({ ...entry, details: redactAuditDetails(entry.details as Record<string, unknown>) })) });
   } catch (error) {
     if (error instanceof AdminAuthError) return NextResponse.json({ success: false, error: error.message }, { status: error.status });
     console.error('Admin audit error', error);

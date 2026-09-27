@@ -22,20 +22,20 @@ export async function POST(request: Request) {
     for (let index = 0; index < (bookings || []).length; index++) {
       const booking = bookings![index];
       try {
-        const { data: result, error: refundError } = await supabase.rpc('issue_booking_voucher', { p_booking_id: booking.id, p_created_by: null });
+        const { data: result, error: refundError } = await supabase.rpc('issue_booking_voucher', { p_booking_id: booking.id, p_created_by: null, p_deduction_percentage: 0, p_reason: 'closure' });
         if (refundError) throw refundError;
         const credit = Array.isArray(result) ? result[0] : result;
         if (!credit) throw new Error('Voucher was not created');
         let emailSent = true;
         try {
           const customer = Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
-          await sendVoucherEmail({ bookingReference: credit.booking_reference || booking.reference, visitDate: date, customerEmail: credit.customer_email || customer?.email || '', customerName: credit.customer_name || [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || 'Customer', creditCode: credit.credit_code, originalAmount: Number(credit.original_amount) });
+          await sendVoucherEmail({ bookingReference: credit.booking_reference || booking.reference, visitDate: date, customerEmail: credit.customer_email || customer?.email || '', customerName: credit.customer_name || [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || 'Customer', creditCode: credit.credit_code, originalAmount: Number(credit.original_amount), paidAmount: Number(credit.paid_amount ?? credit.original_amount), reason: 'closure' });
           emailsSent++;
         } catch (emailError) {
           emailSent = false;
           await recordNotificationFailure('booking_credit', 'VOUCHER_ISSUED', credit.customer_email || '', credit.credit_id, emailError);
         }
-        await writeAudit(user.id, 'ISSUE_VOUCHER_REFUND_BULK', 'booking', booking.id, { credit_code: credit.credit_code, amount: credit.original_amount, date });
+        await writeAudit(user.id, 'ISSUE_VOUCHER_REFUND_BULK', 'booking', booking.id, { reference: credit.booking_reference || booking.reference, credit_id: credit.credit_id, credit_code: credit.credit_code, amount: credit.original_amount, date });
         succeeded.push({ bookingId: booking.id, code: credit.credit_code, emailSent });
       } catch (bookingError) {
         failed.push({ bookingId: booking.id, reason: bookingError instanceof Error ? bookingError.message : 'Could not issue voucher' });

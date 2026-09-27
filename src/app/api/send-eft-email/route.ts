@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer';
 import { supabase } from '@/lib/supabase';
 import { checkRateLimit, getClientAddress } from '@/lib/request-security';
 import { escapeHtml, renderEmailLayout, calloutBox, statusBadge, buttonHtml } from '@/lib/email-layout';
+import { customerHoldMessage, eftHoldHours, formatJohannesburgDateTime, holdBookingForPayment } from '@/lib/booking-holds';
 
 export async function POST(request: Request) {
   try {
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
     if (bookingError || !booking) {
       return NextResponse.json({ success: false, error: 'We could not send the payment instructions. Please check your booking reference and try again.' }, { status: 400 });
     }
-    if (!['UNPAID', 'PAYMENT_PENDING'].includes(booking.status)) {
+    if (!['UNPAID', 'PAYMENT_PENDING', 'PAYMENT_FAILED'].includes(booking.status)) {
       return NextResponse.json({ success: false, error: 'We could not send the payment instructions. Please check your booking reference and try again.' }, { status: 400 });
     }
 
@@ -49,14 +50,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'This booking has no amount due' }, { status: 400 });
     }
 
-    // Extend the hold window for EFT bookings so capacity is not released
-    // before the customer has time to pay and upload proof.
-    const holdHours = Number(process.env.EFT_HOLD_HOURS) || 48;
-    if (booking.status === 'UNPAID') {
-      await supabase.from('bookings').update({
-        expires_at: new Date(Date.now() + holdHours * 60 * 60 * 1000).toISOString(),
-      }).eq('reference', ref);
+    // Hold the booking while the customer pays by EFT: until EFT_HOLD_HOURS
+    // after it was made, never longer. Asking for the email again does not
+    // extend it, and a lapsed booking is only revived if the date, seating and
+    // voucher are all still available.
+    const hold = await holdBookingForPayment(booking.id, eftHoldHours() * 60);
+    if (!hold.ok) {
+      return NextResponse.json({ success: false, error: customerHoldMessage(hold.reason, 'We could not send the payment instructions. Please contact support.') }, { status: 409 });
     }
+    const holdNotice = booking.status !== 'PAYMENT_PENDING' && hold.holdUntil
+      ? `Your booking is held until <strong>${escapeHtml(formatJohannesburgDateTime(hold.holdUntil))}</strong> while we wait for proof of payment. If we have not received it by then, the booking will be released.`
+      : 'We have already received a proof of payment for this booking.';
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
@@ -86,7 +90,7 @@ export async function POST(request: Request) {
         </div>
         <p>Once you have paid, upload your proof of payment so we can confirm your booking:</p>
         ${buttonHtml(uploadUrl, 'Upload Proof of Payment')}
-        <p style="font-size:13px;color:#64748b;">Your booking is held for <strong>${holdHours} hours</strong> while we wait for proof of payment. Tickets are issued once our team has reviewed and approved it.</p>
+        <p style="font-size:13px;color:#64748b;">${holdNotice} Tickets are issued once our team has reviewed and approved it.</p>
       `,
     });
     const fromEmail = process.env.NODE_ENV !== 'production' ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za') : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');

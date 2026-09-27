@@ -8,7 +8,7 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const query = params.get('q')?.trim().toLowerCase() || '';
     const status = params.get('status') || '';
-    let builder = supabase.from('booking_credits').select('id,credit_code,original_amount,remaining_balance,status,created_at,created_by,bookings!booking_credits_original_booking_id_fkey(id,reference,visit_date,customers(first_name,last_name,email)),credit_redemptions(id,booking_id,amount_used,created_at,bookings(reference,visit_date))').order('created_at', { ascending: false }).limit(1000);
+    let builder = supabase.from('booking_credits').select('id,credit_code,original_amount,remaining_balance,status,created_at,created_by,bookings!booking_credits_original_booking_id_fkey(id,reference,visit_date,customers(first_name,last_name,email)),credit_redemptions(id,booking_id,amount_used,created_at,released,released_at,bookings(reference,visit_date))').order('created_at', { ascending: false }).limit(1000);
     if (status) builder = builder.eq('status', status);
     const { data, error } = await builder;
     if (error) throw error;

@@ -1,4 +1,9 @@
 -- Schema for Graceland Venues Booking System
+--
+-- This is the original base schema. To build a database, run this file and then
+-- every file in migrations/ in filename order. Row level security and the API
+-- lockdown are applied by migrations/20260927_security_hardening.sql; a database
+-- built without it exposes customer data to the public key. See README.md.
 
 -- Enable uuid extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

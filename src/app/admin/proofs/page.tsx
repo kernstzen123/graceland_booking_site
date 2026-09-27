@@ -5,13 +5,13 @@ import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 
-type Proof = { id: string; file_url: string; signed_url: string | null; status: string; admin_notes: string | null; uploaded_at: string; bookings?: { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> } | { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> }[] };
+type Proof = { id: string; file_url: string; signed_url: string | null; hold_lapsed?: boolean; status: string; admin_notes: string | null; uploaded_at: string; bookings?: { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; attention_reason?: string | null; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> } | { reference: string; visit_date: string; total_amount: number; amount_due?: number; status?: string; expires_at?: string; attention_reason?: string | null; customers?: { first_name: string; last_name: string; email: string } | { first_name: string; last_name: string; email: string }[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }> }[] };
 
 export default function ReviewProofs() {
   const [status, setStatus] = useState('PENDING');
   const [proofs, setProofs] = useState<Proof[]>([]);
   const [message, setMessage] = useState('Loading proofs…');
-  const [actionMessage, setActionMessage] = useState<{ proofId: string; text: string; type: 'success' | 'warning' | 'error' } | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ proofId: string; text: string; type: 'success' | 'warning' | 'error'; canForce?: boolean } | null>(null);
   const { confirm, dialog } = useConfirm();
   const load = async () => { const session = (await supabaseBrowser.auth.getSession()).data.session; if (!session) return; const res = await fetch(`/api/admin/proofs?status=${status}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: 'no-store' }); const data = await res.json(); if (!res.ok) throw new Error(data.error); setProofs(data.proofs); setMessage(data.proofs.length ? '' : 'No proofs in this queue.'); };
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Initial data fetch on mount; setState is asynchronous
@@ -39,8 +39,12 @@ export default function ReviewProofs() {
     const data = await res.json();
     if (!res.ok) {
       if (data.capacityExceeded) {
-        // Offer force-approve option
-        setActionMessage({ proofId: proof.id, text: data.error, type: 'warning' });
+        // Admins get the option to force-approve
+        setActionMessage({ proofId: proof.id, text: data.error, type: 'warning', canForce: data.canForce === true });
+        return;
+      }
+      if (res.status === 409) {
+        setActionMessage({ proofId: proof.id, text: data.error, type: 'error' });
         return;
       }
       setMessage(data.error);
@@ -62,12 +66,14 @@ export default function ReviewProofs() {
         <p>Visit: {booking?.visit_date} · Amount due: R {displayAmount.toFixed(2)}</p>
         {booking?.booking_items?.map((item, index) => <p key={index} style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item'} × {item.quantity} · R {Number(item.subtotal || 0).toFixed(2)}</p>)}
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Uploaded {new Date(proof.uploaded_at).toLocaleString()}</p>
+        {status === 'PENDING' && proof.hold_lapsed && <p className="callout callout-warning" style={{ margin: '0.75rem 0 0' }}>This booking&apos;s reservation has lapsed, so its places are not held. Approving it re-checks that the date, seating and any voucher are still available.</p>}
+        {booking?.attention_reason && <p className="callout callout-danger" style={{ margin: '0.75rem 0 0', whiteSpace: 'pre-line' }}>{booking.attention_reason}</p>}
         {proof.signed_url && <a href={proof.signed_url} target="_blank" rel="noreferrer" className="btn" style={{ marginTop: '0.75rem', border: '1px solid var(--border-color)', display: 'inline-flex' }}>Preview document</a>}
       </div>
       {actionMessage?.proofId === proof.id && (
         <div style={{ padding: '0.75rem', borderRadius: 8, marginBottom: '0.75rem', background: actionMessage.type === 'warning' ? '#fff7ed' : actionMessage.type === 'error' ? '#fef2f2' : '#f0fdf4', color: actionMessage.type === 'warning' ? '#9a3412' : actionMessage.type === 'error' ? '#991b1b' : '#065f46' }}>
           <p>{actionMessage.text}</p>
-          {actionMessage.type === 'warning' && actionMessage.text.includes('force-approve') && (
+          {actionMessage.type === 'warning' && actionMessage.canForce && (
             <button className="btn" style={{ marginTop: '0.5rem', color: '#b91c1c', border: '1px solid #b91c1c' }} onClick={() => act(proof, 'approve', true)}>Force approve (ADMIN only)</button>
           )}
         </div>

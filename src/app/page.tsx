@@ -288,6 +288,12 @@ export default function Home() {
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
+        // 409: the booking can no longer be held (e.g. the reservation expired and
+        // the date filled up). Do not show bank details for a booking that does not exist.
+        if (response.status === 409) {
+          alert(data.error || 'This booking can no longer be paid. Please start a new booking.');
+          return;
+        }
         alert(`We could not send the EFT instructions email: ${data.error || 'Please try again.'}`);
       }
     } catch {

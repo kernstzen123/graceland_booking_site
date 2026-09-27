@@ -24,14 +24,17 @@ export async function GET(request: Request) {
   // Return the same generic message for DB errors and missing bookings
   if (error || !booking) return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
 
+  const paid = ['PAID', 'CONFIRMED'].includes(booking.status);
   const expired = ['UNPAID', 'PAYMENT_PENDING'].includes(booking.status) && booking.expires_at && new Date(booking.expires_at).getTime() <= Date.now();
-  const failed = booking.status === 'PAYMENT_FAILED' || booking.notes?.includes('PAYFAST_FAILED');
+  // A failed PayFast attempt followed by a successful retry leaves PAYFAST_FAILED
+  // in the notes, so a paid booking must never be reported as failed.
+  const failed = !paid && (booking.status === 'PAYMENT_FAILED' || booking.notes?.includes('PAYFAST_FAILED'));
 
   // Return only what the customer needs to see their own status — NO PII.
   return NextResponse.json({
     success: true,
     status: booking.status,
-    paymentState: failed ? 'FAILED' : expired ? 'EXPIRED' : booking.status === 'PAID' ? 'PAID' : 'PENDING',
+    paymentState: paid ? 'PAID' : failed ? 'FAILED' : expired ? 'EXPIRED' : 'PENDING',
     ready: booking.status === 'PAID' && booking.notes?.includes('TICKETS_EMAIL_SENT'),
     amountDue: Number(booking.amount_due ?? booking.total_amount ?? 0),
     visitDate: booking.visit_date ?? null,

@@ -4,11 +4,18 @@ import { supabase } from '@/lib/supabase';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { requireEnv } from '@/lib/env';
+import { flagBookingForReview, setBookingPaymentStatus } from '@/lib/booking-holds';
+
+const isProduction = () => process.env.NODE_ENV === 'production';
+const ok = () => new NextResponse('OK', { status: 200 });
+const rands = (value: number) => `R ${value.toFixed(2)}`;
+
+/** The local developer simulator posts ITNs without a signature. Only allowed outside production. */
+const isLocalSimulation = (params: URLSearchParams) => !params.get('signature') && !isProduction();
 
 function isValidSignature(params: URLSearchParams) {
+  if (isLocalSimulation(params)) return true;
   const received = params.get('signature');
-  // The local developer simulation intentionally has no PayFast signature.
-  if (!received && process.env.NODE_ENV !== 'production') return true;
   if (!received) return false;
 
   const values: string[] = [];
@@ -16,7 +23,9 @@ function isValidSignature(params: URLSearchParams) {
     // PayFast includes empty ITN fields in the signature string.
     if (key !== 'signature') values.push(`${key}=${encodeURIComponent(value).replace(/%20/g, '+')}`);
   }
-  const passphrase = process.env.PAYFAST_PASSPHRASE?.trim();
+  // Required in production (requireEnv throws if it is missing), so a forged
+  // notification cannot be signed without knowing the secret.
+  const passphrase = requireEnv('PAYFAST_PASSPHRASE', '');
   if (passphrase) values.push(`passphrase=${encodeURIComponent(passphrase).replace(/%20/g, '+')}`);
   const expected = crypto.createHash('md5').update(values.join('&')).digest('hex');
   const expectedBuffer = Buffer.from(expected);
@@ -24,9 +33,14 @@ function isValidSignature(params: URLSearchParams) {
   return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
+function isOurMerchant(params: URLSearchParams) {
+  if (isLocalSimulation(params)) return true;
+  const merchantId = params.get('merchant_id')?.trim();
+  return Boolean(merchantId) && merchantId === requireEnv('PAYFAST_MERCHANT_ID').trim();
+}
+
 async function verifyWithPayFast(params: URLSearchParams) {
-  // The unsigned local simulator is deliberately supported only in development.
-  if (!params.get('signature') && process.env.NODE_ENV !== 'production') return true;
+  if (isLocalSimulation(params)) return true;
   const processUrl = requireEnv('PAYFAST_URL', 'https://sandbox.payfast.co.za/eng/process');
   const validationUrl = processUrl.replace(/\/eng\/process(?:\?.*)?\/?$/i, '/eng/query/validate');
   const response = await fetch(validationUrl, {
@@ -40,68 +54,120 @@ async function verifyWithPayFast(params: URLSearchParams) {
   return response.ok && result === 'VALID';
 }
 
+function appendNote(notes: string | null | undefined, note: string) {
+  return notes ? `${notes}\n${note}` : note;
+}
+
+/**
+ * Record a PayFast payment. Returns false when this transaction could not be
+ * recorded because the booking already has a different PayFast payment.
+ */
+async function recordPayment(bookingId: string, amount: number, providerReference: string) {
+  const { error } = await supabase.from('payments').insert({
+    booking_id: bookingId, amount, method: 'PAYFAST', status: 'COMPLETE', provider_reference: providerReference,
+  });
+  if (!error) return true;
+  if (error.code !== '23505') throw error;
+  // Unique violation: either this exact transaction was already recorded (a
+  // retried notification), or another PayFast payment exists for the booking.
+  const { data: existing, error: lookupError } = await supabase.from('payments').select('id').eq('provider_reference', providerReference).maybeSingle();
+  if (lookupError) throw lookupError;
+  return Boolean(existing);
+}
+
 export async function POST(request: Request) {
   try {
     const params = new URLSearchParams(await request.text());
     const paymentStatus = params.get('payment_status');
     const reference = params.get('m_payment_id');
-    if (!reference) return new NextResponse('OK', { status: 200 });
+    if (!reference) return ok();
     if (!isValidSignature(params)) return new NextResponse('Invalid signature', { status: 400 });
-    if (params.get('merchant_id') && params.get('merchant_id') !== process.env.PAYFAST_MERCHANT_ID?.trim()) return new NextResponse('Invalid merchant', { status: 400 });
+    if (!isOurMerchant(params)) return new NextResponse('Invalid merchant', { status: 400 });
     if (!(await verifyWithPayFast(params))) return new NextResponse('PayFast validation failed', { status: 400 });
 
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('id, total_amount, amount_due, notes, customers(first_name, last_name, email)')
+      .select('id, status, total_amount, amount_due, notes, customers(first_name, last_name, email)')
       .eq('reference', reference)
-      .single();
-    if (bookingError || !booking) throw new Error(`Booking ${reference} was not found`);
+      .maybeSingle();
+    if (bookingError) throw bookingError;
+    if (!booking) {
+      // A genuine, validated notification for a reference we do not have. Retrying will not help.
+      console.error(`PayFast notification for unknown booking ${reference}`);
+      return ok();
+    }
 
     if (paymentStatus !== 'COMPLETE') {
       if (['FAILED', 'CANCELLED'].includes(paymentStatus || '')) {
-        await supabase.from('bookings').update({ status: 'PAYMENT_FAILED', notes: `${booking.notes ? `${booking.notes}\n` : ''}PAYFAST_FAILED` }).eq('id', booking.id);
+        // Only an unpaid booking becomes PAYMENT_FAILED (which releases its hold).
+        // A booking with an EFT proof under review keeps its hold; paid and
+        // cancelled bookings are left alone.
+        if (booking.status === 'UNPAID') {
+          const { error } = await supabase.from('bookings').update({ status: 'PAYMENT_FAILED', notes: appendNote(booking.notes, 'PAYFAST_FAILED') }).eq('id', booking.id).eq('status', 'UNPAID');
+          if (error) throw error;
+        } else if (booking.status === 'PAYMENT_PENDING') {
+          const { error } = await supabase.from('bookings').update({ notes: appendNote(booking.notes, 'PAYFAST_FAILED') }).eq('id', booking.id);
+          if (error) throw error;
+        }
       }
-      return new NextResponse('OK', { status: 200 });
+      return ok();
     }
 
+    const providerReference = params.get('pf_payment_id') || reference;
     // PayFast ITN notifications use amount_gross. Keep amount as a fallback
     // for the local development simulator and older integrations.
     const expectedAmount = Number(booking.amount_due ?? booking.total_amount);
     const submittedAmount = params.get('amount_gross') || params.get('amount');
     const amount = submittedAmount
       ? Number(submittedAmount)
-      : process.env.NODE_ENV !== 'production'
+      : isLocalSimulation(params)
         ? expectedAmount
         : Number.NaN;
+
     // Compare in whole cents to avoid floating-point mismatch
     if (!Number.isFinite(amount) || Math.round(amount * 100) !== Math.round(expectedAmount * 100)) {
-      return new NextResponse('Amount mismatch', { status: 400 });
+      if (Number.isFinite(amount) && amount > 0) await recordPayment(booking.id, amount, providerReference);
+      await flagBookingForReview(booking.id, `PayFast payment ${providerReference} was for ${Number.isFinite(amount) ? rands(amount) : 'an unknown amount'}, but ${rands(expectedAmount)} was due, so no tickets were issued. Check the payment in PayFast, then mark the booking paid or refund the payment.`);
+      return ok();
     }
 
-    // PayFast may retry an ITN. Once the email has been sent, acknowledge
-    // retries without issuing a second set of tickets or another email.
-    if (booking.notes?.includes('TICKETS_EMAIL_SENT')) {
-      return new NextResponse('OK', { status: 200 });
-    }
-
-    const providerReference = params.get('pf_payment_id') || reference;
     const { data: existingPayment, error: existingPaymentError } = await supabase
       .from('payments').select('id').eq('provider_reference', providerReference).maybeSingle();
     if (existingPaymentError) throw existingPaymentError;
 
-    if (!existingPayment) {
-      const { error: bookingUpdateError } = await supabase
-        .from('bookings').update({ status: 'PAID', payment_method: 'PAYFAST' }).eq('id', booking.id);
-      if (bookingUpdateError) throw bookingUpdateError;
-      const { error: paymentError } = await supabase.from('payments').insert({
-        booking_id: booking.id, amount, method: 'PAYFAST', status: 'COMPLETE', provider_reference: providerReference,
-      });
-      if (paymentError) {
-        // Another simultaneous ITN already claimed this provider transaction.
-        if (paymentError.code === '23505') return new NextResponse('OK', { status: 200 });
-        throw paymentError;
+    if (['PAID', 'CONFIRMED'].includes(booking.status)) {
+      if (!existingPayment) {
+        // A second, separate payment for a booking that was already paid.
+        await recordPayment(booking.id, amount, providerReference);
+        await flagBookingForReview(booking.id, `A second payment was received: PayFast ${providerReference} for ${rands(amount)}, but the booking was already paid. Refund one of the payments in PayFast.`);
+        return ok();
+      }
+      // A retried notification for a payment we already confirmed: make sure the tickets went out.
+    } else if (['CANCELLED', 'REFUNDED'].includes(booking.status)) {
+      await recordPayment(booking.id, amount, providerReference);
+      await flagBookingForReview(booking.id, `PayFast payment ${providerReference} for ${rands(amount)} was received after this booking was cancelled. Refund it in PayFast, or contact the customer.`);
+      return ok();
+    } else {
+      // Record the money first so it is never lost, even if the booking can no
+      // longer be confirmed below.
+      if (!existingPayment && !(await recordPayment(booking.id, amount, providerReference))) {
+        await flagBookingForReview(booking.id, `A second PayFast payment (${providerReference}, ${rands(amount)}) was received for this booking and could not be recorded automatically. Check both payments in PayFast.`);
+        return ok();
+      }
+      // If the reservation lapsed while the customer was paying, the date,
+      // seating and voucher are re-checked under the booking locks.
+      const result = await setBookingPaymentStatus(booking.id, 'PAID', { paymentMethod: 'PAYFAST' });
+      if (!result.ok && result.reason !== 'ALREADY_PAID') {
+        await flagBookingForReview(booking.id, `Paid via PayFast (${providerReference}, ${rands(amount)}) after the reservation expired, but the booking could not be confirmed: ${result.detail} An admin can still mark it paid (accepting the overbooking), or refund the payment in PayFast.`);
+        return ok();
       }
     }
+
+    // PayFast may retry an ITN. Once the email has been sent, acknowledge
+    // retries without issuing a second set of tickets or another email.
+    const { data: current, error: currentError } = await supabase.from('bookings').select('notes').eq('id', booking.id).single();
+    if (currentError) throw currentError;
+    if (current.notes?.includes('TICKETS_EMAIL_SENT')) return ok();
 
     const customer = Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
     const email = customer?.email || params.get('email_address') || '';
@@ -110,8 +176,7 @@ export async function POST(request: Request) {
     try {
       await generateTicketsAndSendEmail(booking.id, email, name);
       // Only write TICKETS_EMAIL_SENT after successful delivery
-      const notes = booking.notes ? `${booking.notes}\nTICKETS_EMAIL_SENT` : 'TICKETS_EMAIL_SENT';
-      const { error: notesError } = await supabase.from('bookings').update({ notes }).eq('id', booking.id);
+      const { error: notesError } = await supabase.from('bookings').update({ notes: appendNote(current.notes, 'TICKETS_EMAIL_SENT') }).eq('id', booking.id);
       if (notesError) throw notesError;
       console.log(`PayFast payment confirmed and tickets emailed for ${reference}`);
     } catch (emailError) {
@@ -124,10 +189,10 @@ export async function POST(request: Request) {
       return new NextResponse('Email delivery failed', { status: 500 });
     }
 
-    return new NextResponse('OK', { status: 200 });
+    return ok();
   } catch (error) {
+    // Details stay in the server log; PayFast only needs to know to retry.
     console.error('PayFast webhook error', error);
-    const message = error instanceof Error ? error.message : 'Unknown webhook error';
-    return new NextResponse(`Webhook error: ${message}`, { status: 500 });
+    return new NextResponse('Webhook error', { status: 500 });
   }
 }

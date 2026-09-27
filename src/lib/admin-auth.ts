@@ -33,9 +33,24 @@ export async function requireAdmin(request: Request, allowedRoles?: AdminRole[])
 export async function writeAudit(userId: string, action: string, entityType: string, entityId: string, details: Record<string, unknown> = {}) {
   const { data: actor } = await supabase.auth.admin.getUserById(userId);
   const { error } = await supabase.from('admin_audit_log').insert({
-    actor_id: userId, actor_email: actor.user?.email || null, action, entity_type: entityType, entity_id: entityId, details,
+    actor_id: userId, actor_email: actor.user?.email || null, action, entity_type: entityType, entity_id: entityId, details: redactAuditDetails(details),
   });
   if (error) console.error('Could not write admin audit log', error);
+}
+
+/** A voucher code works like cash, so logs only keep enough to recognise it: GRC-1A2B3C4D → GRC-****3C4D. */
+export function maskVoucherCode(code: string) {
+  const value = code.trim();
+  if (value.length <= 8) return '****';
+  return `${value.slice(0, 4)}****${value.slice(-4)}`;
+}
+
+const VOUCHER_CODE_KEYS = new Set(['credit_code', 'creditCode', 'code', 'voucher_code', 'voucherCode']);
+
+/** Mask voucher codes in audit details. Used when writing entries and when showing older ones. */
+export function redactAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return details;
+  return Object.fromEntries(Object.entries(details).map(([key, value]) => [key, VOUCHER_CODE_KEYS.has(key) && typeof value === 'string' ? maskVoucherCode(value) : value]));
 }
 
 export class AdminAuthError extends Error {

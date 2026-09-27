@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 
-type Redemption = { id: string; booking_id: string; amount_used: number; created_at: string; bookings?: { reference: string; visit_date: string } | Array<{ reference: string; visit_date: string }> };
+type Redemption = { id: string; booking_id: string; amount_used: number; created_at: string; released?: boolean; released_at?: string | null; bookings?: { reference: string; visit_date: string } | Array<{ reference: string; visit_date: string }> };
 type Voucher = { id: string; credit_code: string; original_amount: number; remaining_balance: number; status: string; created_at: string; issued_by?: string; bookings?: { reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> } | Array<{ reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> }>; credit_redemptions?: Redemption[] };
 type Summary = { totalIssued: number; totalRedeemed: number; outstanding: number; totalVoided: number };
 type Failure = { id: string; recipient: string | null; error_message: string; created_at: string };
@@ -33,7 +33,7 @@ export default function VouchersAdmin() {
     {failures.length > 0 && <div className="card" style={{ marginBottom: '1rem', border: '1px solid var(--danger)' }}><h2>Failed voucher emails</h2>{failures.map(failure => <div key={failure.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', borderTop: '1px solid var(--border-color)', padding: '0.75rem 0', alignItems: 'center' }}><span style={{ flex: '1 1 200px' }}>{failure.recipient || 'Unknown recipient'}<br /><small style={{ color: 'var(--danger)' }}>{failure.error_message}</small></span><button className="btn" onClick={() => retry(failure.id)} style={{ border: '1px solid var(--border-color)' }}>Retry email</button></div>)}</div>}
     {message && <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>{message}</p>}
     <div style={{ display: 'grid', gap: '0.75rem' }}>{vouchers.map(voucher => {
-      const booking = first(voucher.bookings); const customer = booking && first(booking.customers); const redemptions = voucher.credit_redemptions || []; const lastUsed = redemptions.length ? redemptions.reduce((latest, item) => item.created_at > latest ? item.created_at : latest, redemptions[0].created_at) : null;
+      const booking = first(voucher.bookings); const customer = booking && first(booking.customers); const redemptions = voucher.credit_redemptions || []; const used = redemptions.filter(item => !item.released); const lastUsed = used.length ? used.reduce((latest, item) => item.created_at > latest ? item.created_at : latest, used[0].created_at) : null;
       return <div className="card" key={voucher.id}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div>
@@ -54,7 +54,7 @@ export default function VouchersAdmin() {
           <button className="btn" onClick={() => setExpanded(expanded === voucher.id ? null : voucher.id)} style={{ border: '1px solid var(--border-color)', flex: '1 1 100px' }}>{expanded === voucher.id ? 'Hide' : 'History'}</button>
           {voucher.status === 'active' && <button className="btn" onClick={() => voidVoucher(voucher)} style={{ color: 'var(--danger)', border: '1px solid var(--danger)', flex: '1 1 100px' }}>Void</button>}
         </div>
-        {expanded === voucher.id && <div style={{ marginTop: 10 }}>{redemptions.length ? redemptions.map(redemption => { const usedBooking = first(redemption.bookings); return <p key={redemption.id} style={{ borderTop: '1px solid var(--border-color)', padding: '6px 0', fontSize: 13 }}>{usedBooking?.reference || redemption.booking_id} · R {Number(redemption.amount_used).toFixed(2)} · {new Date(redemption.created_at).toLocaleString()}</p>; }) : <p style={{ color: 'var(--text-muted)' }}>No redemptions.</p>}</div>}
+        {expanded === voucher.id && <div style={{ marginTop: 10 }}>{redemptions.length ? redemptions.map(redemption => { const usedBooking = first(redemption.bookings); return <p key={redemption.id} style={{ borderTop: '1px solid var(--border-color)', padding: '6px 0', fontSize: 13, color: redemption.released ? 'var(--text-muted)' : undefined }}>{usedBooking?.reference || redemption.booking_id} · R {Number(redemption.amount_used).toFixed(2)} · {new Date(redemption.created_at).toLocaleString()}{redemption.released && <> · <em>returned to the voucher{redemption.released_at ? ` ${new Date(redemption.released_at).toLocaleString()}` : ''} (booking not paid)</em></>}</p>; }) : <p style={{ color: 'var(--text-muted)' }}>No redemptions.</p>}</div>}
       </div>;
     })}</div>
     {dialog}

@@ -7,7 +7,8 @@ export async function GET(request: Request) {
     await requireAdmin(request, ['ADMIN', 'MANAGER']);
     const [{ data: credits, error: creditsError }, { data: redemptions, error: redemptionsError }] = await Promise.all([
       supabase.from('booking_credits').select('original_amount,remaining_balance,status'),
-      supabase.from('credit_redemptions').select('amount_used'),
+      // Released redemptions belonged to bookings that were never paid; the amount went back on the voucher.
+      supabase.from('credit_redemptions').select('amount_used').eq('released', false),
     ]);
     if (creditsError || redemptionsError) throw creditsError || redemptionsError;
     return NextResponse.json({ success: true, summary: {

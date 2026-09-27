@@ -10,7 +10,7 @@ import {
 } from './AdminIcons';
 
 type Role = 'ADMIN' | 'MANAGER' | 'SCANNER';
-type BadgeKey = 'pendingProofs' | 'conflicts' | 'failedEmails';
+type BadgeKey = 'pendingProofs' | 'conflicts' | 'failedEmails' | 'needsAttention';
 type NavItem = { href: string; label: string; icon: ComponentType<{ size?: number }>; roles?: Role[]; badge?: BadgeKey; badgeTone?: 'warning' | 'danger' };
 type NavSection = { title: string; items: NavItem[] };
 
@@ -24,7 +24,7 @@ const NAV: NavSection[] = [
     { href: '/admin/walk-ins', label: 'Walk-in sales', icon: TicketIcon },
   ] },
   { title: 'Bookings', items: [
-    { href: '/admin/bookings', label: 'All bookings', icon: CalendarIcon, roles: MANAGEMENT },
+    { href: '/admin/bookings', label: 'All bookings', icon: CalendarIcon, roles: MANAGEMENT, badge: 'needsAttention', badgeTone: 'danger' },
     { href: '/admin/proofs', label: 'Proofs of payment', icon: ReceiptIcon, roles: MANAGEMENT, badge: 'pendingProofs', badgeTone: 'warning' },
     { href: '/admin/conflicts', label: 'Check-in alerts', icon: AlertIcon, roles: MANAGEMENT, badge: 'conflicts', badgeTone: 'danger' },
     { href: '/admin/vouchers', label: 'Vouchers', icon: GiftIcon, roles: MANAGEMENT },
@@ -131,7 +131,7 @@ export function AdminShell({ role, email, offlineMode, onSignOut, children }: { 
     <button type="button" className="admin-icon-button" onClick={onSignOut} aria-label="Log out" title="Log out"><LogoutIcon size={18} /></button>
   </div>;
 
-  const totalWaiting = (counts.pendingProofs || 0) + (counts.conflicts || 0) + (counts.failedEmails || 0);
+  const totalWaiting = (counts.pendingProofs || 0) + (counts.conflicts || 0) + (counts.failedEmails || 0) + (counts.needsAttention || 0);
 
   return <div className="admin-shell">
     {/* Desktop sidebar */}

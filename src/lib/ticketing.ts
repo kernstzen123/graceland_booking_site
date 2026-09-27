@@ -130,9 +130,16 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
   const rawVisitDate = String(tickets[0]?.visit_date || '');
   const formattedVisitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : '';
 
+  // QR codes are drawn here and embedded in the email as inline images (cid:),
+  // so ticket tokens are never sent to a third-party QR service and the codes
+  // still show when such a service is down. The same images go into the PDFs.
+  const qrCodes = await Promise.all(tickets.map(async (ticket, index) => ({
+    contentId: `ticket-qr-${index + 1}`,
+    filename: `${String(ticket.ticket_uid || `ticket-${index + 1}`)}-qr.png`,
+    png: await QRCode.toBuffer(ticketScanUrl(appUrl, ticket), { type: 'png', width: 220, margin: 1 }),
+  })));
+
   const ticketsHtml = tickets.map((ticket, index) => {
-    const scanUrl = `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(scanUrl)}`;
     const attendeeName = String(ticket.attendee_name || '');
     return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;margin-bottom:16px;overflow:hidden;">
       <tr>
@@ -152,7 +159,7 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
                 <p style="margin:0;font-size:11px;color:#94a3b8;">Present this QR code at the entrance scanner.</p>
               </td>
               <td width="112" style="vertical-align:top;text-align:center;padding-left:14px;">
-                <img src="${qrUrl}" alt="QR Code for Ticket" width="104" height="104" style="border:1px solid #e2e8f0;border-radius:8px;" />
+                <img src="cid:${qrCodes[index].contentId}" alt="QR Code for Ticket" width="104" height="104" style="border:1px solid #e2e8f0;border-radius:8px;" />
               </td>
             </tr>
           </table>
@@ -176,7 +183,7 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
       <p>We look forward to seeing you!</p>
     `,
   });
-  const attachments = await Promise.all(tickets.map((ticket, index) => createTicketPdf(ticket, appUrl, index)));
+  const attachments = await Promise.all(tickets.map((ticket, index) => createTicketPdf(ticket, qrCodes[index].png, index)));
   const fromEmail = process.env.NODE_ENV !== 'production'
     ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za')
     : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');
@@ -191,10 +198,13 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
           to: [email],
           subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
           html,
-          attachments: attachments.map(({ filename, content }) => ({
-            filename,
-            content: content.toString('base64'),
-          })),
+          attachments: [
+            ...qrCodes.map(qr => ({ filename: qr.filename, content: qr.png.toString('base64'), content_type: 'image/png', content_id: qr.contentId })),
+            ...attachments.map(({ filename, content }) => ({
+              filename,
+              content: content.toString('base64'),
+            })),
+          ],
         }),
       });
       if (!response.ok) {
@@ -231,18 +241,24 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     to: email,
     subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
     html,
-    attachments: attachments.map(({ filename, content }) => ({ filename, content })),
+    attachments: [
+      ...qrCodes.map(qr => ({ filename: qr.filename, content: qr.png, contentType: 'image/png', cid: qr.contentId })),
+      ...attachments.map(({ filename, content }) => ({ filename, content })),
+    ],
   });
 }
 
-async function createTicketPdf(ticket: Record<string, unknown>, appUrl: string, index: number) {
+/** What a ticket's QR code encodes: the staff scanner link with the signed ticket token. */
+function ticketScanUrl(appUrl: string, ticket: Record<string, unknown>) {
+  return `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
+}
+
+async function createTicketPdf(ticket: Record<string, unknown>, qrBuffer: Buffer, index: number) {
   const ticketUid = String(ticket.ticket_uid || `ticket-${index + 1}`);
   const displayName = String(ticket.display_name || 'Entrance Ticket');
   const attendeeName = String(ticket.attendee_name || '');
   const rawVisitDate = String(ticket.visit_date || '');
   const visitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : 'See booking confirmation';
-  const scanUrl = `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
-  const qrBuffer = await QRCode.toBuffer(scanUrl, { type: 'png', width: 220, margin: 1 });
 
   const document = await PDFDocument.create();
   const page = document.addPage([595, 842]);

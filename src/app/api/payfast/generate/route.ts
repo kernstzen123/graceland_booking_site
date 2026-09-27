@@ -3,28 +3,39 @@ import crypto from 'crypto';
 import { customerError } from '@/lib/public-errors';
 import { supabase } from '@/lib/supabase';
 import { requireEnv } from '@/lib/env';
+import { checkRateLimit } from '@/lib/request-security';
+import { customerHoldMessage, holdBookingForPayment, PAYFAST_HOLD_MINUTES } from '@/lib/booking-holds';
 
 export async function POST(request: Request) {
   try {
+    if (!(await checkRateLimit(request, 'payfast-generate', 10, 60))) return NextResponse.json({ success: false, error: 'Too many requests. Please wait a moment and try again.' }, { status: 429 });
     const { reference, name_first, name_last, email_address } = await request.json();
     if (typeof reference !== 'string' || !reference.trim()) return NextResponse.json({ success: false, error: 'Booking reference is required' }, { status: 400 });
-    const { data: booking, error: bookingError } = await supabase.from('bookings').select('status,total_amount,amount_due,customers(first_name,last_name,email)').eq('reference', reference.trim()).maybeSingle();
+    const { data: booking, error: bookingError } = await supabase.from('bookings').select('id,status,total_amount,amount_due,customers(first_name,last_name,email)').eq('reference', reference.trim()).maybeSingle();
     if (bookingError || !booking) return NextResponse.json({ success: false, error: 'Booking could not be found' }, { status: 404 });
-    if (!['UNPAID', 'PAYMENT_PENDING'].includes(booking.status)) return NextResponse.json({ success: false, error: 'This booking is no longer awaiting payment' }, { status: 400 });
+    if (!['UNPAID', 'PAYMENT_PENDING', 'PAYMENT_FAILED'].includes(booking.status)) return NextResponse.json({ success: false, error: 'This booking is no longer awaiting payment' }, { status: 400 });
     const customer = Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
     const payableAmount = Number(booking.amount_due ?? booking.total_amount);
     if (!Number.isFinite(payableAmount) || payableAmount <= 0) return NextResponse.json({ success: false, error: 'This booking has no amount due' }, { status: 400 });
-    
+
     const merchant_id = requireEnv('PAYFAST_MERCHANT_ID');
     const merchant_key = requireEnv('PAYFAST_MERCHANT_KEY');
-    const passphrase = process.env.PAYFAST_PASSPHRASE?.trim();
+    // Required in production: without a passphrase anyone could change the amount
+    // or return URLs on the form and still produce a valid signature.
+    const passphrase = requireEnv('PAYFAST_PASSPHRASE', '');
     const payfast_url = requireEnv('PAYFAST_URL', 'https://sandbox.payfast.co.za/eng/process');
-    
+
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
     if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
     if (!payfast_url.startsWith('https://')) throw new Error('PAYFAST_URL must use HTTPS');
 
-
+    // Keep the places for the next 15 minutes while the customer is on PayFast.
+    // A booking whose reservation already lapsed (or whose last payment failed)
+    // is only revived if the date, seating and voucher are all still available.
+    const hold = await holdBookingForPayment(booking.id, PAYFAST_HOLD_MINUTES);
+    if (!hold.ok) {
+      return NextResponse.json({ success: false, error: customerHoldMessage(hold.reason, 'This booking is no longer awaiting payment') }, { status: 409 });
+    }
 
     const fields: Record<string, string> = {
       merchant_id: merchant_id.trim(),
@@ -45,13 +56,13 @@ export async function POST(request: Request) {
 
     // Construct signature string according to PayFast rules
     let signatureString = '';
-    
+
     for (const key in fields) {
       if (fields[key] !== '') {
         signatureString += `${key}=${encodeURIComponent(fields[key]).replace(/%20/g, '+')}&`;
       }
     }
-    
+
     if (passphrase) {
       signatureString += `passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, '+')}`;
     } else {
