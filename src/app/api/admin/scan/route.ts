@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { checkRateLimit, cleanText } from '@/lib/request-security';
 import { verifyQrToken } from '@/lib/qr-token';
 import { johannesburgToday } from '@/lib/opening-rules';
+import { spotLabel } from '@/lib/seating';
 
 export async function POST(request: Request) {
   try {
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
     const seating = (bookingSpots || []).map((row) => {
       const spot = Array.isArray(row.venue_spots) ? row.venue_spots[0] : row.venue_spots;
       if (!spot?.number) return null;
-      return `${spot.type === 'table' ? 'Table' : 'Hut'} ${spot.number}`;
+      return spotLabel(spot.type, spot.number);
     }).filter(Boolean).join(', ');
     const base = { ticketUid: ticket.ticket_uid, ...(role !== 'SCANNER' ? { customerName: [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || 'Guest' } : {}), packageName: resolvedPackageName || 'Entrance Ticket', ...(seating ? { seating } : {}) };
     if (ticket.status !== 'VALID') return NextResponse.json({ success: false, status: ticket.status === 'USED' ? 'USED' : 'INVALID', ...base });

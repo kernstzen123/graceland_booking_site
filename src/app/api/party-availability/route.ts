@@ -30,13 +30,14 @@ export async function GET(request: Request) {
     // one query per day while looking for the next free date.
     const [closedDates, { data: allSpots, error: spotsError }, reserved] = await Promise.all([
       getClosedDates(date, endDate),
-      supabase.from('venue_spots').select('id, type'),
+      supabase.from('venue_spots').select('id, type').eq('active', true),
       fetchAllRows<Reservation>((from, to) => supabase
         .from('booking_spots')
-        .select('spot_id,visit_date,bookings!inner(status,expires_at,party_slot),venue_spots!inner(type)')
+        .select('spot_id,visit_date,bookings!inner(status,expires_at,party_slot),venue_spots!inner(type,active)')
         .gte('visit_date', date)
         .lte('visit_date', endDate)
         .eq('venue_spots.type', 'hut')
+        .eq('venue_spots.active', true)
         .order('id')
         .range(from, to)),
     ]);

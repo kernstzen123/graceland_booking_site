@@ -125,7 +125,7 @@ export async function POST(request: Request) {
     if (seatingRequired && requestedSpotIds.length === 0) throw new Error('Please select your seating spot before continuing.');
     if (!seatingRequired && requestedSpotIds.length > 0) throw new Error('Seating was selected for a booking that does not require a seating spot.');
     if (requestedSpotIds.length > 0) {
-      const { data: requestedSpots, error: spotError } = await supabase.from('venue_spots').select('id,type,capacity').in('id', requestedSpotIds);
+      const { data: requestedSpots, error: spotError } = await supabase.from('venue_spots').select('id,type,capacity').in('id', requestedSpotIds).eq('active', true);
       if (spotError) throw spotError;
       if (!requestedSpots || requestedSpots.length !== requestedSpotIds.length) throw new Error('One of the selected seating spots is invalid.');
       const tableSpots = requestedSpots.filter(spot => spot.type === 'table');

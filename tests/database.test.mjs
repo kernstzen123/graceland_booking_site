@@ -43,7 +43,7 @@ it('database migrations and functions behave correctly', async () => {
   const migrations = fs.readdirSync(path.join(repo, 'migrations')).filter(f => f.endsWith('.sql')).sort();
   const target = '20260927_security_hardening.sql';
   const part2 = '20260928_production_hardening.sql';
-  for (const file of migrations.filter(f => f !== target && f !== part2)) {
+  for (const file of migrations.filter(f => f < target)) {
     try { await db.exec(fs.readFileSync(path.join(repo, 'migrations', file), 'utf8')); }
     catch (error) { console.log(`(pre-existing migration ${file} failed in test env: ${error.message})`); }
   }
@@ -70,6 +70,11 @@ it('database migrations and functions behave correctly', async () => {
   check('second migration applies', true);
   await db.exec(part2Sql);
   check('second migration applies a second time (idempotent)', true);
+  // Later migrations (e.g. the new seating map), in order, each applied twice.
+  for (const file of migrations.filter(f => f > part2)) {
+    const sql = fs.readFileSync(path.join(repo, 'migrations', file), 'utf8');
+    try { await db.exec(sql); await db.exec(sql); } catch (error) { check(`${file} applies twice`, false, error.message); }
+  }
   check('old TICKETS_EMAIL_SENT note carried into tickets_emailed_at', Boolean((await one(`select tickets_emailed_at from bookings where reference = 'BK-OLD'`)).tickets_emailed_at));
   const settings = await rows(`select daily_capacity, support_email, support_phone from business_settings`);
   check('exactly one business settings row, with support contact', settings.length === 1 && settings[0].support_email === 'support@graceland-venues.co.za', JSON.stringify(settings));
@@ -115,7 +120,7 @@ it('database migrations and functions behave correctly', async () => {
   const customer = `'{"firstName":"Test","lastName":"User","email":"t@example.com","phone":"0820000000"}'::jsonb`;
   const future = (await one(`select ((now() at time zone 'Africa/Johannesburg')::date + 10) as d`)).d.toISOString().slice(0, 10);
   const reserve = async (ref, people, total, voucher = null) => (await one(`select public.reserve_capacity($1::date, $2, ${customer}, $3, $4, null, null, $5) as id`, [future, people, ref, total, voucher])).id;
-  const spots = await rows(`select id, number from public.venue_spots order by number::int limit 3`);
+  const spots = await rows(`select id, number from public.venue_spots where active order by type, number limit 3`);
   const status = async id => one(`select status, expires_at, notes, attention_reason, deleted_at, amount_due from public.bookings where id = $1`, [id]);
   const lapse = id => db.query(`update public.bookings set expires_at = now() - interval '1 minute' where id = $1`, [id]);
 
@@ -287,6 +292,16 @@ it('database migrations and functions behave correctly', async () => {
   await db.query(`update public.bookings set status = 'PAYMENT_FAILED', payment_failed_at = now() where id = $1`, [pf]);
   await one(`select * from public.hold_booking_for_payment($1, 15, 48)`, [pf]);
   check('retrying a failed payment clears payment_failed_at', (await one(`select payment_failed_at from public.bookings where id = $1`, [pf])).payment_failed_at === null);
+
+  // ── New seating map ─────────────────────────────────────────────────────
+  const activeSpots = await rows(`select number, type, capacity from public.venue_spots where active`);
+  check('new map: 16 huts for 14 people and 12 tables for 6', activeSpots.filter(s => s.type === 'hut' && s.capacity === 14 && /^H\d+$/.test(s.number)).length === 16 && activeSpots.filter(s => s.type === 'table' && s.capacity === 6 && /^T\d+$/.test(s.number)).length === 12 && activeSpots.length === 28, `${activeSpots.length} active`);
+  const retired = await rows(`select id from public.venue_spots where not active`);
+  check('old map spots are retired, not deleted', retired.length === 28);
+  const seatBooking = await reserve('BK-SEAT', 2, 100);
+  await expectError('a retired spot cannot be booked', `select public.reserve_booking_spots('${seatBooking}', '${future}', array['${retired[0].id}']::uuid[])`, /seating spots is invalid/);
+  const seatingReport = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [future])).r.seating;
+  check('report totals count only the current map', Number(seatingReport.hutTotal) === 16 && Number(seatingReport.tableTotal) === 12, JSON.stringify(seatingReport));
 
   await db.exec(`reset role`);
   expect(failures).toEqual([]);

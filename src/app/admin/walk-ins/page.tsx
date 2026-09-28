@@ -7,6 +7,7 @@ import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { buildPackageGroups, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
 import { GATE_PAYMENT_METHODS, type GatePaymentKey, type WalkInReceipt } from '@/lib/walk-ins';
+import { spotLabel } from '@/lib/seating';
 
 type Spot = { id: string; number: string; type: 'hut' | 'table'; capacity: number; available: boolean; unavailableReason?: string };
 type Sale = { bookingId: string; reference: string; createdAt: string; status: string; paymentMethod: string; total: number; people: number; soldBy: string; customerName: string; items: string; ticketsScanned: number; tickets: number };
@@ -239,7 +240,7 @@ export default function WalkInsPage() {
           <h3 className="report-group-heading">Choose seating ({chosenHuts}/{huts} huts · {chosenTables}/{tables} tables)</h3>
           {spotError && <p style={{ color: 'var(--danger)' }}>{spotError} <button className="btn" onClick={loadSpots} style={{ border: '1px solid var(--border-color)', padding: '0.25rem 0.6rem' }}>Retry</button></p>}
           {(['hut', 'table'] as const).filter(type => (type === 'hut' ? huts : tables) > 0).map(type => <div key={type} className="walkin-spots">
-            {spots.filter(spot => spot.type === type).map(spot => <button type="button" key={spot.id} disabled={!spot.available} title={spot.unavailableReason} onClick={() => toggleSpot(spot)} className={`walkin-spot${spotIds.includes(spot.id) ? ' selected' : ''}`}>{type === 'hut' ? 'Hut' : 'Table'} {spot.number}</button>)}
+            {spots.filter(spot => spot.type === type).map(spot => <button type="button" key={spot.id} disabled={!spot.available} title={spot.unavailableReason} onClick={() => toggleSpot(spot)} className={`walkin-spot${spotIds.includes(spot.id) ? ' selected' : ''}`}>{spotLabel(type, spot.number)}</button>)}
           </div>)}
         </div>}
 

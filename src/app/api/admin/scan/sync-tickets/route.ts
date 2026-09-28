@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { spotLabel } from '@/lib/seating';
 import { AdminAuthError, requireAdmin } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { johannesburgToday } from '@/lib/opening-rules';
@@ -55,7 +56,7 @@ export async function GET(request: Request) {
         for (const spot of allSpots) {
           const venueSpot = Array.isArray(spot.venue_spots) ? spot.venue_spots[0] : spot.venue_spots;
           if (venueSpot?.number) {
-            const label = `${venueSpot.type === 'table' ? 'Table' : 'Hut'} ${venueSpot.number}`;
+            const label = spotLabel(venueSpot.type, venueSpot.number);
             seatingMap[spot.booking_id] = seatingMap[spot.booking_id]
               ? `${seatingMap[spot.booking_id]}, ${label}`
               : label;

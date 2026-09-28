@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { PartyDetails } from '@/lib/parties';
+import { spotLabel } from '@/lib/seating';
 
 type Spot = { id: string; number: string; type: 'table' | 'hut'; capacity: number; x_percent: number; y_percent: number; available: boolean; unavailableReason?: string };
 
@@ -61,32 +62,33 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#16a34a', marginRight: 5 }} />Available</span>
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#2563eb', marginRight: 5 }} />Selected</span>
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#94a3b8', marginRight: 5 }} />Unavailable</span>
+      <span style={{ color: 'var(--text-muted)' }}><strong>H</strong> = covered hut (seats 14) · <strong>T</strong> = shaded table (seats 6)</span>
     </div>
     {loading && <p style={{ color: 'var(--text-muted)' }}>Loading seating availability...</p>}
     {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
     {!loading && !error && <>
       <div aria-label="Scrollable venue seating map" style={{ overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain', touchAction: 'pan-x pinch-zoom', borderRadius: 10, border: '1px solid var(--border-color)', background: '#e2e8f0' }}>
-        <div style={{ position: 'relative', width: 900, minWidth: 900, lineHeight: 0, touchAction: 'pan-x pinch-zoom' }}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- External SVG map where next/image adds unnecessary complexity */}
-          <img src="/venue-seating-map.jpeg" alt="Venue seating map" draggable={false} style={{ display: 'block', width: '100%', height: 'auto', userSelect: 'none' }} />
+        <div style={{ position: 'relative', width: '100%', minWidth: 900, lineHeight: 0, touchAction: 'pan-x pinch-zoom' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- Spot markers are positioned as percentages of this exact image, so it must render at its natural aspect ratio */}
+          <img src="/venue-map-2026.webp" alt="Aerial map of Graceland Venues showing the huts and tables" width={1022} height={713} draggable={false} style={{ display: 'block', width: '100%', height: 'auto', userSelect: 'none' }} />
           {spots.map(spot => {
             const isSelected = selectedSpotIds.includes(spot.id);
             const typeNeeded = spot.type === 'table' ? requiredTables > 0 : requiredHuts > 0;
             const typeFull = (spot.type === 'table' ? selectedTables >= requiredTables : selectedHuts >= requiredHuts) && !isSelected;
             const disabled = !spot.available || !typeNeeded || typeFull;
             
-            let hoverTitle = `${spot.type === 'table' ? 'Table with umbrella' : 'Covered hut'} ${spot.number} - seats ${spot.capacity}`;
+            let hoverTitle = `${spot.type === 'table' ? 'Shaded table' : 'Covered hut'} ${spotLabel(spot.type, spot.number).split(' ')[1]} - seats ${spot.capacity}`;
             if (!spot.available) {
               hoverTitle += ` (Unavailable${spot.unavailableReason ? ` - ${spot.unavailableReason}` : ''})`;
             }
 
-            return <button key={spot.id} type="button" title={hoverTitle} aria-label={hoverTitle} disabled={disabled} onClick={() => toggleSpot(spot)} style={{ position: 'absolute', left: `${spot.x_percent}%`, top: `${spot.y_percent}%`, transform: 'translate(-50%, -50%)', width: 38, height: 38, borderRadius: '50%', border: isSelected ? '3px solid white' : '2px solid white', background: isSelected ? '#2563eb' : disabled ? '#94a3b8' : '#16a34a', color: 'white', fontWeight: 800, lineHeight: 1, cursor: disabled ? 'not-allowed' : 'pointer', boxShadow: isSelected ? '0 0 0 3px #2563eb' : '0 2px 5px rgba(0,0,0,.35)', opacity: disabled && !isSelected ? 0.72 : 1 }}>{spot.number}</button>;
+            return <button key={spot.id} type="button" title={hoverTitle} aria-label={hoverTitle} disabled={disabled} onClick={() => toggleSpot(spot)} style={{ position: 'absolute', left: `${spot.x_percent}%`, top: `${spot.y_percent}%`, transform: 'translate(-50%, -50%)', width: 28, height: 28, padding: 0, borderRadius: '50%', border: isSelected ? '3px solid white' : '2px solid white', background: isSelected ? '#2563eb' : disabled ? '#94a3b8' : '#16a34a', color: 'white', fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: disabled ? 'not-allowed' : 'pointer', boxShadow: isSelected ? '0 0 0 3px #2563eb' : '0 2px 5px rgba(0,0,0,.35)', opacity: disabled && !isSelected ? 0.72 : 1 }}>{spot.number}</button>;
           })}
         </div>
       </div>
       <p style={{ margin: '0.5rem 0 0', color: 'var(--text-muted)', fontSize: 13 }}>On mobile, swipe left or right across the map to view all seating spots.</p>
     </>}
-    <div style={{ marginTop: '1rem', padding: '0.9rem', background: complete ? '#ecfdf5' : '#fff7ed', borderRadius: 8, color: complete ? '#065f46' : '#9a3412' }}>{complete ? `Selected: ${selected.map(spot => `${spot.type === 'table' ? 'Table' : 'Hut'} ${spot.number}`).join(', ')}` : `Selected ${selectedTables}/${requiredTables} table(s) and ${selectedHuts}/${requiredHuts} hut(s).`}</div>
+    <div style={{ marginTop: '1rem', padding: '0.9rem', background: complete ? '#ecfdf5' : '#fff7ed', borderRadius: 8, color: complete ? '#065f46' : '#9a3412' }}>{complete ? `Selected: ${selected.map(spot => spotLabel(spot.type, spot.number)).join(', ')}` : `Selected ${selectedTables}/${requiredTables} table(s) and ${selectedHuts}/${requiredHuts} hut(s).`}</div>
     <div style={{ display: 'flex', gap: '1rem', marginTop: '1.25rem' }}><button className="btn" style={{ flex: 1, border: '1px solid var(--border-color)' }} onClick={onBack}>Back</button><button className="btn btn-primary" style={{ flex: 2 }} disabled={!complete || loading} onClick={onNext}>Continue to Details</button></div>
   </div>;
 }

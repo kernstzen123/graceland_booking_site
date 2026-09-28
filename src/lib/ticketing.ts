@@ -7,6 +7,7 @@ import { createQrToken } from './qr-token';
 import { escapeHtml, renderEmailLayout, calloutBox, statusBadge } from './email-layout';
 import { getBusinessSettings } from './business-settings';
 import { sendEmail } from './mailer';
+import { spotLabel } from './seating';
 
 type BookingItem = {
   quantity: number;
@@ -45,7 +46,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
   const seatingLabel = (bookingSpots || []).map((row) => {
     const spot = Array.isArray(row.venue_spots) ? row.venue_spots[0] : row.venue_spots;
     if (!spot?.number) return null;
-    return `${spot.type === 'table' ? 'Table' : 'Hut'} ${spot.number}`;
+    return spotLabel(spot.type, spot.number);
   }).filter(Boolean).join(', ');
   const { names: displayNames, attendeeFullNames } = buildTicketDisplayNames(items, seatingLabel);
   const voucherCreditId = items.find(item => item.bookings?.voucher_credit_id)?.bookings?.voucher_credit_id;

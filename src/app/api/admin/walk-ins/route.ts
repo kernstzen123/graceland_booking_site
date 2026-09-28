@@ -6,6 +6,7 @@ import { BOOKABLE_ITEMS, calculateServerTotal } from '@/lib/pricing';
 import { getCurrentPrices } from '@/lib/price-store';
 import { johannesburgToday } from '@/lib/opening-rules';
 import { cleanText, isValidEmail } from '@/lib/request-security';
+import { spotLabel } from '@/lib/seating';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { GATE_PAYMENT_METHODS, GATE_PAYMENT_LABELS, type GatePaymentKey, type WalkInReceipt } from '@/lib/walk-ins';
@@ -58,7 +59,7 @@ async function loadReceipt(bookingId: string, extras: Partial<Pick<WalkInReceipt
     paymentReference: payment?.provider_reference && !String(payment.provider_reference).startsWith('GATE-') ? String(payment.provider_reference) : '',
     amountTendered: extras.amountTendered ?? null,
     change: extras.change ?? null,
-    seating: (booking.booking_spots || []).map(row => one(row.venue_spots)).filter(Boolean).map(spot => `${spot!.type === 'table' ? 'Table' : 'Hut'} ${spot!.number}`),
+    seating: (booking.booking_spots || []).map(row => one(row.venue_spots)).filter(Boolean).map(spot => spotLabel(spot!.type, spot!.number)),
     customerName: [customer?.first_name, customer?.last_name].filter(name => name && name !== 'Walk-in' && name !== 'guest').join(' '),
     checkedIn: tickets.length > 0 && tickets.every(ticket => ticket.status === 'USED'),
     emailSent: extras.emailSent ?? null,
@@ -193,7 +194,7 @@ export async function POST(request: Request) {
     const tables = selections['hut-shaded'] || 0;
     if (huts + tables !== spotIds.length) throw new SaleError(`Choose ${huts + tables} seating spot${huts + tables === 1 ? '' : 's'} for the huts and tables in this sale.`);
     if (spotIds.length) {
-      const { data: spots, error: spotError } = await supabase.from('venue_spots').select('id,type').in('id', spotIds);
+      const { data: spots, error: spotError } = await supabase.from('venue_spots').select('id,type').in('id', spotIds).eq('active', true);
       if (spotError) throw spotError;
       if ((spots || []).length !== spotIds.length) throw new SaleError('One of the seating spots is invalid.');
       if ((spots || []).filter(spot => spot.type === 'hut').length !== huts || (spots || []).filter(spot => spot.type === 'table').length !== tables) throw new SaleError('The chosen seating does not match the huts and tables in the sale.');
