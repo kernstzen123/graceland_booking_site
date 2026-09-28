@@ -1,7 +1,14 @@
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { MailIcon } from '@/components/icons';
 import { DEFAULT_SUPPORT_EMAIL } from '@/lib/business-details';
 import { formatLegalDate, PRIVACY_VERSION } from '@/lib/legal';
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description: "How Graceland Venues in Paarl collects, uses and protects your personal information under POPIA.",
+  alternates: { canonical: "/privacy-policy" },
+};
 
 const SECTIONS = [
   { id: 'who-we-are', title: 'Who we are' },

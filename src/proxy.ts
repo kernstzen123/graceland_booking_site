@@ -39,6 +39,14 @@ function contentSecurityPolicy() {
 
 const CSP = contentSecurityPolicy();
 
+/** The real domain's host name, or '' while NEXT_PUBLIC_APP_URL is still a vercel.app address. */
+function canonicalHostname() {
+  try {
+    const host = new URL(process.env.NEXT_PUBLIC_APP_URL || '').hostname;
+    return host && !host.endsWith('.vercel.app') ? host : '';
+  } catch { return ''; }
+}
+
 export function proxy(request: NextRequest) {
   const forwardedProtocol = request.headers.get('x-forwarded-proto')?.split(',')[0].trim();
   const protocol = forwardedProtocol || request.nextUrl.protocol.replace(':', '');
@@ -49,6 +57,20 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(httpsUrl, 308);
   }
 
+  // One address for Google and customers: on the live deployment, send the
+  // old *.vercel.app address to the real domain (NEXT_PUBLIC_APP_URL).
+  // Preview deployments keep working on their own addresses. The PayFast
+  // webhook is never redirected (PayFast does not follow redirects).
+  const canonicalHost = canonicalHostname();
+  if (process.env.VERCEL_ENV === 'production' && canonicalHost && request.nextUrl.hostname.endsWith('.vercel.app')
+      && request.nextUrl.hostname !== canonicalHost && !request.nextUrl.pathname.startsWith('/api/')) {
+    const target = request.nextUrl.clone();
+    target.protocol = 'https:';
+    target.hostname = canonicalHost;
+    target.port = '';
+    return NextResponse.redirect(target, 308);
+  }
+
   const response = NextResponse.next();
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -57,6 +79,8 @@ export function proxy(request: NextRequest) {
   // Older browsers that ignore frame-ancestors.
   response.headers.set('X-Frame-Options', 'DENY');
   if (isProduction) response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  // Keep the staff portal, sign-in links and API out of search results.
+  if (/^\/(admin|auth|api)(\/|$)/.test(request.nextUrl.pathname)) response.headers.set('X-Robots-Tag', 'noindex, nofollow');
   return response;
 }
 

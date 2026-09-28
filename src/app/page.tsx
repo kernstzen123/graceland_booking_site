@@ -11,6 +11,7 @@ import { SeatingMap } from '../components/SeatingMap';
 import { calculatePartyTotal, PartyDetails } from '@/lib/parties';
 import { buildPackageGroups, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
 import { SupportContact } from '@/components/SupportContact';
+import { SiteFooter } from '@/components/SiteFooter';
 import { BANK_DETAILS } from '@/lib/business-details';
 
 export default function Home() {
@@ -320,7 +321,7 @@ export default function Home() {
     <main className="container" style={{ padding: '4rem 1rem' }}>
       <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
         <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--primary)' }}>Graceland Venues</h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Online Booking Portal</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Waterpark &amp; event venue in Paarl · Book tickets, huts and birthday parties online</p>
       </div>
 
       {step === 1 && (
@@ -487,6 +488,7 @@ export default function Home() {
         </div>
       )}
       <SupportContact compact />
+      <SiteFooter />
     </main>
   );
 }

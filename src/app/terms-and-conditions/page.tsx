@@ -1,7 +1,14 @@
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { MailIcon, PhoneIcon } from '@/components/icons';
 import { DEFAULT_SUPPORT_EMAIL, DEFAULT_SUPPORT_PHONE } from '@/lib/business-details';
 import { formatLegalDate, TERMS_VERSION } from '@/lib/legal';
+
+export const metadata: Metadata = {
+  title: "Terms and Conditions",
+  description: "Booking, rescheduling, cancellation and venue rules for Graceland Venues in Paarl.",
+  alternates: { canonical: "/terms-and-conditions" },
+};
 
 const SECTIONS = [
   { id: 'introduction', title: 'Introduction' },
