@@ -77,7 +77,7 @@ it('database migrations and functions behave correctly', async () => {
   }
   check('old TICKETS_EMAIL_SENT note carried into tickets_emailed_at', Boolean((await one(`select tickets_emailed_at from bookings where reference = 'BK-OLD'`)).tickets_emailed_at));
   const settings = await rows(`select daily_capacity, support_email, support_phone from business_settings`);
-  check('exactly one business settings row, with support contact', settings.length === 1 && settings[0].support_email === 'support@graceland-venues.co.za', JSON.stringify(settings));
+  check('exactly one business settings row, with support contact', settings.length === 1 && settings[0].support_email === 'support@gracelandvenuespaarl.co.za', JSON.stringify(settings));
   await expectError('a second business settings row is refused', `insert into business_settings(business_name) values ('dup')`, /duplicate key/);
 
   // ── Privileges ───────────────────────────────────────────────────────────

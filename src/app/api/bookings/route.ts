@@ -202,8 +202,22 @@ export async function POST(request: Request) {
     if (!row?.booking_id) throw new Error('Booking reservation did not return a booking ID');
     const bookingId = row.booking_id;
 
-    const { data: bookingTotals, error: totalsError } = await supabase.from('bookings').select('reference,amount_due,voucher_amount_used,voucher_credit_id,status').eq('id', bookingId).single();
+    const { data: bookingTotals, error: totalsError } = await supabase.from('bookings').select('reference,visit_date,total_amount,created_at,amount_due,voucher_amount_used,voucher_credit_id,status').eq('id', bookingId).single();
     if (totalsError) throw totalsError;
+    // A reused key only means "the same booking again" for a retry of the same
+    // request moments later. If it matches an older or different booking (e.g.
+    // the browser kept the key after an earlier booking), refuse, so the
+    // customer never gets someone else's or an old booking back; the booking
+    // page then retries with a fresh key.
+    if (!row.created) {
+      const sameRequest = String(bookingTotals.visit_date) === selectedDate
+        && Math.abs(Number(bookingTotals.total_amount) - serverTotal) < 0.01
+        && Date.now() - new Date(bookingTotals.created_at).getTime() < 30 * 60 * 1000
+        && !['CANCELLED', 'REFUNDED'].includes(bookingTotals.status);
+      if (!sameRequest) {
+        return NextResponse.json({ success: false, code: 'STALE_BOOKING_KEY', error: 'This booking form was already used. Please refresh the page and try again.' }, { status: 409 });
+      }
+    }
     let voucherRemainingBalance = 0;
     if (bookingTotals.voucher_credit_id) {
       const { data: voucherCredit, error: voucherError } = await supabase.from('booking_credits').select('remaining_balance').eq('id', bookingTotals.voucher_credit_id).maybeSingle();

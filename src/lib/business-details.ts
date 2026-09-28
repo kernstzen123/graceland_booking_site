@@ -18,9 +18,9 @@ export const BANK_DETAILS = {
 } as const;
 
 export const BUSINESS_NAME = 'Graceland Venues';
-export const EMAIL_DOMAIN = 'graceland-venues.co.za';
+export const EMAIL_DOMAIN = 'gracelandvenuespaarl.co.za';
 export const DEFAULT_SUPPORT_EMAIL = `support@${EMAIL_DOMAIN}`;
 export const DEFAULT_SUPPORT_PHONE = '072 264 4009';
 /** Sender for booking emails when EMAIL_FROM_ADDRESS is not set. */
-export const DEFAULT_FROM_ADDRESS = `bookings@${EMAIL_DOMAIN}`;
+export const DEFAULT_FROM_ADDRESS = `mail@${EMAIL_DOMAIN}`;
 export const DEFAULT_DAILY_CAPACITY = 500;

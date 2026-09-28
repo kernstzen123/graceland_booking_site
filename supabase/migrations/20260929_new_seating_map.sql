@@ -176,6 +176,12 @@ begin
 end;
 $$;
 
+-- The business uses gracelandvenuespaarl.co.za: replace the earlier default
+-- support address (an address an admin changed by hand is left alone).
+update public.business_settings
+   set support_email = 'support@gracelandvenuespaarl.co.za'
+ where support_email = 'support@graceland-venues.co.za';
+
 revoke all on function public.reserve_booking_spots(uuid, date, uuid[]) from public, anon, authenticated;
 revoke all on function public.admin_report_data(date, date, text) from public, anon, authenticated;
 grant execute on function public.reserve_booking_spots(uuid, date, uuid[]) to service_role;

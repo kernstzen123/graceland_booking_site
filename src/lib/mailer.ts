@@ -35,8 +35,8 @@ function fromAddress(provider: 'resend' | 'smtp') {
     ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || DEFAULT_FROM_ADDRESS)
     : (process.env.EMAIL_FROM_ADDRESS?.trim() || DEFAULT_FROM_ADDRESS);
   // resend.dev is Resend's test domain and only delivers to the Resend account
-  // owner. Allowed until graceland-venues.co.za is verified; then switch
-  // EMAIL_FROM_ADDRESS to bookings@graceland-venues.co.za.
+  // owner. Allowed until gracelandvenuespaarl.co.za is verified; then switch
+  // EMAIL_FROM_ADDRESS to mail@gracelandvenuespaarl.co.za.
   if (isProduction() && /@resend\.dev$/i.test(address)) {
     console.warn('EMAIL_FROM_ADDRESS uses the resend.dev test domain: Resend only delivers these to the account owner. Switch to the verified domain when it is ready.');
   }

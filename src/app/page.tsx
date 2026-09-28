@@ -201,19 +201,32 @@ export default function Home() {
     window.sessionStorage.setItem('graceland-booking-idempotency', idempotencyKey.current);
     // Call the API to reserve capacity
     try {
-      const bookingRequest = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedDate, selections, party, customerDetails, totalAmount, spotIds: selectedSpotIds, voucherCode: appliedVoucher?.code || null, idempotencyKey: idempotencyKey.current, termsAccepted, privacyAccepted, attendeeNames: party.enabled ? [] : attendeeNames }) };
-      let res = await fetch('/api/bookings', bookingRequest);
+      const buildRequest = () => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedDate, selections, party, customerDetails, totalAmount, spotIds: selectedSpotIds, voucherCode: appliedVoucher?.code || null, idempotencyKey: idempotencyKey.current, termsAccepted, privacyAccepted, attendeeNames: party.enabled ? [] : attendeeNames }) });
+      let res = await fetch('/api/bookings', buildRequest());
       // A transient connection failure can happen after the server has
       // reserved the booking. Retry once with the same idempotency key so the
       // server returns the existing booking instead of creating another one.
       if (res.status >= 500) {
         await new Promise(resolve => window.setTimeout(resolve, 500));
-        res = await fetch('/api/bookings', bookingRequest);
+        res = await fetch('/api/bookings', buildRequest());
       }
-      const data = await res.json();
+      let data = await res.json();
+      // The key belongs to an earlier, different booking (e.g. the page was
+      // reloaded after finishing one): start again with a fresh key.
+      if (res.status === 409 && data.code === 'STALE_BOOKING_KEY') {
+        idempotencyKey.current = crypto.randomUUID();
+        window.sessionStorage.setItem('graceland-booking-idempotency', idempotencyKey.current);
+        res = await fetch('/api/bookings', buildRequest());
+        data = await res.json();
+      }
       if (data.success) {
         setReference(data.reference);
+        // The server's figures are what count (voucher applied, amount still due).
+        setServerAmountDue(Number(data.amountDue));
         if (data.voucherAmountUsed) setVoucherRemainingBalance(Number(data.voucherRemainingBalance ?? appliedVoucher?.remainingBalance ?? 0));
+        // The booking exists now: a later booking in this tab must get a new key.
+        idempotencyKey.current = '';
+        window.sessionStorage.removeItem('graceland-booking-idempotency');
         setStep(6);
       } else {
         alert("Error: " + data.error);
@@ -235,7 +248,7 @@ export default function Home() {
       window.sessionStorage.setItem('graceland-booking-context', JSON.stringify({
         customerDetails,
         selectedDate,
-        amountDue: appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount,
+        amountDue: serverAmountDue ?? appliedVoucher?.amountDue ?? totalAmount,
       }));
     } catch { /* sessionStorage may be unavailable */ }
     try {
@@ -392,7 +405,7 @@ export default function Home() {
       {step === 6 && (
         <PaymentSelection 
           reference={reference}
-          total={appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount}
+          total={serverAmountDue ?? appliedVoucher?.amountDue ?? totalAmount}
           onPayFast={handlePayFast}
           onManualEFT={handleManualEFT}
           onVoucherComplete={() => setStep(8)}
@@ -408,7 +421,7 @@ export default function Home() {
             <p style={{ marginTop: '0.5rem' }}>After making payment, use the upload link in that email to submit your proof of payment. Your tickets will only be emailed after our team approves the proof.</p>
           </div>
           <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Your booking reference is: <strong>{reference}</strong></p>
-          <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Please transfer <strong>R {appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount}</strong> to the following account:</p>
+          <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Please transfer <strong>R {serverAmountDue ?? appliedVoucher?.amountDue ?? totalAmount}</strong> to the following account:</p>
           
           <div style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '1px solid var(--border-color)', fontSize: '1.1rem' }}>
             <p style={{ marginBottom: '0.5rem' }}><strong>Bank:</strong> {BANK_DETAILS.bank}</p>
