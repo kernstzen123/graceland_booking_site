@@ -17,20 +17,46 @@ export default function SetPassword() {
     let active = true;
 
     async function init() {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const params = new URLSearchParams(window.location.search);
+      const clearUrl = () => window.history.replaceState({}, document.title, window.location.pathname);
+
       // 1. Check for errors in the URL hash (common if an email scanner consumed the link)
-      if (typeof window !== 'undefined' && window.location.hash) {
-        const hashParams = new URLSearchParams(window.location.hash.substring(1));
-        const hashError = hashParams.get('error_description') || hashParams.get('error');
-        if (hashError) {
-          if (active) setMessage(`Link error: ${hashError.replace(/\+/g, ' ')} (Try generating a new invite)`);
+      const hashError = hashParams.get('error_description') || hashParams.get('error');
+      if (hashError) {
+        if (active) setMessage(`Link error: ${hashError.replace(/\+/g, ' ')} (Ask an administrator to send a new invite)`);
+        return;
+      }
+
+      // 2. Invite and "resend invite" links from Supabase put the session tokens
+      // in the URL hash (#access_token=…). This site's Supabase client uses the
+      // PKCE flow and ignores those, so hand them over explicitly.
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      if (accessToken && refreshToken) {
+        const { error } = await supabaseBrowser.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        clearUrl(); // never leave tokens in the address bar or browser history
+        if (error) {
+          if (active) setMessage('This invitation is invalid or has expired. Please ask an administrator to send a new invite.');
           return;
         }
       }
 
-      // 2. Check if Supabase sent a PKCE code in the URL query string
-      const params = new URLSearchParams(window.location.search);
+      // 3. Links built from the email template's {{ .TokenHash }} (?token_hash=…&type=invite).
+      const tokenHash = params.get('token_hash');
+      const linkType = params.get('type');
+      if (tokenHash && (linkType === 'invite' || linkType === 'recovery' || linkType === 'magiclink' || linkType === 'email')) {
+        const { error } = await supabaseBrowser.auth.verifyOtp({ token_hash: tokenHash, type: linkType });
+        clearUrl();
+        if (error) {
+          if (active) setMessage('This invitation is invalid or has expired. Please ask an administrator to send a new invite.');
+          return;
+        }
+      }
+
+      // 4. Check if Supabase sent a PKCE code in the URL query string
       const code = params.get('code');
-      
+
       if (code) {
         const { error } = await supabaseBrowser.auth.exchangeCodeForSession(code);
         if (error) {
@@ -42,7 +68,7 @@ export default function SetPassword() {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      // 3. Try to pick up tokens from the URL hash (implicit flow fallback) or existing session
+      // 5. Use the session established above (or one that already exists)
       const { data } = await supabaseBrowser.auth.getSession();
       if (!active) return;
 
