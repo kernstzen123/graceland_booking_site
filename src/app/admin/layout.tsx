@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import { cacheSession, getCachedSession, clearCachedSession, initDB } from '@/lib/offline-db';
+import { cacheSession, getCachedSession, clearOfflineTickets, initDB } from '@/lib/offline-db';
 import Link from 'next/link';
 import { AdminShell } from '@/components/admin/AdminShell';
 
@@ -108,7 +108,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   };
 
   const signOut = async () => {
-    await clearCachedSession().catch(() => {});
+    // Also removes the offline guest list from this device (shared gate phones).
+    await clearOfflineTickets().catch(() => {});
     await supabaseBrowser.auth.signOut();
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Intentionally triggering a full reload to clear all client state after signout
     window.location.assign('/');

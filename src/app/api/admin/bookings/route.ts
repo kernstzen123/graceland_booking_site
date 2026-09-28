@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
-import { generateTicketsAndSendEmail } from '@/lib/ticketing';
+import { emailTicketsOnce, generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
 
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       }
       let emailSent = true;
       try {
-        await generateTicketsAndSendEmail(booking.id, customerEmail, customerName);
+        await emailTicketsOnce(booking.id, customerEmail, customerName);
       } catch (emailError) {
         emailSent = false;
         console.error(`Ticket email failed after marking ${booking.reference} paid`, emailError);

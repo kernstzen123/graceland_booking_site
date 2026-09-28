@@ -2,10 +2,12 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getPartySlots, PartyDetails } from '@/lib/parties';
-import { checkRateLimit, cleanText, isValidEmail } from '@/lib/request-security';
-import { customerError } from '@/lib/public-errors';
-import { generateTicketsAndSendEmail } from '@/lib/ticketing';
-import { recordNotificationFailure } from '@/lib/voucher-email';
+import { checkRateLimit, cleanText, isRateLimited, isValidEmail, VOUCHER_FAILURE_LIMIT, VOUCHER_FAILURE_SCOPE, VOUCHER_FAILURE_WINDOW } from '@/lib/request-security';
+import { customerError, customerErrorStatus } from '@/lib/public-errors';
+import { emailTicketsOnce } from '@/lib/ticketing';
+import { recordNotificationFailure } from '@/lib/mailer';
+import { isVoucherCode, normalizeVoucherCode } from '@/lib/voucher-code';
+import { PRIVACY_VERSION, TERMS_VERSION } from '@/lib/legal';
 import { BOOKABLE_ITEMS, calculateServerTotal, validatePartyFields } from '@/lib/pricing';
 import { getCurrentPrices } from '@/lib/price-store';
 import { validateBookableDate } from '@/lib/closed-dates';
@@ -27,7 +29,11 @@ export async function POST(request: Request) {
     const phone = cleanText(customerDetails.phone, 40);
     if (firstName.length < 1 || lastName.length < 1 || !isValidEmail(email) || phone.length < 5) throw new Error('Please provide valid customer details');
     if (!Number.isFinite(Number(totalAmount)) || Number(totalAmount) > 1000000) throw new Error('Invalid booking amount');
-    if (voucherCode !== undefined && voucherCode !== null && (typeof voucherCode !== 'string' || (voucherCode.trim() && !/^GRC-[A-Z0-9]{8}$/.test(voucherCode.trim().toUpperCase())))) throw new Error('Invalid voucher code');
+    const normalizedVoucher = typeof voucherCode === 'string' && voucherCode.trim() ? normalizeVoucherCode(voucherCode) : '';
+    if (voucherCode !== undefined && voucherCode !== null && (typeof voucherCode !== 'string' || (voucherCode.trim() && !isVoucherCode(normalizedVoucher)))) throw new Error('Invalid voucher code');
+    if (normalizedVoucher && await isRateLimited(request, VOUCHER_FAILURE_SCOPE, VOUCHER_FAILURE_LIMIT, VOUCHER_FAILURE_WINDOW)) {
+      return NextResponse.json({ success: false, error: 'Too many incorrect voucher codes. Please try again in an hour or contact us.' }, { status: 429 });
+    }
     if (typeof selections !== 'object' || Array.isArray(selections)) throw new Error('Invalid package selections');
     for (const [key, value] of Object.entries(selections)) {
       if (!/^[a-z0-9-]+$/.test(key) || !Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 500) throw new Error('Invalid package quantity');
@@ -131,35 +137,9 @@ export async function POST(request: Request) {
     // 8 alphanumeric characters ≈ 41 bits of entropy vs the old 6-digit (~20 bit) format.
     const refChars = crypto.randomBytes(5).toString('base64url').replace(/[_-]/g, '').slice(0, 8).toUpperCase().padEnd(8, '0');
     const reference = `BK-${new Date().getFullYear()}-${refChars}`;
-    const requestIdempotencyKey = typeof idempotencyKey === 'string' && idempotencyKey.trim() ? idempotencyKey.trim() : null;
-    if (requestIdempotencyKey) {
-      const { data: existingBooking } = await supabase.from('bookings').select('id,reference').eq('idempotency_key', requestIdempotencyKey).maybeSingle();
-      if (existingBooking) {
-        if (requestedSpotIds.length > 0) {
-          const { error: existingSpotError } = await supabase.rpc('reserve_booking_spots', { p_booking_id: existingBooking.id, p_visit_date: selectedDate, p_spot_ids: requestedSpotIds });
-          if (existingSpotError) throw existingSpotError;
-        }
-        return NextResponse.json({ success: true, reference: existingBooking.reference, message: 'Booking already created.' });
-      }
-    }
+    const requestIdempotencyKey = typeof idempotencyKey === 'string' && idempotencyKey.trim() ? idempotencyKey.trim().slice(0, 100) : null;
 
-    // Reserve capacity and create the customer/booking in one database transaction.
-    // Use the SERVER-COMPUTED total, never the client's totalAmount.
-    const { data: bookingId, error } = await supabase.rpc('reserve_capacity', {
-      p_visit_date: selectedDate,
-      p_people_count: peopleCount,
-      p_customer: safeCustomerDetails,
-      p_reference: reference,
-      p_total_amount: serverTotal,
-      p_party_slot: partyDetails?.enabled ? partyDetails.slot : null,
-      p_idempotency_key: requestIdempotencyKey,
-      p_voucher_code: typeof voucherCode === 'string' && voucherCode.trim() ? voucherCode.trim().toUpperCase() : null,
-    });
-
-    if (error) throw error;
-    if (!bookingId) throw new Error('Booking reservation did not return a booking ID');
-
-    const items: Array<{ booking_id: string; quantity: number; price_per_unit: number; subtotal: number; metadata: Record<string, unknown> }> = [];
+    const items: Array<{ quantity: number; price_per_unit: number; subtotal: number; metadata: Record<string, unknown> }> = [];
     let attendeeIdx = 0;
     for (const line of lineItems) {
       if (!line.party) {
@@ -174,7 +154,6 @@ export async function POST(request: Request) {
           }
         }
         items.push({
-          booking_id: bookingId,
           quantity: line.quantity,
           price_per_unit: line.pricePerUnit,
           subtotal: line.subtotal,
@@ -188,24 +167,42 @@ export async function POST(request: Request) {
         continue;
       }
       const partyMetadata = { party: true, partySlot: partyDetails?.slot, name: line.name, isPerson: line.isPerson };
-      items.push({ booking_id: bookingId, quantity: line.quantity, price_per_unit: line.pricePerUnit, subtotal: line.subtotal, metadata: partyMetadata });
+      items.push({ quantity: line.quantity, price_per_unit: line.pricePerUnit, subtotal: line.subtotal, metadata: partyMetadata });
       // The party package is priced per child; each party child also gets a free entrance ticket.
       if (line.itemId === 'party-children') {
-        items.push({ booking_id: bookingId, quantity: line.quantity, price_per_unit: 0, subtotal: 0, metadata: { ...partyMetadata, name: 'Birthday party child entrance', isPerson: true } });
+        items.push({ quantity: line.quantity, price_per_unit: 0, subtotal: 0, metadata: { ...partyMetadata, name: 'Birthday party child entrance', isPerson: true } });
       }
     }
-
     if (!items.length) throw new Error('At least one booking item is required');
 
-    const { error: itemsError } = await supabase.from('booking_items').insert(items);
-    if (itemsError) throw itemsError;
-
-    if (requestedSpotIds.length > 0) {
-      const { error: spotReservationError } = await supabase.rpc('reserve_booking_spots', { p_booking_id: bookingId, p_visit_date: selectedDate, p_spot_ids: requestedSpotIds });
-      if (spotReservationError) throw spotReservationError;
+    // Capacity, voucher, customer, booking, items and seating are saved in ONE
+    // database transaction: if any part fails (e.g. the hut was just taken),
+    // nothing is saved and no places are held. Uses the SERVER-COMPUTED total.
+    // The versions of the terms and privacy policy accepted are stored with it.
+    const { data: created, error } = await supabase.rpc('create_booking', {
+      p_visit_date: selectedDate,
+      p_people_count: peopleCount,
+      p_customer: safeCustomerDetails,
+      p_reference: reference,
+      p_total_amount: serverTotal,
+      p_party_slot: partyDetails?.enabled ? partyDetails.slot : null,
+      p_idempotency_key: requestIdempotencyKey,
+      p_voucher_code: normalizedVoucher || null,
+      p_items: items,
+      p_spot_ids: requestedSpotIds,
+      p_terms_version: TERMS_VERSION,
+      p_privacy_version: PRIVACY_VERSION,
+    });
+    if (error) {
+      // Count wrong voucher codes towards the guessing lockout.
+      if (normalizedVoucher && /voucher code is invalid/i.test(error.message)) await checkRateLimit(request, VOUCHER_FAILURE_SCOPE, VOUCHER_FAILURE_LIMIT, VOUCHER_FAILURE_WINDOW);
+      throw error;
     }
+    const row = (Array.isArray(created) ? created[0] : created) as { booking_id: string; created: boolean } | null;
+    if (!row?.booking_id) throw new Error('Booking reservation did not return a booking ID');
+    const bookingId = row.booking_id;
 
-    const { data: bookingTotals, error: totalsError } = await supabase.from('bookings').select('amount_due,voucher_amount_used,voucher_credit_id,status').eq('id', bookingId).single();
+    const { data: bookingTotals, error: totalsError } = await supabase.from('bookings').select('reference,amount_due,voucher_amount_used,voucher_credit_id,status').eq('id', bookingId).single();
     if (totalsError) throw totalsError;
     let voucherRemainingBalance = 0;
     if (bookingTotals.voucher_credit_id) {
@@ -213,12 +210,17 @@ export async function POST(request: Request) {
       if (voucherError) throw voucherError;
       voucherRemainingBalance = Number(voucherCredit?.remaining_balance || 0);
     }
-    if (bookingTotals.status === 'PAID' && Number(bookingTotals.amount_due || 0) === 0) {
-      await supabase.from('bookings').update({ payment_method: 'VOUCHER', notes: 'PAID_BY_VOUCHER' }).eq('id', bookingId);
-      const { error: paymentError } = await supabase.from('payments').insert({ booking_id: bookingId, amount: 0, method: 'VOUCHER', status: 'COMPLETE', provider_reference: `VOUCHER-${bookingId}` });
-      if (paymentError) throw paymentError;
+    const paidByVoucher = bookingTotals.status === 'PAID' && Number(bookingTotals.amount_due || 0) === 0;
+    if (paidByVoucher) {
+      const voucherPaymentReference = `VOUCHER-${bookingId}`;
+      const { data: voucherPayment } = await supabase.from('payments').select('id').eq('provider_reference', voucherPaymentReference).maybeSingle();
+      if (!voucherPayment) {
+        await supabase.from('bookings').update({ payment_method: 'VOUCHER', notes: 'PAID_BY_VOUCHER' }).eq('id', bookingId);
+        const { error: paymentError } = await supabase.from('payments').insert({ booking_id: bookingId, amount: 0, method: 'VOUCHER', status: 'COMPLETE', provider_reference: voucherPaymentReference });
+        if (paymentError) throw paymentError;
+      }
       try {
-        await generateTicketsAndSendEmail(bookingId, safeCustomerDetails.email, `${safeCustomerDetails.firstName} ${safeCustomerDetails.lastName}`);
+        await emailTicketsOnce(bookingId, safeCustomerDetails.email, `${safeCustomerDetails.firstName} ${safeCustomerDetails.lastName}`);
       } catch (emailError) {
         await recordNotificationFailure('booking', 'TICKETS_ISSUED_BY_VOUCHER', safeCustomerDetails.email, bookingId, emailError);
       }
@@ -226,19 +228,20 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      reference,
+      reference: bookingTotals.reference || reference,
       amountDue: Number(bookingTotals.amount_due ?? serverTotal),
       voucherAmountUsed: Number(bookingTotals.voucher_amount_used || 0),
       voucherRemainingBalance,
-      paymentRequired: !(bookingTotals.status === 'PAID' && Number(bookingTotals.amount_due || 0) === 0),
-      message: "Capacity reserved. Booking pending payment."
+      paymentRequired: !paidByVoucher,
+      message: row.created ? 'Capacity reserved. Booking pending payment.' : 'Booking already created.',
     });
 
   } catch (error: unknown) {
-    console.error('Booking request failed', error);
+    const status = customerErrorStatus(error);
+    if (status === 500) console.error('Booking request failed', error);
     return NextResponse.json({
       success: false,
       error: customerError(error, 'We could not create your booking. Please try again or contact support.')
-    }, { status: 500 });
+    }, { status });
   }
 }

@@ -1,31 +1,11 @@
 import { NextResponse } from 'next/server';
-import nodemailer from 'nodemailer';
 import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
+import { recordNotificationFailure } from '@/lib/mailer';
+import { sendStaffSetupLink, StaffInviteError } from '@/lib/staff-invite';
 
 const roles = ['ADMIN', 'MANAGER', 'SCANNER'] as const;
 const appUrl = () => process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-
-async function sendActivationEmail(email: string, name: string, link: string, existingAccount: boolean) {
-  const subject = existingAccount ? 'Set your Graceland Venues staff password' : 'Activate your Graceland Venues staff account';
-  const safeName = name.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
-  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#0f172a"><h2 style="color:#0EA5E9">Graceland Venues staff access</h2><p>Hi ${safeName || 'there'},</p><p>${existingAccount ? 'An administrator requested a new password setup link for your staff account.' : 'You have been invited to join the Graceland Venues staff portal.'}</p><p><a href="${link}" style="display:inline-block;background:#0EA5E9;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none">${existingAccount ? 'Set password' : 'Activate account'}</a></p><p>This link expires according to the authentication settings. If you did not expect this email, you can ignore it.</p></div>`;
-  const fromEmail = process.env.NODE_ENV !== 'production'
-    ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za')
-    : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');
-  if (process.env.NODE_ENV !== 'production') {
-    const host = process.env.SMTP_HOST; const user = process.env.SMTP_USER; const pass = process.env.SMTP_PASS;
-    if (!host || !user || !pass) throw new Error('SMTP is not configured');
-    const port = Number(process.env.SMTP_PORT || 587);
-    const transporter = nodemailer.createTransport({ host, port, secure: process.env.SMTP_SECURE === 'true' || port === 465, auth: { user, pass } });
-    await transporter.sendMail({ from: `Graceland Venues <${fromEmail}>`, to: email, subject, html });
-    return;
-  }
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('Email provider is not configured');
-  const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: `Graceland Venues <${fromEmail}>`, to: [email], subject, html }) });
-  if (!response.ok) throw new Error('Email provider rejected the message');
-}
 
 export async function GET(request: Request) {
   try {
@@ -54,20 +34,17 @@ export async function POST(request: Request) {
     const body = await request.json();
     if (body.action === 'resend_invite') {
       const userId = typeof body.userId === 'string' ? body.userId : '';
-      const { data: staff } = await supabase.from('admin_roles').select('id,display_name').eq('id', userId).single();
-      if (!staff) return NextResponse.json({ success: false, error: 'Staff member not found' }, { status: 404 });
-      const { data: authUser, error: authUserError } = await supabase.auth.admin.getUserById(userId);
-      if (authUserError || !authUser.user?.email) return NextResponse.json({ success: false, error: 'Staff email could not be found' }, { status: 404 });
-      const existingAccount = Boolean(authUser.user.email_confirmed_at);
-      const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
-        type: existingAccount ? 'recovery' : 'invite',
-        email: authUser.user.email,
-        options: { redirectTo: `${appUrl()}/admin/set-password` },
-      });
-      if (linkError || !linkData.properties?.action_link) throw linkError || new Error('Activation link could not be generated');
-      await sendActivationEmail(authUser.user.email, staff.display_name || authUser.user.user_metadata?.display_name || '', linkData.properties.action_link, existingAccount);
-      await writeAudit(user.id, 'RESEND_STAFF_INVITE', 'staff', userId, { email: authUser.user.email });
-      return NextResponse.json({ success: true, message: existingAccount ? 'Password setup link sent' : 'Activation link sent' });
+      try {
+        const sent = await sendStaffSetupLink(userId);
+        await writeAudit(user.id, 'RESEND_STAFF_INVITE', 'staff', userId, { email: sent.email });
+        return NextResponse.json({ success: true, message: sent.existingAccount ? 'Password setup link sent' : 'Activation link sent' });
+      } catch (inviteError) {
+        if (inviteError instanceof StaffInviteError) return NextResponse.json({ success: false, error: inviteError.message }, { status: inviteError.status });
+        console.error('Staff invite email failed', inviteError);
+        const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+        await recordNotificationFailure('staff', 'STAFF_INVITE', authUser?.user?.email || '', userId, inviteError);
+        return NextResponse.json({ success: false, error: 'The email could not be sent. It has been added to Email retries.' }, { status: 502 });
+      }
     }
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const name = typeof body.name === 'string' ? body.name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) : '';

@@ -1,3 +1,4 @@
+import 'server-only';
 import { supabase } from '@/lib/supabase';
 import { DEFAULT_PRICES, mergePrices, type PriceList } from '@/lib/pricing';
 

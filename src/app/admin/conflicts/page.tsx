@@ -2,6 +2,7 @@
 
 import { PageHeader } from '@/components/admin/AdminShell';
 import { useEffect, useState } from 'react';
+import { johannesburgToday } from '@/lib/opening-rules';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 
 type Conflict = {
@@ -24,7 +25,7 @@ export default function ConflictsPage() {
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [selectedDate, setSelectedDate] = useState(johannesburgToday);
   const [showResolved, setShowResolved] = useState(false);
   const [resolving, setResolving] = useState<string | null>(null);
 

@@ -225,7 +225,9 @@ export async function POST(request: Request) {
 
     // ── Reserve capacity (same database lock as online bookings) ──
     const reference = `WI-${visitDate.slice(0, 4)}-${crypto.randomBytes(5).toString('base64url').replace(/[_-]/g, '').slice(0, 8).toUpperCase().padEnd(8, '0')}`;
-    const { data: newBookingId, error: reserveError } = await supabase.rpc('reserve_capacity', {
+    // Booking, items and seating in one transaction: a taken spot or a full day
+    // leaves nothing behind.
+    const { data: created, error: reserveError } = await supabase.rpc('create_booking', {
       p_visit_date: visitDate,
       p_people_count: people,
       p_customer: { firstName, lastName, email, phone },
@@ -234,19 +236,17 @@ export async function POST(request: Request) {
       p_party_slot: null,
       p_idempotency_key: idempotencyKey,
       p_voucher_code: null,
+      p_items: lineItems.map(line => ({
+        quantity: line.quantity, price_per_unit: line.pricePerUnit, subtotal: line.subtotal,
+        metadata: { itemId: line.itemId, name: line.name, isPerson: line.isPerson, walkIn: true },
+      })),
+      p_spot_ids: spotIds,
     });
     if (reserveError) throw reserveError;
-    bookingId = newBookingId as string;
-
-    const { error: itemsError } = await supabase.from('booking_items').insert(lineItems.map(line => ({
-      booking_id: bookingId, quantity: line.quantity, price_per_unit: line.pricePerUnit, subtotal: line.subtotal,
-      metadata: { itemId: line.itemId, name: line.name, isPerson: line.isPerson, walkIn: true },
-    })));
-    if (itemsError) throw itemsError;
-    if (spotIds.length) {
-      const { error: spotsError } = await supabase.rpc('reserve_booking_spots', { p_booking_id: bookingId, p_visit_date: visitDate, p_spot_ids: spotIds });
-      if (spotsError) throw spotsError;
-    }
+    const createdRow = (Array.isArray(created) ? created[0] : created) as { booking_id: string; created: boolean } | null;
+    if (!createdRow?.booking_id) throw new Error('Walk-in booking was not created');
+    if (!createdRow.created) throw new SaleError('This sale is still being processed. Wait a moment and check the sales list before trying again.');
+    bookingId = createdRow.booking_id;
 
     // ── Take payment ──
     const { error: paidError } = await supabase.from('bookings').update({

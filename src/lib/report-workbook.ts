@@ -1,3 +1,4 @@
+import 'server-only';
 /**
  * Turns a Report (src/lib/reports.ts) into a formatted, multi-sheet Excel workbook.
  */

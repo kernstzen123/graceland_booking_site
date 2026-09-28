@@ -3,25 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-
-const DEFAULT_NEXT = '/admin/set-password';
-
-/**
- * Where to go after signing in. ?next= comes from the link, so it could point
- * anywhere; only paths inside the staff portal on this site are allowed.
- * Anything else ("//evil.com", "https://…", "/\evil.com", "javascript:…")
- * falls back to the set-password page.
- */
-function safeNextPath(value: string | null) {
-  if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return DEFAULT_NEXT;
-  try {
-    const url = new URL(value, window.location.origin);
-    if (url.origin !== window.location.origin || !(url.pathname === '/admin' || url.pathname.startsWith('/admin/'))) return DEFAULT_NEXT;
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return DEFAULT_NEXT;
-  }
-}
+import { safeNextPath } from '@/lib/safe-redirect';
 
 function CallbackHandler() {
   const router = useRouter();
@@ -33,7 +15,7 @@ function CallbackHandler() {
 
     async function handleCallback() {
       const code = searchParams.get('code');
-      const next = safeNextPath(searchParams.get('next'));
+      const next = safeNextPath(searchParams.get('next'), window.location.origin);
 
       if (code) {
         const { error: exchangeError } = await supabaseBrowser.auth.exchangeCodeForSession(code);

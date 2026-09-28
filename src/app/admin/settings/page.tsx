@@ -9,6 +9,7 @@ import Link from 'next/link';
 type PriceRow = { key: string; label: string; group: string; defaultPrice: number; price: number; updatedAt: string | null };
 type ClosedDate = { date: string; reason: string; createdAt: string; activeBookings: number; activePeople: number; paidBookings: number };
 type Affected = { date: string; bookings: number; people: number; paid: number };
+type Business = { dailyCapacity: number; supportEmail: string; supportPhone: string; updatedAt: string | null };
 
 const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
 const johannesburgToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date());
@@ -34,7 +35,21 @@ export default function SettingsPage() {
   const [closing, setClosing] = useState(false);
   const [loadError, setLoadError] = useState('');
 
+  // Business details
+  const [business, setBusiness] = useState<Business | null>(null);
+  const [businessDraft, setBusinessDraft] = useState({ dailyCapacity: '', supportEmail: '', supportPhone: '' });
+  const [businessMessage, setBusinessMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [savingBusiness, setSavingBusiness] = useState(false);
+
   const canEditPrices = role === 'ADMIN';
+
+  const loadBusiness = useCallback(async () => {
+    const response = await fetch('/api/admin/settings/business', { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load business details');
+    setBusiness(data.settings);
+    setBusinessDraft({ dailyCapacity: String(data.settings.dailyCapacity), supportEmail: data.settings.supportEmail, supportPhone: data.settings.supportPhone });
+  }, []);
 
   const loadPrices = useCallback(async () => {
     const response = await fetch('/api/admin/settings/prices', { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' });
@@ -55,9 +70,9 @@ export default function SettingsPage() {
     (async () => {
       const response = await fetch('/api/admin/me', { headers: { Authorization: `Bearer ${await token()}` }, cache: 'no-store' });
       if (response.ok) setRole((await response.json()).role || '');
-      await Promise.all([loadPrices(), loadClosedDates()]);
+      await Promise.all([loadPrices(), loadClosedDates(), loadBusiness()]);
     })().catch(error => setLoadError(error instanceof Error ? error.message : 'Could not load settings'));
-  }, [loadPrices, loadClosedDates]);
+  }, [loadPrices, loadClosedDates, loadBusiness]);
 
   const changedPrices = useMemo(() => prices.filter(row => drafts[row.key] !== undefined && Number(drafts[row.key]) !== row.price), [prices, drafts]);
   const groups = useMemo(() => {
@@ -111,6 +126,27 @@ export default function SettingsPage() {
     } finally { setClosing(false); }
   };
 
+  const saveBusiness = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!business) return;
+    const changes: Record<string, unknown> = {};
+    if (Number(businessDraft.dailyCapacity) !== business.dailyCapacity) changes.dailyCapacity = Number(businessDraft.dailyCapacity);
+    if (businessDraft.supportEmail.trim() !== business.supportEmail) changes.supportEmail = businessDraft.supportEmail.trim();
+    if (businessDraft.supportPhone.trim() !== business.supportPhone) changes.supportPhone = businessDraft.supportPhone.trim();
+    if (!Object.keys(changes).length) { setBusinessMessage({ tone: 'ok', text: 'Nothing has changed.' }); return; }
+    if (changes.dailyCapacity !== undefined) {
+      const result = await confirm({ title: 'Change daily capacity?', message: `New bookings will be limited to ${changes.dailyCapacity} people per day (currently ${business.dailyCapacity}). Existing bookings are not affected.`, confirmLabel: 'Save' });
+      if (!result.confirmed) return;
+    }
+    setSavingBusiness(true); setBusinessMessage(null);
+    try {
+      const response = await fetch('/api/admin/settings/business', { method: 'PUT', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
+      const data = await response.json();
+      setBusinessMessage({ tone: response.ok ? 'ok' : 'error', text: data.message || data.error });
+      if (response.ok) { setBusiness(data.settings); setBusinessDraft({ dailyCapacity: String(data.settings.dailyCapacity), supportEmail: data.settings.supportEmail, supportPhone: data.settings.supportPhone }); }
+    } finally { setSavingBusiness(false); }
+  };
+
   const reopen = async (entry: ClosedDate) => {
     const result = await confirm({ title: 'Reopen date?', message: `Allow bookings on ${formatDate(entry.date)} again? The regular opening rules still apply.`, confirmLabel: 'Reopen' });
     if (!result.confirmed) return;
@@ -125,6 +161,19 @@ export default function SettingsPage() {
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     <PageHeader eyebrow="Settings" title="Prices & closed dates" description="What customers pay, and extra days the venue is closed." />
     {loadError && <div className="card" style={{ color: 'var(--danger)', marginBottom: '1rem' }}>{loadError}</div>}
+
+    <section className="card" style={{ marginBottom: '1.5rem' }}>
+      <h2>Business details</h2>
+      <p style={{ color: 'var(--text-muted)', marginTop: 4 }}>{canEditPrices ? 'The most people allowed per day, and the contact customers see on the website and in emails.' : 'Only administrators can change these.'}</p>
+      <form onSubmit={saveBusiness} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '1rem' }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: '0.85rem', fontWeight: 600 }}>Daily capacity (people)<input type="number" min={1} max={5000} step={1} required disabled={!canEditPrices || !business} value={businessDraft.dailyCapacity} onChange={event => setBusinessDraft(current => ({ ...current, dailyCapacity: event.target.value }))} style={{ ...inputStyle, width: 140 }} /></label>
+        <label style={{ display: 'grid', gap: 4, fontSize: '0.85rem', fontWeight: 600, flex: '1 1 220px' }}>Support email<input type="email" required disabled={!canEditPrices || !business} value={businessDraft.supportEmail} onChange={event => setBusinessDraft(current => ({ ...current, supportEmail: event.target.value }))} style={inputStyle} /></label>
+        <label style={{ display: 'grid', gap: 4, fontSize: '0.85rem', fontWeight: 600 }}>Support phone<input type="tel" required disabled={!canEditPrices || !business} value={businessDraft.supportPhone} onChange={event => setBusinessDraft(current => ({ ...current, supportPhone: event.target.value }))} style={{ ...inputStyle, width: 170 }} /></label>
+        {canEditPrices && <button className="btn btn-primary" disabled={savingBusiness || !business}>{savingBusiness ? 'Saving…' : 'Save'}</button>}
+      </form>
+      {businessMessage && <p role="status" style={messageStyle(businessMessage.tone)}>{businessMessage.text}</p>}
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.75rem' }}>The bank account customers pay into can only be changed by your developer. This protects EFT payments if a staff login is ever misused.</p>
+    </section>
 
     <section className="card" style={{ marginBottom: '1.5rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

@@ -1,3 +1,4 @@
+import 'server-only';
 /**
  * Environment variable helpers that fail closed in production.
  *

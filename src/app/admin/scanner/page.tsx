@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { johannesburgToday } from '@/lib/opening-rules';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useLiveBarcodeScanner, type DetectedBarcode } from '@/lib/qr-scanner';
 import {
@@ -259,7 +260,7 @@ export default function Scanner() {
       const ticket = await lookupTicket(code);
 
       if (ticket) {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = johannesburgToday();
 
         if (ticket.status === 'USED') {
           playDuplicate();

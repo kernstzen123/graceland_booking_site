@@ -11,6 +11,7 @@ import { SeatingMap } from '../components/SeatingMap';
 import { calculatePartyTotal, PartyDetails } from '@/lib/parties';
 import { buildPackageGroups, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
 import { SupportContact } from '@/components/SupportContact';
+import { BANK_DETAILS } from '@/lib/business-details';
 
 export default function Home() {
   useEffect(() => {
@@ -205,7 +206,7 @@ export default function Home() {
       // A transient connection failure can happen after the server has
       // reserved the booking. Retry once with the same idempotency key so the
       // server returns the existing booking instead of creating another one.
-      if (!res.ok) {
+      if (res.status >= 500) {
         await new Promise(resolve => window.setTimeout(resolve, 500));
         res = await fetch('/api/bookings', bookingRequest);
       }
@@ -410,10 +411,10 @@ export default function Home() {
           <p style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Please transfer <strong>R {appliedVoucher?.amountDue ?? serverAmountDue ?? totalAmount}</strong> to the following account:</p>
           
           <div style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '1px solid var(--border-color)', fontSize: '1.1rem' }}>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Bank:</strong> Nedbank LTD</p>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Account Name:</strong> ACE contractors</p>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Account Number:</strong> 1039028861</p>
-            <p style={{ marginBottom: '0.5rem' }}><strong>Branch Code:</strong> 103910</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Bank:</strong> {BANK_DETAILS.bank}</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Account Name:</strong> {BANK_DETAILS.accountName}</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Account Number:</strong> {BANK_DETAILS.accountNumber}</p>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Branch Code:</strong> {BANK_DETAILS.branchCode}</p>
             <p><strong>Payment Reference:</strong> {reference}</p>
           </div>
           

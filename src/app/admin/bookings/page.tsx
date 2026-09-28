@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
+import { johannesburgToday } from '@/lib/opening-rules';
 import { useSearchParams } from 'next/navigation';
 import { PageHeader } from '@/components/admin/AdminShell';
 import { supabaseBrowser } from '@/lib/supabase-browser';
@@ -34,7 +35,7 @@ function BookingsPage() {
   const urlStatus = STATUS_FILTERS.some(option => option.value && option.value === searchParams.get('status')) ? searchParams.get('status') || '' : '';
   const [query, setQuery] = useState(urlQuery); const [appliedQuery, setAppliedQuery] = useState(urlQuery); const [searchCount, setSearchCount] = useState(0); const [bookings, setBookings] = useState<ListBooking[]>([]); const [selected, setSelected] = useState<Booking | null>(null); const [message, setMessage] = useState('Loading bookings...');
   const [attentionCount, setAttentionCount] = useState(0);
-  const [statusFilter, setStatusFilter] = useState(urlStatus); const [dateFilter, setDateFilter] = useState(urlDate); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [pageSize, setPageSize] = useState(50); const [loadingDetail, setLoadingDetail] = useState(''); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(new Date().toISOString().slice(0, 10));
+  const [statusFilter, setStatusFilter] = useState(urlStatus); const [dateFilter, setDateFilter] = useState(urlDate); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [pageSize, setPageSize] = useState(50); const [loadingDetail, setLoadingDetail] = useState(''); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(johannesburgToday);
   const [showExport, setShowExport] = useState(false); const [exportMode, setExportMode] = useState<'all' | 'range'>('all'); const [exportFrom, setExportFrom] = useState(''); const [exportTo, setExportTo] = useState(''); const [exporting, setExporting] = useState(false);
   const { confirm, dialog } = useConfirm();
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';

@@ -1,3 +1,5 @@
+import { DEFAULT_SUPPORT_EMAIL, DEFAULT_SUPPORT_PHONE } from './business-details';
+
 export const escapeHtml = (value: unknown) =>
   String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 
@@ -14,8 +16,8 @@ const BADGES = {
 } as const;
 
 export function renderEmailLayout(options: { preheader?: string; bodyHtml: string; supportEmail?: string; supportPhone?: string }) {
-  const supportEmail = options.supportEmail || 'conny@gracelandvenues.co.za';
-  const supportPhone = options.supportPhone || '072 264 4009';
+  const supportEmail = options.supportEmail || DEFAULT_SUPPORT_EMAIL;
+  const supportPhone = options.supportPhone || DEFAULT_SUPPORT_PHONE;
   return `<!DOCTYPE html>
 <html>
   <head>

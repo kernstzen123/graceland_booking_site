@@ -21,6 +21,17 @@ export function johannesburgToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date());
 }
 
+/**
+ * Midnight at the start of a South African day (plus `addDays`), as an ISO
+ * timestamp for filtering timestamptz columns. South Africa has no daylight
+ * saving, so it is always UTC+2.
+ */
+export function startOfJohannesburgDay(date: string, addDays = 0): string {
+  const start = new Date(`${date}T00:00:00+02:00`);
+  start.setUTCDate(start.getUTCDate() + addDays);
+  return start.toISOString();
+}
+
 // ── School holidays ────────────────────────────────────────────────────────
 // Confirmed against the Government Gazette (school calendar: Notices 5901/5902
 // of 25 Feb 2025; public holidays: Public Holidays Act 36 of 1994 plus the

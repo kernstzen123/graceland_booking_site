@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
-import { johannesburgToday } from '@/lib/opening-rules';
+import { johannesburgToday, startOfJohannesburgDay } from '@/lib/opening-rules';
 
 /**
  * GET  /api/admin/conflicts?date=YYYY-MM-DD — list unresolved conflicts
@@ -31,8 +31,8 @@ export async function GET(request: Request) {
         notes,
         created_at
       `)
-      .gte('created_at', `${date}T00:00:00`)
-      .lt('created_at', `${date}T23:59:59.999Z`)
+      .gte('created_at', startOfJohannesburgDay(date))
+      .lt('created_at', startOfJohannesburgDay(date, 1))
       .order('created_at', { ascending: false });
 
     if (!showResolved) {

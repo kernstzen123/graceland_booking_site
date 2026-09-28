@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { MailIcon } from '@/components/icons';
+import { DEFAULT_SUPPORT_EMAIL } from '@/lib/business-details';
+import { formatLegalDate, PRIVACY_VERSION } from '@/lib/legal';
 
 const SECTIONS = [
   { id: 'who-we-are', title: 'Who we are' },
@@ -15,7 +17,7 @@ const SECTIONS = [
   { id: 'contact', title: 'Contact us' },
 ];
 
-const CONTACT_EMAIL = 'support@graceland-venues.co.za';
+const CONTACT_EMAIL = DEFAULT_SUPPORT_EMAIL;
 
 export default function PrivacyPolicy() {
   return (
@@ -25,7 +27,7 @@ export default function PrivacyPolicy() {
           <p className="legal-kicker">Graceland Venues</p>
           <h1>Privacy Policy</h1>
           <p>Operated by Ace Contractors &amp; Eng CC, trading as Graceland Venues.</p>
-          <p className="legal-updated">Effective date: <strong>22 September 2026</strong> &middot; Last updated: <strong>22 September 2026</strong></p>
+          <p className="legal-updated">Effective date: <strong>22 September 2026</strong> &middot; Last updated: <strong>{formatLegalDate(PRIVACY_VERSION)}</strong></p>
         </div>
 
         <div className="legal-body">
@@ -86,10 +88,10 @@ export default function PrivacyPolicy() {
             <h3>2.4 Website usage information (cookies and analytics)</h3>
             <p>Our website uses:</p>
             <ul>
-              <li><strong>Google Analytics</strong> — to understand how visitors use our website (pages visited, time on site, general location, device and browser type).</li>
-              <li><strong>Vercel Analytics</strong> — to measure website performance and visitor traffic.</li>
+              <li><strong>Vercel Web Analytics and Speed Insights</strong> — to count visitors and measure how quickly our pages load. These tools do not use cookies and do not identify you: they record aggregated information such as the pages visited, the referring website, country, and device and browser type.</li>
+              <li><strong>Sentry</strong> — if something goes wrong on our website, a technical error report (the page, browser and device type, and what went wrong) is sent to Sentry so we can fix it. It is configured not to include your booking or payment details.</li>
             </ul>
-            <p>These tools may place cookies or use similar technologies on your device and may process information in an identifiable or pseudonymised form. You can control or disable cookies through your browser settings, and you can opt out of Google Analytics tracking using the Google Analytics Opt-out Browser Add-on (tools.google.com/dlpage/gaoptout). Disabling cookies may affect how parts of the website function, but will not prevent you from making a booking.</p>
+            <p>We do not use advertising or tracking cookies, and we do not use Google Analytics.</p>
 
             <h3>2.5 CCTV</h3>
             <p>Our premises are monitored by CCTV for the safety and security of our visitors, staff and property. Footage may capture your image while you are on site. CCTV footage is used only for safety, security, and incident-investigation purposes, is stored securely, and is only accessed by authorised personnel.</p>
@@ -144,9 +146,9 @@ export default function PrivacyPolicy() {
                     <td>Name, email address, and booking/ticket details necessary to deliver emails</td>
                   </tr>
                   <tr>
-                    <td>Google Analytics</td>
-                    <td>Website analytics</td>
-                    <td>Website usage and device/browser data</td>
+                    <td>Sentry (Functional Software Inc.)</td>
+                    <td>Error monitoring, so we can fix problems with the website</td>
+                    <td>Technical error reports (the page, browser and device type, and what went wrong); configured not to include your booking or payment details</td>
                   </tr>
                 </tbody>
               </table>
@@ -159,7 +161,7 @@ export default function PrivacyPolicy() {
 
           <section id="retention" className="legal-section">
             <h2>5. How long we keep your information</h2>
-            <p>We retain booking and customer information, including proof-of-payment documents, for <strong>1 year</strong> from the date of your visit or transaction, after which it is securely deleted or anonymised, unless we are required by law (for example, tax or financial record-keeping obligations) to retain it for longer. CCTV footage is retained for a limited period necessary for security purposes and is then automatically overwritten or deleted, unless required for an ongoing investigation.</p>
+            <p>We keep booking and customer information, including proof-of-payment documents, only for as long as we need it: to provide your booking, to deal with queries, refunds and rebooking vouchers (which do not expire), and to meet our legal obligations, such as tax and financial record-keeping (South African law generally requires these records to be kept for five years). When we no longer need information, we securely delete or anonymise it. You may ask us to delete your information sooner (see section 7), unless we are required to keep it. CCTV footage is retained for a limited period necessary for security purposes and is then automatically overwritten or deleted, unless required for an ongoing investigation.</p>
           </section>
 
           <section id="security" className="legal-section">
@@ -204,7 +206,7 @@ export default function PrivacyPolicy() {
 
           <section id="cookies" className="legal-section">
             <h2>9. Cookies</h2>
-            <p>Cookies are small text files placed on your device when you visit our website. We use cookies and similar technologies (via Google Analytics and Vercel Analytics, as described in section 2.4) to understand website usage and improve performance. You can manage or disable cookies at any time through your browser settings. Please note that some parts of our website may not function as intended if cookies are disabled.</p>
+            <p>Cookies are small text files placed on your device when you visit our website. We do not use advertising, analytics or tracking cookies: our analytics (section 2.4) work without cookies. While you make a booking, your browser keeps your booking details in its own session storage so they are not lost if you are sent to PayFast and back; this is cleared when you close the browser tab. Staff who sign in to our staff portal receive a sign-in cookie, which is strictly necessary for that portal to work.</p>
           </section>
 
           <section id="changes" className="legal-section">

@@ -100,6 +100,7 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
   useEffect(() => {
     const [y, m] = today.split('-').map(Number);
     const fromMonth = `${y}-${String(m).padStart(2, '0')}`;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState happens after the request
     fetchOpeningInfo(fromMonth, 4);
   }, [today, fetchOpeningInfo]);
 
@@ -107,6 +108,7 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
   useEffect(() => {
     const firstOfMonth = toDateStr(viewYear, viewMonth, 1);
     if (dateMap.has(firstOfMonth)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState happens after the request
     fetchOpeningInfo(`${viewYear}-${String(viewMonth).padStart(2, '0')}`, 2);
   }, [viewYear, viewMonth, dateMap, fetchOpeningInfo]);
 

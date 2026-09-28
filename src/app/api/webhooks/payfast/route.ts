@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { generateTicketsAndSendEmail } from '@/lib/ticketing';
-import { recordNotificationFailure } from '@/lib/voucher-email';
+import { emailTicketsOnce } from '@/lib/ticketing';
+import { recordNotificationFailure } from '@/lib/mailer';
 import { requireEnv } from '@/lib/env';
 import { flagBookingForReview, setBookingPaymentStatus } from '@/lib/booking-holds';
 
@@ -54,10 +54,6 @@ async function verifyWithPayFast(params: URLSearchParams) {
   return response.ok && result === 'VALID';
 }
 
-function appendNote(notes: string | null | undefined, note: string) {
-  return notes ? `${notes}\n${note}` : note;
-}
-
 /**
  * Record a PayFast payment. Returns false when this transaction could not be
  * recorded because the booking already has a different PayFast payment.
@@ -87,7 +83,7 @@ export async function POST(request: Request) {
 
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('id, status, total_amount, amount_due, notes, customers(first_name, last_name, email)')
+      .select('id, status, total_amount, amount_due, customers(first_name, last_name, email)')
       .eq('reference', reference)
       .maybeSingle();
     if (bookingError) throw bookingError;
@@ -103,10 +99,10 @@ export async function POST(request: Request) {
         // A booking with an EFT proof under review keeps its hold; paid and
         // cancelled bookings are left alone.
         if (booking.status === 'UNPAID') {
-          const { error } = await supabase.from('bookings').update({ status: 'PAYMENT_FAILED', notes: appendNote(booking.notes, 'PAYFAST_FAILED') }).eq('id', booking.id).eq('status', 'UNPAID');
+          const { error } = await supabase.from('bookings').update({ status: 'PAYMENT_FAILED', payment_failed_at: new Date().toISOString() }).eq('id', booking.id).eq('status', 'UNPAID');
           if (error) throw error;
         } else if (booking.status === 'PAYMENT_PENDING') {
-          const { error } = await supabase.from('bookings').update({ notes: appendNote(booking.notes, 'PAYFAST_FAILED') }).eq('id', booking.id);
+          const { error } = await supabase.from('bookings').update({ payment_failed_at: new Date().toISOString() }).eq('id', booking.id);
           if (error) throw error;
         }
       }
@@ -163,27 +159,20 @@ export async function POST(request: Request) {
       }
     }
 
-    // PayFast may retry an ITN. Once the email has been sent, acknowledge
-    // retries without issuing a second set of tickets or another email.
-    const { data: current, error: currentError } = await supabase.from('bookings').select('notes').eq('id', booking.id).single();
-    if (currentError) throw currentError;
-    if (current.notes?.includes('TICKETS_EMAIL_SENT')) return ok();
-
     const customer = Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
     const email = customer?.email || params.get('email_address') || '';
     const name = [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || params.get('name_first') || 'Customer';
 
+    // PayFast may send the same notification more than once, sometimes at the
+    // same moment. The booking is claimed before emailing, so only one of them
+    // sends the tickets; the others are acknowledged.
     try {
-      await generateTicketsAndSendEmail(booking.id, email, name);
-      // Only write TICKETS_EMAIL_SENT after successful delivery
-      const { error: notesError } = await supabase.from('bookings').update({ notes: appendNote(current.notes, 'TICKETS_EMAIL_SENT') }).eq('id', booking.id);
-      if (notesError) throw notesError;
-      console.log(`PayFast payment confirmed and tickets emailed for ${reference}`);
+      const outcome = await emailTicketsOnce(booking.id, email, name);
+      if (outcome === 'SENT') console.log(`PayFast payment confirmed and tickets emailed for ${reference}`);
     } catch (emailError) {
-      // Email delivery failed — do NOT write TICKETS_EMAIL_SENT.
-      // Record the failure for admin visibility and return 500 so PayFast retries.
-      // Existing tickets are reused on retry (ticketing.ts checks for them first),
-      // and the payment row is protected by a unique constraint on provider_reference.
+      // Record the failure for staff and return 500 so PayFast retries. Existing
+      // tickets are reused on retry, and the payment row is protected by the
+      // unique constraint on provider_reference.
       console.error(`Ticket email delivery failed for ${reference}`, emailError);
       await recordNotificationFailure('booking', 'TICKETS_EMAIL_FAILED', email, booking.id, emailError);
       return new NextResponse('Email delivery failed', { status: 500 });

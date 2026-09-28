@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { MailIcon, PhoneIcon } from '@/components/icons';
+import { DEFAULT_SUPPORT_EMAIL, DEFAULT_SUPPORT_PHONE } from '@/lib/business-details';
+import { formatLegalDate, TERMS_VERSION } from '@/lib/legal';
 
 const SECTIONS = [
   { id: 'introduction', title: 'Introduction' },
@@ -21,7 +23,7 @@ export default function TermsAndConditions() {
           <p className="legal-kicker">Graceland Venues</p>
           <h1>Booking Terms and Conditions</h1>
           <p>Please read these terms carefully before booking your visit.</p>
-          <p className="legal-updated">Last updated: <strong>September 9, 2026</strong></p>
+          <p className="legal-updated">Last updated: <strong>{formatLegalDate(TERMS_VERSION)}</strong></p>
         </div>
 
         <div className="legal-body">
@@ -140,8 +142,8 @@ export default function TermsAndConditions() {
             <h2>Contact information</h2>
             <p>For any inquiries, cancellations, or assistance, please contact us at:</p>
             <div className="legal-contact-card">
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MailIcon /> <a href="mailto:info@gracelandvenues.co.za">info@gracelandvenues.co.za</a></span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><PhoneIcon /> 072 264 4009</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MailIcon /> <a href={`mailto:${DEFAULT_SUPPORT_EMAIL}`}>{DEFAULT_SUPPORT_EMAIL}</a></span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><PhoneIcon /> {DEFAULT_SUPPORT_PHONE}</span>
             </div>
           </section>
 

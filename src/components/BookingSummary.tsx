@@ -89,7 +89,7 @@ export function BookingSummary({ selectedDate, selections, party, prices, custom
 
       <div style={{ padding: '1rem', border: '1px solid #93c5fd', background: '#eff6ff', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
         <strong>Have a voucher code?</strong>
-        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}><input value={voucherInput} disabled={Boolean(voucher) || checkingVoucher} onChange={event => setVoucherInput(event.target.value.toUpperCase())} placeholder="GRC-XXXXXXXX" style={{ flex: 1, minWidth: 180, padding: '0.7rem', border: '1px solid var(--border-color)', borderRadius: 8 }} /><button type="button" className="btn" disabled={!voucherInput.trim() || Boolean(voucher) || checkingVoucher} onClick={applyVoucher}>{checkingVoucher ? 'Checking…' : 'Apply voucher'}</button>{voucher && <button type="button" className="btn" onClick={removeVoucher}>Remove</button>}</div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}><input value={voucherInput} disabled={Boolean(voucher) || checkingVoucher} onChange={event => setVoucherInput(event.target.value.toUpperCase())} placeholder="GRC-XXXX-XXXX-XXXX" aria-label="Voucher code" style={{ flex: 1, minWidth: 180, padding: '0.7rem', border: '1px solid var(--border-color)', borderRadius: 8 }} /><button type="button" className="btn" disabled={!voucherInput.trim() || Boolean(voucher) || checkingVoucher} onClick={applyVoucher}>{checkingVoucher ? 'Checking…' : 'Apply voucher'}</button>{voucher && <button type="button" className="btn" onClick={removeVoucher}>Remove</button>}</div>
         {voucherMessage && <p style={{ marginTop: 8, color: voucher ? 'var(--success)' : 'var(--danger)' }}>{voucherMessage}</p>}
       </div>
 

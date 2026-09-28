@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { customerError } from '@/lib/public-errors';
+import { customerError, customerErrorStatus } from '@/lib/public-errors';
 import { supabase } from '@/lib/supabase';
 import { requireEnv } from '@/lib/env';
 import { checkRateLimit } from '@/lib/request-security';
@@ -75,6 +75,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, fields, url: payfast_url });
   } catch (error: unknown) {
     console.error('PayFast setup failed', error);
-    return NextResponse.json({ success: false, error: customerError(error, 'Online payment is temporarily unavailable. Please try again or contact support.') }, { status: 500 });
+    return NextResponse.json({ success: false, error: customerError(error, 'Online payment is temporarily unavailable. Please try again or contact support.') }, { status: customerErrorStatus(error) });
   }
 }

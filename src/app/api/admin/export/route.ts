@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
+import { csvCell } from '@/lib/csv';
 
-const csv = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+const csv = csvCell;
 
 export async function GET(request: Request) {
   try {

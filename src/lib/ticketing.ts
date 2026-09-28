@@ -1,10 +1,12 @@
+import 'server-only';
 import crypto from 'crypto';
-import nodemailer from 'nodemailer';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import QRCode from 'qrcode';
 import { supabase } from './supabase';
 import { createQrToken } from './qr-token';
 import { escapeHtml, renderEmailLayout, calloutBox, statusBadge } from './email-layout';
+import { getBusinessSettings } from './business-settings';
+import { sendEmail } from './mailer';
 
 type BookingItem = {
   quantity: number;
@@ -61,7 +63,10 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
       display_name: displayNames[index] || 'Entrance Ticket',
       attendee_name: attendeeFullNames[index] || '',
     }));
-    if (options.sendEmail !== false) await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining);
+    if (options.sendEmail !== false) {
+      await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining);
+      await markTicketsEmailed(bookingId);
+    }
     return labelledTickets;
   }
 
@@ -88,8 +93,40 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     ticket_uid: ticket.ticket_uid, qr_token: ticket.qr_token, visit_date: ticket.visit_date,
   })));
   if (insertError) throw new Error(`Could not create tickets: ${insertError.message}`);
-  if (options.sendEmail !== false) await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining);
+  if (options.sendEmail !== false) {
+    await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining);
+    await markTicketsEmailed(bookingId);
+  }
   return newTickets;
+}
+
+/** Record that the tickets email went out (the booking status page and retries use this). */
+async function markTicketsEmailed(bookingId: string) {
+  const { error } = await supabase.rpc('finish_ticket_email', { p_booking_id: bookingId, p_sent: true });
+  if (error) console.error(`Could not record the tickets email for booking ${bookingId}`, error);
+}
+
+/**
+ * Email a booking's tickets exactly once, for automatic sends (payment
+ * confirmed, proof approved, marked paid). The booking is claimed first, so two
+ * PayFast notifications arriving together cannot both send the email.
+ * Returns ALREADY_SENT / IN_PROGRESS without sending when someone else has.
+ * Throws if sending fails; the claim is released so a retry can send.
+ * Staff "Resend tickets" uses generateTicketsAndSendEmail directly instead.
+ */
+export async function emailTicketsOnce(bookingId: string, customerEmail: string, customerName: string): Promise<'SENT' | 'ALREADY_SENT' | 'IN_PROGRESS'> {
+  const { data: claim, error: claimError } = await supabase.rpc('claim_ticket_email', { p_booking_id: bookingId });
+  if (claimError) throw claimError;
+  if (claim === 'ALREADY_SENT' || claim === 'IN_PROGRESS') return claim;
+  if (claim !== 'CLAIMED') throw new Error(`Booking ${bookingId} not found`);
+  try {
+    await generateTicketsAndSendEmail(bookingId, customerEmail, customerName);
+    return 'SENT';
+  } catch (error) {
+    const { error: releaseError } = await supabase.rpc('finish_ticket_email', { p_booking_id: bookingId, p_sent: false });
+    if (releaseError) console.error(`Could not release the ticket email claim for booking ${bookingId}`, releaseError);
+    throw error;
+  }
 }
 
 function buildTicketDisplayNames(items: BookingItem[], seatingLabel = '') {
@@ -169,7 +206,10 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
   }).join('');
   const voucherNotice = voucherRemaining !== null ? `<div style="background:#eff6ff;border:1px solid #93c5fd;padding:14px 16px;border-radius:8px;color:#1d4ed8;font-size:13px;margin-bottom:18px;"><strong>Voucher balance remaining:</strong> R ${voucherRemaining.toFixed(2)}. Vouchers never expire and are valid for ticket purchases only.</div>` : '';
   const visitDateBanner = formattedVisitDate ? calloutBox({ label: 'Visit Date', value: escapeHtml(formattedVisitDate), tone: 'green' }) : '';
+  const { supportEmail, supportPhone } = await getBusinessSettings();
   const html = renderEmailLayout({
+    supportEmail,
+    supportPhone,
     preheader: formattedVisitDate ? `Your tickets for ${formattedVisitDate} are ready` : 'Your Graceland Venues tickets are ready',
     bodyHtml: `
       ${statusBadge('BOOKING CONFIRMED', 'green')}
@@ -184,66 +224,14 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     `,
   });
   const attachments = await Promise.all(tickets.map((ticket, index) => createTicketPdf(ticket, qrCodes[index].png, index)));
-  const fromEmail = process.env.NODE_ENV !== 'production'
-    ? (process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || 'bookings@gracelandvenues.co.za')
-    : (process.env.EMAIL_FROM_ADDRESS || 'bookings@gracelandvenues.co.za');
-
-  const resendApiKey = process.env.RESEND_API_KEY;
-  if (resendApiKey && resendApiKey !== 'your-resend-api-key') {
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST', headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: `Graceland Venues <${fromEmail}>`,
-          to: [email],
-          subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
-          html,
-          attachments: [
-            ...qrCodes.map(qr => ({ filename: qr.filename, content: qr.png.toString('base64'), content_type: 'image/png', content_id: qr.contentId })),
-            ...attachments.map(({ filename, content }) => ({
-              filename,
-              content: content.toString('base64'),
-            })),
-          ],
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.text().catch(() => 'unknown error');
-        throw new Error(`Failed to send ticket email via Resend: ${body}`);
-      }
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith('Failed to send ticket email via Resend:')) throw e;
-      throw new Error(`Resend email delivery failed: ${e instanceof Error ? e.message : 'unknown error'}`);
-    }
-    return;
-  }
-
-  const smtpHost = process.env.SMTP_HOST;
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
-  if (!smtpHost || !smtpUser || !smtpPass) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('No email provider configured (neither RESEND_API_KEY nor SMTP). Cannot deliver tickets.');
-    }
-    console.error('Neither RESEND_API_KEY nor SMTP credentials are configured. Skipping email delivery.');
-    return;
-  }
-
-  const smtpPort = Number(process.env.SMTP_PORT || 587);
-  const transporter = nodemailer.createTransport({
-    host: smtpHost,
-    port: smtpPort,
-    secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
-    auth: { user: smtpUser, pass: smtpPass },
-  });
-  await transporter.sendMail({
-    from: `Graceland Venues <${fromEmail}>`,
+  await sendEmail({
     to: email,
     subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
     html,
+    replyTo: supportEmail,
     attachments: [
-      ...qrCodes.map(qr => ({ filename: qr.filename, content: qr.png, contentType: 'image/png', cid: qr.contentId })),
-      ...attachments.map(({ filename, content }) => ({ filename, content })),
+      ...qrCodes.map(qr => ({ filename: qr.filename, content: qr.png, contentType: 'image/png', contentId: qr.contentId })),
+      ...attachments.map(({ filename, content }) => ({ filename, content, contentType: 'application/pdf' })),
     ],
   });
 }

@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
   const { data: booking, error } = await supabase
     .from('bookings')
-    .select('status, notes, expires_at, total_amount, amount_due, visit_date')
+    .select('status, notes, expires_at, total_amount, amount_due, visit_date, tickets_emailed_at, payment_failed_at')
     .eq('reference', reference)
     .maybeSingle();
 
@@ -26,16 +26,18 @@ export async function GET(request: Request) {
 
   const paid = ['PAID', 'CONFIRMED'].includes(booking.status);
   const expired = ['UNPAID', 'PAYMENT_PENDING'].includes(booking.status) && booking.expires_at && new Date(booking.expires_at).getTime() <= Date.now();
-  // A failed PayFast attempt followed by a successful retry leaves PAYFAST_FAILED
-  // in the notes, so a paid booking must never be reported as failed.
-  const failed = !paid && (booking.status === 'PAYMENT_FAILED' || booking.notes?.includes('PAYFAST_FAILED'));
+  // A failed PayFast attempt can be followed by a successful retry, so a paid
+  // booking is never reported as failed. (The notes markers are from bookings
+  // made before these columns existed.)
+  const failed = !paid && (booking.status === 'PAYMENT_FAILED' || Boolean(booking.payment_failed_at) || Boolean(booking.notes?.includes('PAYFAST_FAILED')));
+  const ticketsEmailed = Boolean(booking.tickets_emailed_at) || Boolean(booking.notes?.includes('TICKETS_EMAIL_SENT'));
 
   // Return only what the customer needs to see their own status — NO PII.
   return NextResponse.json({
     success: true,
     status: booking.status,
     paymentState: paid ? 'PAID' : failed ? 'FAILED' : expired ? 'EXPIRED' : 'PENDING',
-    ready: booking.status === 'PAID' && booking.notes?.includes('TICKETS_EMAIL_SENT'),
+    ready: paid && ticketsEmailed,
     amountDue: Number(booking.amount_due ?? booking.total_amount ?? 0),
     visitDate: booking.visit_date ?? null,
     // customer object intentionally omitted — PII must not be exposed via

@@ -1,11 +1,49 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+function supabaseOrigin() {
+  try { return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '').origin; } catch { return ''; }
+}
+
+/**
+ * Content-Security-Policy: what the pages may load and where they may send data.
+ * - scripts: this site only ('unsafe-inline' for Next.js's inline bootstrap
+ *   scripts; nonces would force every page to render dynamically), plus
+ *   WebAssembly for the ticket scanner and Vercel's analytics script in dev.
+ * - connections: this site (including Sentry via /monitoring), Supabase (staff
+ *   sign-in, proof uploads) and Vercel analytics.
+ * - forms: this site and PayFast (the payment redirect).
+ * - frame-ancestors 'none': no other site may embed these pages (clickjacking).
+ */
+function contentSecurityPolicy() {
+  const supabase = supabaseOrigin();
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://va.vercel-scripts.com${isProduction ? '' : " 'unsafe-eval'"}`,
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data: blob: ${supabase}`.trim(),
+    "font-src 'self' data:",
+    `connect-src 'self' ${supabase} https://va.vercel-scripts.com https://vitals.vercel-insights.com`.replace(/\s+/g, ' '),
+    "media-src 'self' blob: data:",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self' https://*.payfast.co.za https://*.payfast.io",
+    "frame-ancestors 'none'",
+    ...(isProduction ? ['upgrade-insecure-requests'] : []),
+  ].join('; ');
+}
+
+const CSP = contentSecurityPolicy();
+
 export function proxy(request: NextRequest) {
   const forwardedProtocol = request.headers.get('x-forwarded-proto')?.split(',')[0].trim();
   const protocol = forwardedProtocol || request.nextUrl.protocol.replace(':', '');
   const isLocal = request.nextUrl.hostname === 'localhost' || request.nextUrl.hostname === '127.0.0.1';
-  if (process.env.NODE_ENV === 'production' && protocol !== 'https' && !isLocal) {
+  if (isProduction && protocol !== 'https' && !isLocal) {
     const httpsUrl = request.nextUrl.clone();
     httpsUrl.protocol = 'https:';
     return NextResponse.redirect(httpsUrl, 308);
@@ -14,9 +52,11 @@ export function proxy(request: NextRequest) {
   const response = NextResponse.next();
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  response.headers.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
-  response.headers.set('Content-Security-Policy', 'upgrade-insecure-requests');
-  if (process.env.NODE_ENV === 'production') response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  response.headers.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=()');
+  response.headers.set('Content-Security-Policy', CSP);
+  // Older browsers that ignore frame-ancestors.
+  response.headers.set('X-Frame-Options', 'DENY');
+  if (isProduction) response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
   return response;
 }
 

@@ -2,38 +2,51 @@
   "name": "graceland-booking-site",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "predev": "node scripts/copy-zxing-wasm.mjs",
     "dev": "next dev",
     "prebuild": "node scripts/copy-zxing-wasm.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify:db": "node --env-file=.env.local scripts/verify-db-security.mjs"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.4",
-    "@supabase/supabase-js": "^2.112.3",
+    "@sentry/nextjs": "^11.0.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "barcode-detector": "^3.2.2",
     "exceljs": "^4.4.0",
-    "html5-qrcode": "^2.3.8",
-    "next": "^16.3.5",
-    "nodemailer": "^10.0.10",
+    "next": "^16.3.6",
+    "nodemailer": "^10.0.11",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "sharp": "^0.35.4"
+    "server-only": "^0.0.1",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/nodemailer": "^8.0.1",
+    "@electric-sql/pglite": "^0.3.16",
+    "@types/node": "^22.20.4",
+    "@types/nodemailer": "^8.0.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "^16.3.5",
-    "typescript": "^5"
+    "eslint-config-next": "^16.3.6",
+    "typescript": "^5",
+    "vitest": "^5.0.2"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

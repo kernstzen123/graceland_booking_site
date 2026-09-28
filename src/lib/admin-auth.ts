@@ -1,3 +1,4 @@
+import 'server-only';
 import { supabase } from '@/lib/supabase';
 
 export type AdminRole = 'ADMIN' | 'MANAGER' | 'SCANNER';

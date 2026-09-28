@@ -176,6 +176,22 @@ export async function clearCachedSession(): Promise<void> {
   await setMeta('cached_session', null);
 }
 
+/**
+ * Remove the offline guest list (names and ticket codes) from this device, e.g.
+ * on sign-out, so the next person using a shared phone cannot read it.
+ * Check-ins that have not synced yet are kept (they hold no personal details)
+ * and are sent after the next sign-in.
+ */
+export async function clearOfflineTickets(): Promise<void> {
+  const db = await initDB();
+  const t = tx(db, ['tickets', 'meta'], 'readwrite');
+  t.objectStore('tickets').clear();
+  t.objectStore('meta').delete('last_sync');
+  t.objectStore('meta').delete('ticket_count');
+  t.objectStore('meta').delete('cached_session');
+  await txDone(t);
+}
+
 // ── Sync tickets from server ───────────────────────────────────────────────
 
 export async function syncTicketsFromServer(authToken: string, date?: string): Promise<{ count: number; synced_at: string }> {
@@ -421,10 +437,11 @@ export async function pushSyncQueue(authToken: string): Promise<{ pushed: number
 
   for (const item of pending) {
     const serverResult = results.find(r => r.ticket_uid === item.ticket_uid);
-    if (serverResult && (serverResult.status === 'ok' || serverResult.status === 'conflict')) {
-      // Successfully synced (conflict means server accepted but flagged it)
+    if (serverResult && (serverResult.status === 'ok' || serverResult.status === 'conflict' || serverResult.status === 'rejected')) {
+      // Done: conflict = a duplicate the server recorded; rejected = the ticket
+      // was not valid (staff get a check-in alert). Retrying would not change either.
       item.synced = 1;
-      item.last_error = serverResult.status === 'conflict' ? 'Duplicate detected by server' : null;
+      item.last_error = serverResult.status === 'conflict' ? 'Duplicate detected by server' : serverResult.status === 'rejected' ? 'Ticket was not valid (see check-in alerts)' : null;
       pushed++;
     } else {
       item.retries += 1;

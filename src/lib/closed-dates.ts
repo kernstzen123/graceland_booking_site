@@ -1,3 +1,4 @@
+import 'server-only';
 import { supabase } from '@/lib/supabase';
 import { getOpeningStatus, validateVisitDate, type OpeningStatus } from '@/lib/opening-rules';
 

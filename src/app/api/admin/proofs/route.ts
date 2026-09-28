@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
-import { generateTicketsAndSendEmail } from '@/lib/ticketing';
+import { emailTicketsOnce } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
 
@@ -115,7 +115,7 @@ export async function POST(request: Request) {
 
     let emailSent = true;
     try {
-      await generateTicketsAndSendEmail(booking.id, customer?.email || '', [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || 'Customer');
+      await emailTicketsOnce(booking.id, customer?.email || '', [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || 'Customer');
     } catch (emailError) {
       // Keep booking PAID, record the failure, but don't fail the approval
       emailSent = false;

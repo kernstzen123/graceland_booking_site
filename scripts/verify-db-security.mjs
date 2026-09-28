@@ -42,6 +42,10 @@ const FUNCTIONS = [
   ['set_booking_payment_status', { p_booking_id: NIL, p_status: 'PAID' }],
   ['hold_booking_for_payment', { p_booking_id: NIL, p_hold_minutes: 15, p_max_hold_hours: 48 }],
   ['archive_booking', { p_booking_id: NIL, p_actor: NIL, p_reason: 'security check' }],
+  ['create_booking', { p_visit_date: '2000-01-01', p_people_count: 0, p_customer: {}, p_reference: 'SECURITY-CHECK', p_total_amount: 0, p_party_slot: null, p_idempotency_key: null, p_voucher_code: null, p_items: [] }],
+  ['claim_ticket_email', { p_booking_id: NIL }],
+  ['finish_ticket_email', { p_booking_id: NIL, p_sent: false }],
+  ['generate_voucher_code', {}],
   ['admin_search_bookings', { p_query: 'no-such-booking-security-check', p_limit: 1 }],
   ['admin_day_overview', { p_date: '2000-01-01' }],
 ];

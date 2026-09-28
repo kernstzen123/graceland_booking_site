@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
-import { johannesburgToday } from '@/lib/opening-rules';
+import { johannesburgToday, startOfJohannesburgDay } from '@/lib/opening-rules';
 
 /** GET — counts of work waiting, shown as badges in the staff portal menu. */
 export async function GET(request: Request) {
@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     const today = johannesburgToday();
     const [pendingProofs, conflicts, failedEmails, needsAttention] = await Promise.all([
       count(supabase.from('payment_proofs').select('id', { count: 'exact', head: true }).eq('status', 'PENDING')),
-      count(supabase.from('checkin_conflicts').select('id', { count: 'exact', head: true }).eq('resolved', false).gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59.999Z`)),
+      count(supabase.from('checkin_conflicts').select('id', { count: 'exact', head: true }).eq('resolved', false).gte('created_at', startOfJohannesburgDay(today)).lt('created_at', startOfJohannesburgDay(today, 1))),
       count(supabase.from('notification_failures').select('id', { count: 'exact', head: true }).is('resolved_at', null)),
       // Payments that arrived for bookings that could not be confirmed automatically.
       count(supabase.from('bookings').select('id', { count: 'exact', head: true }).not('attention_reason', 'is', null)),
