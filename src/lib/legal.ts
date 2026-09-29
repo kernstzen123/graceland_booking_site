@@ -5,7 +5,7 @@
  */
 
 export const TERMS_VERSION = '2026-09-09';
-export const PRIVACY_VERSION = '2026-09-28';
+export const PRIVACY_VERSION = '2026-09-29';
 
 /** "2026-09-28" → "28 September 2026". */
 export function formatLegalDate(version: string) {

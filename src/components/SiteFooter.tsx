@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { CookieSettingsButton } from '@/components/GoogleAnalytics';
 import { BUSINESS_NAME, DEFAULT_SUPPORT_EMAIL, DEFAULT_SUPPORT_PHONE } from '@/lib/business-details';
 import { ADDRESS, SUPPORT_PHONE_INTERNATIONAL } from '@/lib/site';
 
@@ -18,6 +19,7 @@ export function SiteFooter() {
         <Link href="/terms-and-conditions">Terms and Conditions</Link>
         <Link href="/privacy-policy">Privacy Policy</Link>
         <Link href="/upload-proof">Upload proof of payment</Link>
+        <CookieSettingsButton />
       </nav>
       <p style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>© {new Date().getFullYear()} {BUSINESS_NAME}</p>
     </footer>

@@ -8,6 +8,9 @@ import { BUSINESS_NAME, DEFAULT_SUPPORT_EMAIL, DEFAULT_SUPPORT_PHONE } from '@/l
 /** The public web address, e.g. https://www.gracelandvenuespaarl.co.za (no trailing slash). */
 export const SITE_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.gracelandvenuespaarl.co.za').replace(/\/$/, '');
 
+/** Google Analytics 4 measurement ID (public; only used after the visitor accepts cookies). */
+export const GA_MEASUREMENT_ID = 'G-C5TXDTDMCN';
+
 export const SITE_NAME = BUSINESS_NAME;
 export const SITE_TITLE = 'Graceland Venues Paarl | Waterpark, Huts & Birthday Parties';
 export const SITE_DESCRIPTION = 'Book tickets online for Graceland Venues, a family waterpark and event venue in Paarl, Western Cape. Water slides, pools, covered huts, shaded tables and kids’ birthday parties.';

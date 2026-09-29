@@ -11,9 +11,10 @@ function supabaseOrigin() {
  * Content-Security-Policy: what the pages may load and where they may send data.
  * - scripts: this site only ('unsafe-inline' for Next.js's inline bootstrap
  *   scripts; nonces would force every page to render dynamically), plus
- *   WebAssembly for the ticket scanner and Vercel's analytics script in dev.
+ *   WebAssembly for the ticket scanner, Vercel's analytics script in dev and
+ *   Google Analytics (loaded only after the visitor accepts cookies).
  * - connections: this site (including Sentry via /monitoring), Supabase (staff
- *   sign-in, proof uploads) and Vercel analytics.
+ *   sign-in, proof uploads), Vercel analytics and Google Analytics.
  * - forms: this site and PayFast (the payment redirect).
  * - frame-ancestors 'none': no other site may embed these pages (clickjacking).
  */
@@ -21,11 +22,11 @@ function contentSecurityPolicy() {
   const supabase = supabaseOrigin();
   return [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://va.vercel-scripts.com${isProduction ? '' : " 'unsafe-eval'"}`,
+    `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://va.vercel-scripts.com https://www.googletagmanager.com${isProduction ? '' : " 'unsafe-eval'"}`,
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: ${supabase}`.trim(),
+    `img-src 'self' data: blob: ${supabase} https://*.google-analytics.com https://*.googletagmanager.com`.replace(/\s+/g, ' '),
     "font-src 'self' data:",
-    `connect-src 'self' ${supabase} https://va.vercel-scripts.com https://vitals.vercel-insights.com`.replace(/\s+/g, ' '),
+    `connect-src 'self' ${supabase} https://va.vercel-scripts.com https://vitals.vercel-insights.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com`.replace(/\s+/g, ' '),
     "media-src 'self' blob: data:",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
