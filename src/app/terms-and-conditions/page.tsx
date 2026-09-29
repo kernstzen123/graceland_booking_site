@@ -54,7 +54,7 @@ export default function TermsAndConditions() {
             <h2>Reschedule policy</h2>
             <ul>
               <li>Ticket dates may be rescheduled provided the client changes no later than 24 hours prior to the original booking date.</li>
-              <li>Requests to change the booking made less than 12 hours before the scheduled date will not be accepted.</li>
+              <li>Requests to change the booking made less than 24 hours before the scheduled date will not be accepted.</li>
               <li>Tickets that have been rescheduled are only valid until the end of the applicable summer season. For example, tickets purchased for 2026/2027 summer season are valid from 1 September 2026 until 30 April 2027.</li>
               <li>Unused tickets will expire at the end of the applicable summer season and may not be carried over to the following season.</li>
             </ul>
