@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { MailIcon } from '@/components/icons';
-import { DEFAULT_SUPPORT_EMAIL } from '@/lib/business-details';
+import { DEFAULT_SUPPORT_EMAIL, REGISTRATION_NUMBER } from '@/lib/business-details';
 import { formatLegalDate, PRIVACY_VERSION } from '@/lib/legal';
 
 export const metadata: Metadata = {
@@ -57,7 +57,7 @@ export default function PrivacyPolicy() {
             <table className="legal-table">
               <tbody>
                 <tr><td className="legal-table-label">Legal entity</td><td>Ace Contractors &amp; Eng CC, trading as Graceland Venues</td></tr>
-                <tr><td className="legal-table-label">CC registration number</td><td>Registration pending</td></tr>
+                <tr><td className="legal-table-label">CC registration number</td><td>{REGISTRATION_NUMBER}</td></tr>
                 <tr><td className="legal-table-label">Physical address</td><td>Lustigan Road, Southern Paarl, 7620, Western Cape, South Africa</td></tr>
                 <tr><td className="legal-table-label">Contact email</td><td><a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a></td></tr>
               </tbody>
@@ -226,7 +226,7 @@ export default function PrivacyPolicy() {
             <p>If you have any questions, concerns, or requests regarding this Privacy Policy or how we handle your personal information, please contact us:</p>
             <div className="legal-contact-card">
               <strong>Graceland Venues</strong>
-              <span>Ace Contractors &amp; Eng CC t/a Graceland Venues</span>
+              <span>Ace Contractors &amp; Eng CC t/a Graceland Venues (Reg. no. {REGISTRATION_NUMBER})</span>
               <span>Lustigan Road, Southern Paarl, 7620</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MailIcon /> <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a></span>
             </div>

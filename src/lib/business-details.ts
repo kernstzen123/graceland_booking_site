@@ -18,6 +18,9 @@ export const BANK_DETAILS = {
 } as const;
 
 export const BUSINESS_NAME = 'Graceland Venues';
+/** Legal entity and its CIPC registration number (shown on the website, as ECTA requires). */
+export const LEGAL_ENTITY = 'Ace Contractors & Eng CC';
+export const REGISTRATION_NUMBER = '1996/026068/23';
 export const EMAIL_DOMAIN = 'gracelandvenuespaarl.co.za';
 export const DEFAULT_SUPPORT_EMAIL = `support@${EMAIL_DOMAIN}`;
 export const DEFAULT_SUPPORT_PHONE = '072 264 4009';

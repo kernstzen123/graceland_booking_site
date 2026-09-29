@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { MailIcon, PhoneIcon } from '@/components/icons';
-import { DEFAULT_SUPPORT_EMAIL, DEFAULT_SUPPORT_PHONE } from '@/lib/business-details';
+import { DEFAULT_SUPPORT_EMAIL, DEFAULT_SUPPORT_PHONE, LEGAL_ENTITY, REGISTRATION_NUMBER } from '@/lib/business-details';
 import { formatLegalDate, TERMS_VERSION } from '@/lib/legal';
 
 export const metadata: Metadata = {
@@ -47,7 +47,7 @@ export default function TermsAndConditions() {
 
           <section id="introduction" className="legal-section">
             <h2>Introduction</h2>
-            <p>Welcome to Graceland Venues, located at Lustigan Road, Southern Paarl, 7620. These terms and conditions govern your booking and use of our venue and facilities.</p>
+            <p>Welcome to Graceland Venues, located at Lustigan Road, Southern Paarl, 7620. Graceland Venues is a trading name of {LEGAL_ENTITY} (registration number {REGISTRATION_NUMBER}). These terms and conditions govern your booking and use of our venue and facilities.</p>
           </section>
 
           <section id="reschedule" className="legal-section">
@@ -149,6 +149,9 @@ export default function TermsAndConditions() {
             <h2>Contact information</h2>
             <p>For any inquiries, cancellations, or assistance, please contact us at:</p>
             <div className="legal-contact-card">
+              <strong>Graceland Venues</strong>
+              <span>{LEGAL_ENTITY} t/a Graceland Venues (Reg. no. {REGISTRATION_NUMBER})</span>
+              <span>Lustigan Road, Southern Paarl, 7620</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MailIcon /> <a href={`mailto:${DEFAULT_SUPPORT_EMAIL}`}>{DEFAULT_SUPPORT_EMAIL}</a></span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><PhoneIcon /> {DEFAULT_SUPPORT_PHONE}</span>
             </div>
