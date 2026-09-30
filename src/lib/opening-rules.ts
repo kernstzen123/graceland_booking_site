@@ -22,6 +22,29 @@ export function johannesburgToday(): string {
 }
 
 /**
+ * The last day customers can book for: the end of the current season
+ * (1 September – 30 April). During the May–August winter break this is the
+ * end of the coming season. Bookings further ahead are not open yet.
+ */
+export function seasonEndDate(today: string = johannesburgToday()): string {
+  const [year, month] = today.split('-').map(Number);
+  return `${month >= 5 ? year + 1 : year}-04-30`;
+}
+
+/** Customer-facing explanation for a date after the current season. */
+export function seasonEndMessage(today: string = johannesburgToday()): string {
+  return `Bookings are open until 30 April ${seasonEndDate(today).slice(0, 4)}. Bookings for the next season are not open yet.`;
+}
+
+/**
+ * The last day a voucher can be used: the end of the season it was issued in
+ * (the database enforces the same rule; see voucher_expiry_date).
+ */
+export function voucherExpiryDate(issuedAt: string | Date): string {
+  return seasonEndDate(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date(issuedAt)));
+}
+
+/**
  * Midnight at the start of a South African day (plus `addDays`), as an ISO
  * timestamp for filtering timestamptz columns. South Africa has no daylight
  * saving, so it is always UTC+2.
@@ -254,7 +277,8 @@ export function getOpeningStatus(dateStr: string): OpeningStatus {
  * Checks:
  *   1. Valid YYYY-MM-DD format
  *   2. Not a past date (compared using Africa/Johannesburg timezone)
- *   3. Not a closed date per opening rules
+ *   3. Not after the end of the current season
+ *   4. Not a closed date per opening rules
  */
 export function validateVisitDate(dateStr: string): void {
   // Format check
@@ -272,6 +296,11 @@ export function validateVisitDate(dateStr: string): void {
   const today = johannesburgToday();
   if (dateStr < today) {
     throw new Error('The selected visit date has already passed. Please choose a future date.');
+  }
+
+  // Only the current season can be booked
+  if (dateStr > seasonEndDate(today)) {
+    throw new Error(seasonEndMessage(today));
   }
 
   // Opening status check

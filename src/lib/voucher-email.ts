@@ -2,6 +2,8 @@ import 'server-only';
 import { escapeHtml, renderEmailLayout, calloutBox, statusBadge } from './email-layout';
 import { getBusinessSettings } from './business-settings';
 import { sendEmail } from './mailer';
+import { formatLegalDate } from './legal';
+import { voucherExpiryDate } from './opening-rules';
 
 // Kept here so existing imports keep working; the implementation lives in mailer.ts.
 export { recordNotificationFailure } from './mailer';
@@ -24,6 +26,8 @@ export type VoucherEmail = {
 export async function sendVoucherEmail(credit: VoucherEmail) {
   if (!credit.customerEmail) throw new Error('Customer email address is missing');
   const bookingUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  // Vouchers can only be used in the season they are issued in (see voucherExpiryDate).
+  const expiry = formatLegalDate(voucherExpiryDate(new Date()));
   const { supportEmail, supportPhone } = await getBusinessSettings();
   const subject = 'Important update about your Graceland Venues booking';
   const fee = Number(credit.deductionPercentage || 0);
@@ -35,7 +39,7 @@ export async function sendVoucherEmail(credit: VoucherEmail) {
     ? `We do not process cash refunds. Instead, we have issued a rebooking voucher for <strong>R ${credit.originalAmount.toFixed(2)}</strong>: the R ${paid.toFixed(2)} you paid, less the ${escapeHtml(String(fee))}% cancellation fee.`
     : `We do not process cash refunds. Instead, we have issued a rebooking voucher for the full amount paid: <strong>R ${credit.originalAmount.toFixed(2)}</strong>.`;
   const html = renderEmailLayout({
-    preheader: `Booking ${credit.bookingReference} was cancelled — a rebooking voucher is waiting for you`,
+    preheader: `Booking ${credit.bookingReference} was cancelled — your rebooking voucher is valid until ${expiry}`,
     supportEmail,
     supportPhone,
     bodyHtml: `
@@ -46,12 +50,13 @@ export async function sendVoucherEmail(credit: VoucherEmail) {
       <p>${cancellationText}</p>
       <p>${amountText}</p>
       ${calloutBox({ label: 'Your voucher code', value: escapeHtml(credit.creditCode), tone: 'blue' })}
-      <p style="font-size:13px;color:#475569;background:#f8fafc;border-radius:8px;padding:14px 16px;margin:0 0 18px;">This voucher never expires and may be used across multiple future bookings until the balance is depleted. It is valid for ticket purchases only and cannot be used at the kiosk for food, drinks, or merchandise.</p>
+      <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:14px 16px;margin:0 0 18px;color:#78350f;font-size:14px;"><strong>Valid for the current season only.</strong> This voucher can only be used for bookings in the current summer season and expires on <strong>${expiry}</strong>. It cannot be used for visits after that date, and any balance left after ${expiry} is forfeited.</div>
+      <p style="font-size:13px;color:#475569;background:#f8fafc;border-radius:8px;padding:14px 16px;margin:0 0 18px;">Until then it may be used across multiple bookings until the balance is depleted. It is valid for ticket purchases only and cannot be used at the kiosk for food, drinks, or merchandise.</p>
       <p style="margin:0 0 8px;font-weight:700;color:#0f172a;font-size:14px;">How to use it</p>
       <ol style="margin:0 0 18px;padding-left:18px;color:#334155;">
-        <li style="margin-bottom:6px;">Visit <a href="${escapeHtml(bookingUrl)}" style="color:#0EA5E9;">${escapeHtml(bookingUrl)}</a> and choose a new date.</li>
+        <li style="margin-bottom:6px;">Visit <a href="${escapeHtml(bookingUrl)}" style="color:#0EA5E9;">${escapeHtml(bookingUrl)}</a> and choose a new date on or before ${expiry}.</li>
         <li style="margin-bottom:6px;">Enter your voucher code at checkout.</li>
-        <li>If your new booking costs more than the remaining voucher balance, pay the difference by EFT as usual.</li>
+        <li>If your new booking costs more than the remaining voucher balance, pay the difference by card or EFT as usual.</li>
       </ol>
       <p>We apologise for the inconvenience.</p>
     `,

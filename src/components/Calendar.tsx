@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { seasonEndDate, seasonEndMessage } from '@/lib/opening-rules';
 
 interface CalendarProps {
   selectedDate: string | null;
@@ -66,6 +67,8 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
   const [closedMessage, setClosedMessage] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const today = johannesburgTodayClient();
+  // Only the current season (up to 30 April) can be booked.
+  const seasonEnd = seasonEndDate(today);
 
   const initialView = (() => {
     const base = selectedDate && selectedDate >= today ? selectedDate : today;
@@ -139,6 +142,11 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
       return;
     }
 
+    if (dateStr > seasonEnd) {
+      setClosedMessage(seasonEndMessage(today));
+      return;
+    }
+
     const info = dateMap.get(dateStr);
     if (info && !info.open) {
       setClosedMessage('Graceland is closed on this date. Please choose another date.');
@@ -160,6 +168,7 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
 
   const [todayYear, todayMonthNum] = today.split('-').map(Number);
   const isViewingCurrentMonth = viewYear === todayYear && viewMonth === todayMonthNum;
+  const isViewingLastMonth = toDateStr(viewYear, viewMonth, 1) >= `${seasonEnd.slice(0, 7)}-01`;
 
   const selectedInfo = selectedDate ? dateMap.get(selectedDate) : null;
 
@@ -249,13 +258,16 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
               <button
                 type="button"
                 onClick={() => goToMonth(1)}
+                disabled={isViewingLastMonth}
                 aria-label="Next month"
+                title={isViewingLastMonth ? seasonEndMessage(today) : undefined}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   width: '32px', height: '32px', borderRadius: '999px',
-                  color: 'var(--text-main)', cursor: 'pointer', background: 'transparent',
+                  color: isViewingLastMonth ? 'var(--border-color)' : 'var(--text-main)',
+                  cursor: isViewingLastMonth ? 'not-allowed' : 'pointer', background: 'transparent',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-color)'; }}
+                onMouseEnter={(e) => { if (!isViewingLastMonth) e.currentTarget.style.background = 'var(--bg-color)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
               >
                 <ChevronIcon direction="right" />
@@ -277,7 +289,7 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
                 const dateStr = toDateStr(viewYear, viewMonth, day);
                 const isPast = dateStr < today;
                 const info = dateMap.get(dateStr);
-                const isClosed = info ? !info.open : false;
+                const isClosed = dateStr > seasonEnd || (info ? !info.open : false);
                 const isDisabled = isPast || isClosed;
                 const isSelected = dateStr === selectedDate;
                 const isToday = dateStr === today;
@@ -346,6 +358,7 @@ export function Calendar({ selectedDate, onSelectDate, onNext }: CalendarProps) 
               </span>
               {loading && <span>Loading availability…</span>}
             </div>
+            {isViewingLastMonth && <p style={{ marginTop: '0.6rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{seasonEndMessage(today)}</p>}
           </div>
         )}
       </div>

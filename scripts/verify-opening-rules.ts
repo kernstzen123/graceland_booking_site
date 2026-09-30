@@ -224,7 +224,9 @@ assertValidateThrows('Past date', '2020-01-15', 'already passed');
 
 // Closed date
 assertValidateThrows('Closed date (Christmas)', '2026-12-25', 'closed');
-assertValidateThrows('Closed date (May)', '2027-05-15', 'closed');
+// After 30 April the next season is not open for bookings yet.
+assertValidateThrows('Next season (May)', '2027-05-15', 'Bookings are open until');
+assertValidateThrows('Next season (a year ahead)', '2027-10-15', 'Bookings are open until');
 assertValidateThrows('Closed date (Monday in term)', '2026-10-12', 'closed');
 
 // ── johannesburgToday ──────────────────────────────────────────────────────

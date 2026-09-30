@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { checkRateLimit, isRateLimited, VOUCHER_FAILURE_LIMIT, VOUCHER_FAILURE_SCOPE, VOUCHER_FAILURE_WINDOW } from '@/lib/request-security';
 import { isVoucherCode, normalizeVoucherCode } from '@/lib/voucher-code';
+import { johannesburgToday, voucherExpiryDate } from '@/lib/opening-rules';
+import { formatLegalDate } from '@/lib/legal';
 
 const INVALID = 'That voucher code is invalid or has no remaining balance.';
 const LOCKED = 'Too many incorrect voucher codes. Please try again in an hour or contact us.';
@@ -19,7 +21,7 @@ export async function POST(request: Request) {
       await recordFailure();
       return NextResponse.json({ success: false, error: 'Enter a valid voucher code.' }, { status: 400 });
     }
-    let { data: credit, error } = await supabase.from('booking_credits').select('id,credit_code,remaining_balance,status').eq('credit_code', code).maybeSingle();
+    let { data: credit, error } = await supabase.from('booking_credits').select('id,credit_code,remaining_balance,status,created_at').eq('credit_code', code).maybeSingle();
     if (error) throw error;
     // Give back any balance still held by a booking whose reservation lapsed
     // (e.g. the customer abandoned an earlier checkout), then read it again.
@@ -27,7 +29,7 @@ export async function POST(request: Request) {
       const { data: released, error: releaseError } = await supabase.rpc('release_expired_booking_vouchers', { p_credit_id: credit.id });
       if (releaseError) console.error('Could not release lapsed voucher holds', releaseError);
       else if (Number(released) > 0) {
-        ({ data: credit, error } = await supabase.from('booking_credits').select('id,credit_code,remaining_balance,status').eq('id', credit.id).maybeSingle());
+        ({ data: credit, error } = await supabase.from('booking_credits').select('id,credit_code,remaining_balance,status,created_at').eq('id', credit.id).maybeSingle());
         if (error) throw error;
       }
     }
@@ -35,6 +37,9 @@ export async function POST(request: Request) {
       if (!credit) await recordFailure(); // a used-up but real code is not a guess
       return NextResponse.json({ success: false, error: INVALID }, { status: 400 });
     }
+    // A voucher can only be used in the season it was issued in.
+    const expiry = voucherExpiryDate(credit.created_at);
+    if (johannesburgToday() > expiry) return NextResponse.json({ success: false, error: `This voucher expired on ${formatLegalDate(expiry)}. Vouchers can only be used in the season they were issued in.` }, { status: 400 });
     const amountUsed = Math.min(Number(credit.remaining_balance), Number(total));
     return NextResponse.json({ success: true, code: credit.credit_code, remainingBalance: Number(credit.remaining_balance), amountUsed, amountDue: Math.max(Number(total) - amountUsed, 0) });
   } catch (error) {

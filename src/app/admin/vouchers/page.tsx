@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/admin/AdminShell';
 import { useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
+import { johannesburgToday, voucherExpiryDate } from '@/lib/opening-rules';
 
 type Redemption = { id: string; booking_id: string; amount_used: number; created_at: string; released?: boolean; released_at?: string | null; bookings?: { reference: string; visit_date: string } | Array<{ reference: string; visit_date: string }> };
 type Voucher = { id: string; credit_code: string; original_amount: number; remaining_balance: number; status: string; created_at: string; issued_by?: string; bookings?: { reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> } | Array<{ reference: string; customers?: { first_name: string; last_name: string; email: string } | Array<{ first_name: string; last_name: string; email: string }> }>; credit_redemptions?: Redemption[] };
@@ -34,6 +35,7 @@ export default function VouchersAdmin() {
     {message && <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>{message}</p>}
     <div style={{ display: 'grid', gap: '0.75rem' }}>{vouchers.map(voucher => {
       const booking = first(voucher.bookings); const customer = booking && first(booking.customers); const redemptions = voucher.credit_redemptions || []; const used = redemptions.filter(item => !item.released); const lastUsed = used.length ? used.reduce((latest, item) => item.created_at > latest ? item.created_at : latest, used[0].created_at) : null;
+      const expiry = voucherExpiryDate(voucher.created_at); const expired = johannesburgToday() > expiry;
       return <div className="card" key={voucher.id}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div>
@@ -47,6 +49,7 @@ export default function VouchersAdmin() {
           <div><p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Original</p><strong>R {Number(voucher.original_amount).toFixed(2)}</strong></div>
           <div><p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Remaining</p><strong>R {Number(voucher.remaining_balance).toFixed(2)}</strong></div>
           <div><p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Issued</p><strong>{new Date(voucher.created_at).toLocaleDateString()}</strong></div>
+          <div><p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{expired ? 'Expired' : 'Expires'}</p><strong style={{ color: expired ? 'var(--danger)' : undefined }}>{new Date(`${expiry}T00:00:00`).toLocaleDateString()}</strong></div>
           <div><p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Last used</p><strong>{lastUsed ? new Date(lastUsed).toLocaleDateString() : 'Never'}</strong></div>
         </div>
         {voucher.issued_by && <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 6 }}>Issued by: {voucher.issued_by}</p>}

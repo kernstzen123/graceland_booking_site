@@ -4,8 +4,8 @@
  * change the version whenever the wording of a document changes.
  */
 
-export const TERMS_VERSION = '2026-09-29';
-export const PRIVACY_VERSION = '2026-09-29';
+export const TERMS_VERSION = '2026-09-30';
+export const PRIVACY_VERSION = '2026-09-30';
 
 /** "2026-09-28" → "28 September 2026". */
 export function formatLegalDate(version: string) {

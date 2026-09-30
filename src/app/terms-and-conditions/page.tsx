@@ -57,6 +57,8 @@ export default function TermsAndConditions() {
               <li>Requests to change the booking made less than 24 hours before the scheduled date will not be accepted.</li>
               <li>Tickets that have been rescheduled are only valid until the end of the applicable summer season. For example, tickets purchased for 2026/2027 summer season are valid from 1 September 2026 until 30 April 2027.</li>
               <li>Unused tickets will expire at the end of the applicable summer season and may not be carried over to the following season.</li>
+              <li>Rebooking vouchers may only be used for visits within the summer season in which they were issued. A voucher expires on 30 April at the end of that season and any unused balance is forfeited.</li>
+              <li>Bookings can only be made for dates within the current summer season.</li>
             </ul>
           </section>
 

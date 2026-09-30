@@ -27,3 +27,18 @@ describe('business rules', () => {
     expect(await runScript('../scripts/verify-opening-rules')).toBe(0);
   });
 });
+
+describe('booking season', () => {
+  it('ends on 30 April of the running season', async () => {
+    const { seasonEndDate, voucherExpiryDate } = await import('@/lib/opening-rules');
+    expect(seasonEndDate('2026-09-30')).toBe('2027-04-30');
+    expect(seasonEndDate('2027-01-15')).toBe('2027-04-30');
+    expect(seasonEndDate('2027-04-30')).toBe('2027-04-30');
+    // Winter break: the coming season.
+    expect(seasonEndDate('2027-06-10')).toBe('2028-04-30');
+    expect(voucherExpiryDate('2026-10-03T08:00:00Z')).toBe('2027-04-30');
+    // 30 April 23:30 in South Africa is still this season; an hour later is the next.
+    expect(voucherExpiryDate('2027-04-30T21:30:00Z')).toBe('2027-04-30');
+    expect(voucherExpiryDate('2027-04-30T22:30:00Z')).toBe('2028-04-30');
+  });
+});

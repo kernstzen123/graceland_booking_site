@@ -23,6 +23,8 @@ const SAFE_MESSAGES = [
   'Graceland is closed on the selected date. Please choose another date.',
   'The selected visit date has already passed. Please choose a future date.',
   'Invalid voucher code', 'That voucher code is invalid or has no remaining balance',
+  'This voucher has expired.', 'This voucher can only be used for visits up to',
+  'Bookings are open until',
   'Each attendee must have a first name and surname',
   'Covered huts require a minimum of 6 people.', 'Booking 2 huts requires a minimum of 12 people.',
   'This group can select a maximum of',

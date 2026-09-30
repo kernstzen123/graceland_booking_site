@@ -181,6 +181,11 @@ it('database migrations and functions behave correctly', async () => {
   await lapse(w);
   const x = await reserve('BK-X', 2, 600, 'GRC-TEST0001');
   check('reserve_capacity releases a lapsed hold on the same voucher first', Boolean(x) && (await redemption(w)).released === true && Number((await redemption(x)).amount_used) === 500 && Number((await credit()).remaining_balance) === 0, `balance ${(await credit()).remaining_balance}`);
+  // Vouchers can only be used in the season they were issued in
+  await db.query(`insert into public.booking_credits(credit_code, original_booking_id, original_amount, remaining_balance, created_at) values ('GRC-OLDSEASON', $1, 300, 300, now() - interval '2 years')`, [a]);
+  await expectError('a voucher from an earlier season is refused', `select public.reserve_capacity('${future}'::date, 1, ${customer}, 'BK-OLDV', 200, null, null, 'GRC-OLDSEASON')`, /voucher has expired/);
+  check('an expired voucher keeps its balance', Number((await one(`select remaining_balance from public.booking_credits where credit_code = 'GRC-OLDSEASON'`)).remaining_balance) === 300);
+  check('voucher expiry is the 30 April that ends its season', (await one(`select public.voucher_expiry_date('2026-10-03 10:00+02'::timestamptz)::text as d, public.voucher_expiry_date('2027-06-10 10:00+02'::timestamptz)::text as e`)).d === '2027-04-30' && (await one(`select public.voucher_expiry_date('2027-06-10 10:00+02'::timestamptz)::text as e`)).e === '2028-04-30');
 
   // ── Hold extension rules ─────────────────────────────────────────────────
   const h = await reserve('BK-H', 2, 200);

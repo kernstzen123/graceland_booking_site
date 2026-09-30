@@ -36,7 +36,7 @@ export const PRICE_DEFINITIONS: PriceDefinition[] = [
   { key: 'day-water-toddler',        group: WATER,    label: 'Toddlers 1-2',                          defaultPrice: 110 },
   { key: 'day-water-child',          group: WATER,    label: 'Children 3-17',                         defaultPrice: 210 },
   { key: 'day-water-adult',          group: WATER,    label: 'Adult',                                 defaultPrice: 230 },
-  { key: 'day-water-pensioner',      group: WATER,    label: 'Pensioner',                             defaultPrice: 200 },
+  { key: 'day-water-pensioner',      group: WATER,    label: 'Pensioner',                             defaultPrice: 210 },
   { key: 'day-no-water-infant',      group: NO_WATER, label: 'Children under 1',                      defaultPrice: 0 },
   { key: 'day-no-water-toddler',     group: NO_WATER, label: 'Toddlers 1-2',                          defaultPrice: 0 },
   { key: 'day-no-water-child',       group: NO_WATER, label: 'Children 3-17',                         defaultPrice: 100 },
