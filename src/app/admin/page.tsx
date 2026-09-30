@@ -56,6 +56,15 @@ export default function AdminDashboard() {
     const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `graceland-bookings-${selectedDate}.csv`; link.click(); URL.revokeObjectURL(link.href);
   };
 
+  const downloadSummary = async () => {
+    const session = (await supabaseBrowser.auth.getSession()).data.session;
+    if (!session) return;
+    const response = await fetch(`/api/admin/daily-summary?date=${selectedDate}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+    if (!response.ok) { setError('Could not create the daily summary'); return; }
+    const blob = await response.blob();
+    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `graceland-daily-summary-${selectedDate}.xlsx`; link.click(); URL.revokeObjectURL(link.href);
+  };
+
   const isToday = selectedDate === johannesburgToday();
   const dateLabel = new Date(`${selectedDate}T00:00:00`).toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -70,6 +79,7 @@ export default function AdminDashboard() {
         <button type="button" aria-label="Next day" onClick={() => changeDate(1)}>→</button>
       </div>
       {!isToday && <button type="button" className="btn btn-secondary" onClick={() => setSelectedDate(johannesburgToday())}>Today</button>}
+      <button type="button" className="btn btn-primary" onClick={downloadSummary} style={{ gap: 6 }}><DownloadIcon size={15} /> Daily summary</button>
       <button type="button" className="btn btn-secondary" onClick={exportCsv} style={{ gap: 6 }}><DownloadIcon size={15} /> Export CSV</button>
     </>}
   />;
