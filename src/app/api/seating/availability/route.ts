@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { checkRateLimit } from '@/lib/request-security';
 import { validateBookableDate } from '@/lib/closed-dates';
-import { compareSpots } from '@/lib/seating';
+import { compareSpots, isWholeDay, spotHoldWindow, windowsOverlap } from '@/lib/seating';
 
 export async function GET(request: Request) {
   try {
@@ -21,62 +21,35 @@ export async function GET(request: Request) {
     ]);
     if (spotsError || reservedError) throw spotsError || reservedError;
 
-    // Group valid bookings by spot_id
-    const spotBookings = new Map<string, Array<{ party_slot: string | null }>>();
+    // The bookings still holding each spot (paid, awaiting review, or an unpaid hold that has not lapsed).
+    const holders = new Map<string, Array<{ partySlot: string | null }>>();
     (reserved || []).forEach(row => {
       const booking = Array.isArray(row.bookings) ? row.bookings[0] : row.bookings;
       const isValid = Boolean(booking && (['PAID', 'CONFIRMED', 'PAYMENT_PENDING'].includes(booking.status) || (booking.status === 'UNPAID' && booking.expires_at && new Date(booking.expires_at).getTime() > Date.now())));
-      if (isValid) {
-        if (!spotBookings.has(row.spot_id)) spotBookings.set(row.spot_id, []);
-        spotBookings.get(row.spot_id)!.push({ party_slot: booking.party_slot });
-      }
+      if (!isValid) return;
+      if (!holders.has(row.spot_id)) holders.set(row.spot_id, []);
+      holders.get(row.spot_id)!.push({ partySlot: booking.party_slot || null });
     });
 
+    // A spot is free when no booking holds it during the time this customer
+    // needs it: a party only for its slot (plus set-up and clean-up), everyone
+    // else, and every table, all day. See spotHoldWindow.
+    const requestedSlot = isParty ? partySlot : null;
     const spotsWithAvailability = [...(spots || [])].sort(compareSpots).map(spot => {
-      let available = true;
-      let unavailableReason = undefined;
-      const bookingsForSpot = spotBookings.get(spot.id) || [];
-
-      if (spot.type === 'hut') {
-        if (isParty) {
-          // Party booker
-          const dayVisitorBooking = bookingsForSpot.find(b => !b.party_slot);
-          const sameSlotBooking = bookingsForSpot.find(b => b.party_slot === partySlot);
-          
-          if (dayVisitorBooking) {
-            available = false;
-            unavailableReason = 'Booked by a day visitor for the entire day.';
-          } else if (sameSlotBooking) {
-            available = false;
-            unavailableReason = `Booked for a party during the ${partySlot} slot.`;
-          }
-        } else {
-          // Normal day visitor booking
-          if (bookingsForSpot.length > 0) {
-            available = false;
-            const partyBookings = bookingsForSpot.filter(b => b.party_slot);
-            if (partyBookings.length > 0) {
-              const endTimes = partyBookings.map(b => b.party_slot!.split('–')[1]).filter(Boolean).sort();
-              const latestTime = endTimes[endTimes.length - 1];
-              if (latestTime) {
-                unavailableReason = `Reserved for a party until ${latestTime}.`;
-              } else {
-                unavailableReason = 'Reserved.';
-              }
-            } else {
-              unavailableReason = 'Already booked.';
-            }
-          }
-        }
-      } else {
-        // Tables just have standard availability
-        if (bookingsForSpot.length > 0) {
-          available = false;
-          unavailableReason = 'Already booked.';
-        }
+      const mine = spotHoldWindow(spot.type, requestedSlot);
+      const held = holders.get(spot.id) || [];
+      const clashes = held.filter(other => windowsOverlap(mine, spotHoldWindow(spot.type, other.partySlot)));
+      if (clashes.length) {
+        const allDay = clashes.some(other => isWholeDay(spotHoldWindow(spot.type, other.partySlot)));
+        const partySlots = [...new Set(clashes.map(other => other.partySlot).filter((slot): slot is string => Boolean(slot)))].sort();
+        const unavailableReason = allDay ? 'Booked for the whole day.' : `Booked for a party (${partySlots.join(', ')}).`;
+        return { ...spot, available: false, unavailableReason };
       }
-
-      return { ...spot, available, unavailableReason };
+      // Recommend huts another party already uses in a different slot, so parties
+      // share a few huts and more huts stay free all day for day visitors.
+      const recommended = spot.type === 'hut' && Boolean(requestedSlot) && held.some(other => other.partySlot);
+      const note = requestedSlot && spot.type === 'hut' ? (recommended ? 'Free during your party (recommended)' : 'Free all day') : undefined;
+      return { ...spot, available: true, recommended, note };
     });
 
     return NextResponse.json({ success: true, spots: spotsWithAvailability });

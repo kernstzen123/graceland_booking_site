@@ -8,6 +8,8 @@ import { AlertIcon, CalendarIcon, ReceiptIcon, ScanIcon, TicketIcon } from '@/co
 import { DownloadIcon } from '@/components/icons';
 
 type Sales = { units: number; revenue: number };
+type HutBooking = { slot: string | null; client: string; reference: string; paid: boolean };
+type HutSchedule = { slots: string[]; huts: Array<{ number: string; bookings: HutBooking[] }> };
 type Overview = { date: string; today: { headcount: number; revenue: number; bookings: number; unscanned: number; scanned: number; capacity: number; breakdown: Record<string, Sales> }; comparison: { lastWeekHeadcount: number; percent: number | null }; pendingProofs: number };
 
 const johannesburgToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date());
@@ -24,6 +26,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [chartMode, setChartMode] = useState<'units' | 'revenue'>('units');
   const [conflictCount, setConflictCount] = useState(0);
+  const [hutSchedule, setHutSchedule] = useState<HutSchedule | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -33,15 +36,17 @@ export default function AdminDashboard() {
       const token = (await supabaseBrowser.auth.getSession()).data.session?.access_token;
       if (!token) throw new Error('Staff session has expired');
       const headers = { Authorization: `Bearer ${token}` };
-      const [overviewRes, conflictsRes] = await Promise.all([
+      const [overviewRes, conflictsRes, hutsRes] = await Promise.all([
         fetch(`/api/admin/overview?date=${selectedDate}`, { headers, cache: 'no-store' }),
         fetch(`/api/admin/conflicts?date=${selectedDate}`, { headers, cache: 'no-store' }).catch(() => null),
+        fetch(`/api/admin/hut-schedule?date=${selectedDate}`, { headers, cache: 'no-store' }).catch(() => null),
       ]);
       const body = await overviewRes.json();
       if (!overviewRes.ok) throw new Error(body.error);
       if (!active) return;
       setData(body);
       if (conflictsRes?.ok) setConflictCount((await conflictsRes.json()).count || 0);
+      setHutSchedule(hutsRes?.ok ? await hutsRes.json() : null);
     })().catch(err => { if (active) setError(err instanceof Error ? err.message : 'Could not load dashboard'); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [selectedDate]);
@@ -150,5 +155,36 @@ export default function AdminDashboard() {
         })}
       </div>}
     </section>
+    {hutSchedule && <HutScheduleCard schedule={hutSchedule} />}
   </main>;
+}
+
+/**
+ * Who has each hut on the day. A hut can host a party in every time slot, so
+ * this shows staff when to clear a hut for the next group.
+ */
+function HutScheduleCard({ schedule }: { schedule: HutSchedule }) {
+  const cell = (bookings: HutBooking[]) => bookings.length
+    ? bookings.map(booking => <div key={booking.reference}>{booking.client}{booking.paid ? '' : ' (awaiting payment)'}</div>)
+    : <span style={{ color: 'var(--text-muted)' }}>Free</span>;
+  const booked = schedule.huts.filter(hut => hut.bookings.length).length;
+  return <section className="card" style={{ marginTop: '1rem' }}>
+    <div style={{ marginBottom: '0.75rem' }}>
+      <h2 style={{ fontSize: '1.15rem' }}>Hut schedule</h2>
+      <p className="admin-stat-note">{booked} of {schedule.huts.length} huts booked. A party has its hut from 15 minutes before its slot until 15 minutes after, so the hut must be cleared for the next party.</p>
+    </div>
+    <div className="admin-table-wrap">
+      <table className="report-table" style={{ minWidth: 520 }}>
+        <thead><tr><th>Hut</th><th>All day (day visitors)</th>{schedule.slots.map(slot => <th key={slot}>Party {slot}</th>)}</tr></thead>
+        <tbody>{schedule.huts.map(hut => {
+          const allDay = hut.bookings.filter(booking => !booking.slot);
+          return <tr key={hut.number}>
+            <td><strong>{hut.number}</strong></td>
+            <td>{cell(allDay)}</td>
+            {schedule.slots.map(slot => <td key={slot}>{allDay.length ? <span style={{ color: 'var(--text-muted)' }}>—</span> : cell(hut.bookings.filter(booking => booking.slot === slot))}</td>)}
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+  </section>;
 }

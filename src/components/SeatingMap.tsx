@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { PartyDetails } from '@/lib/parties';
-import { spotLabel } from '@/lib/seating';
+import { PARTY_HUT_BUFFER_MINUTES, spotHoldWindow, spotLabel } from '@/lib/seating';
 
-type Spot = { id: string; number: string; type: 'table' | 'hut'; capacity: number; x_percent: number; y_percent: number; available: boolean; unavailableReason?: string };
+type Spot = { id: string; number: string; type: 'table' | 'hut'; capacity: number; x_percent: number; y_percent: number; available: boolean; unavailableReason?: string; recommended?: boolean; note?: string };
+
+const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
 interface SeatingMapProps {
   party: PartyDetails;
@@ -42,8 +44,11 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
       .catch(loadError => { if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'Seating availability could not be loaded.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Dependencies are correctly omitted to avoid unwanted refetches
-  }, [selectedDate]);
+  }, [selectedDate, party.enabled, party.slot]);
+
+  // A party holds its hut only for its time slot, so other parties can use it before or after.
+  const partyWindow = party.enabled && party.slot ? spotHoldWindow('hut', party.slot) : null;
+  const hasRecommended = spots.some(spot => spot.available && spot.recommended);
 
   const toggleSpot = (spot: Spot) => {
     if (!spot.available) return;
@@ -57,13 +62,15 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
 
   return <div className="card" style={{ maxWidth: 980, margin: '0 auto' }}>
     <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Step 3: Choose your seating</h2>
-    <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>Select {requiredTables > 0 ? `${requiredTables} table${requiredTables === 1 ? '' : 's'}` : ''}{requiredTables > 0 && requiredHuts > 0 ? ' and ' : ''}{requiredHuts > 0 ? `${requiredHuts} hut${requiredHuts === 1 ? '' : 's'}` : ''} for {selectedDate}. <strong>Please note: tables/huts may become available at any time during the day due to parties.</strong></p>
+    <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>Select {requiredTables > 0 ? `${requiredTables} table${requiredTables === 1 ? '' : 's'}` : ''}{requiredTables > 0 && requiredHuts > 0 ? ' and ' : ''}{requiredHuts > 0 ? `${requiredHuts} hut${requiredHuts === 1 ? '' : 's'}` : ''} for {selectedDate}.</p>
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: '1rem', fontSize: 14 }}>
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#16a34a', marginRight: 5 }} />Available</span>
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#2563eb', marginRight: 5 }} />Selected</span>
       <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#94a3b8', marginRight: 5 }} />Unavailable</span>
+      {hasRecommended && <span><i style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#16a34a', boxShadow: '0 0 0 2px #f59e0b', marginRight: 6 }} />Recommended for your party</span>}
       <span style={{ color: 'var(--text-muted)' }}><strong>H</strong> = covered hut (seats 14) · <strong>T</strong> = shaded table (seats 6)</span>
     </div>
+    {partyWindow && requiredHuts > 0 && <p className="callout callout-info" style={{ marginBottom: '1rem' }}>Your party hut is reserved for you from <strong>{clock(partyWindow.start)} to {clock(partyWindow.end)}</strong>: your party time plus {PARTY_HUT_BUFFER_MINUTES} minutes to set up and {PARTY_HUT_BUFFER_MINUTES} minutes to pack up. Other parties may use the same hut before or after you.{hasRecommended ? ' Huts with an orange ring are recommended: they are free during your party.' : ''}</p>}
     {loading && <p style={{ color: 'var(--text-muted)' }}>Loading seating availability...</p>}
     {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
     {!loading && !error && <>
@@ -80,9 +87,12 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
             let hoverTitle = `${spot.type === 'table' ? 'Shaded table' : 'Covered hut'} ${spotLabel(spot.type, spot.number).split(' ')[1]} - seats ${spot.capacity}`;
             if (!spot.available) {
               hoverTitle += ` (Unavailable${spot.unavailableReason ? ` - ${spot.unavailableReason}` : ''})`;
+            } else if (spot.note) {
+              hoverTitle += ` (${spot.note})`;
             }
+            const recommended = spot.available && spot.recommended && !disabled;
 
-            return <button key={spot.id} type="button" title={hoverTitle} aria-label={hoverTitle} disabled={disabled} onClick={() => toggleSpot(spot)} style={{ position: 'absolute', left: `${spot.x_percent}%`, top: `${spot.y_percent}%`, transform: 'translate(-50%, -50%)', width: 28, height: 28, padding: 0, borderRadius: '50%', border: isSelected ? '3px solid white' : '2px solid white', background: isSelected ? '#2563eb' : disabled ? '#94a3b8' : '#16a34a', color: 'white', fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: disabled ? 'not-allowed' : 'pointer', boxShadow: isSelected ? '0 0 0 3px #2563eb' : '0 2px 5px rgba(0,0,0,.35)', opacity: disabled && !isSelected ? 0.72 : 1 }}>{spot.number}</button>;
+            return <button key={spot.id} type="button" title={hoverTitle} aria-label={hoverTitle} disabled={disabled} onClick={() => toggleSpot(spot)} style={{ position: 'absolute', left: `${spot.x_percent}%`, top: `${spot.y_percent}%`, transform: 'translate(-50%, -50%)', width: 28, height: 28, padding: 0, borderRadius: '50%', border: isSelected ? '3px solid white' : '2px solid white', background: isSelected ? '#2563eb' : disabled ? '#94a3b8' : '#16a34a', color: 'white', fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: disabled ? 'not-allowed' : 'pointer', boxShadow: isSelected ? '0 0 0 3px #2563eb' : recommended ? '0 0 0 3px #f59e0b, 0 2px 5px rgba(0,0,0,.35)' : '0 2px 5px rgba(0,0,0,.35)', opacity: disabled && !isSelected ? 0.72 : 1 }}>{spot.number}</button>;
           })}
         </div>
       </div>

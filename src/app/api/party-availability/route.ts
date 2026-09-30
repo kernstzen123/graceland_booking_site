@@ -5,6 +5,7 @@ import { validateVisitDate } from '@/lib/opening-rules';
 import { getClosedDates } from '@/lib/closed-dates';
 import { checkRateLimit } from '@/lib/request-security';
 import { fetchAllRows } from '@/lib/fetch-all';
+import { spotHoldWindow, windowsOverlap } from '@/lib/seating';
 
 /** How far ahead to look for the next date with a free party slot. */
 const SEARCH_DAYS = 370;
@@ -57,12 +58,15 @@ export async function GET(request: Request) {
     }
 
     // A slot is available while at least one hut is free for it. A hut is taken
-    // for a slot if a day visitor holds it (no party slot) or a party holds it
-    // for that same slot.
+    // for a slot when a booking holds it at an overlapping time: a day visitor
+    // all day, a party during its own slot (see spotHoldWindow).
     const availableSlotsOn = (checkDate: string) => {
       if (closedDates.has(checkDate)) return [];
       const held = heldByDate.get(checkDate) || [];
-      return getPartySlots(checkDate).filter(slot => new Set(held.filter(entry => !entry.partySlot || entry.partySlot === slot).map(entry => entry.spotId)).size < totalHutsCount);
+      return getPartySlots(checkDate).filter(slot => {
+        const wanted = spotHoldWindow('hut', slot);
+        return new Set(held.filter(entry => windowsOverlap(wanted, spotHoldWindow('hut', entry.partySlot))).map(entry => entry.spotId)).size < totalHutsCount;
+      });
     };
 
     const slots = closedDates.has(date) ? [] : getPartySlots(date);

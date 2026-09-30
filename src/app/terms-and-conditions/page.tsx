@@ -113,6 +113,7 @@ export default function TermsAndConditions() {
               <li>The performance, operating times, pricing, availability and other operations of the water slides, and other facilities are subject to change without prior notice. Such changes shall be made at the discretion of Graceland Venues management and will not automatically entitle customers to a refund or compensation.</li>
               <li>Parents, guardians and accompanying adults are responsible for the supervision and safety of their children at all times while on the Graceland Venues premises, including in and around the swimming pool, water slides, and other facilities. Children must not be left unattended at any time.</li>
               <li>Abusive, threatening, disrespectful or inappropriate behavior towards Graceland Venues staff or fellow clients will not be tolerated. Any person engaging in such behavior may be required to leave the premises immediately and may be refused future entry, without entitlement to a refund.</li>
+              <li>Birthday party huts are reserved only for the party&apos;s booked time slot, plus 15 minutes before it to set up and 15 minutes after it to pack up. The same hut may be booked by another party before or after that time. Party guests must vacate the hut by the end of their reserved time so it can be prepared for the next booking, which has priority. Graceland Venues staff may ask a party that runs over its time to leave the hut, without entitlement to a refund.</li>
             </ul>
           </section>
 

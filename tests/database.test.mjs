@@ -305,6 +305,22 @@ it('database migrations and functions behave correctly', async () => {
   check('old map spots are retired, not deleted', retired.length === 28);
   const seatBooking = await reserve('BK-SEAT', 2, 100);
   await expectError('a retired spot cannot be booked', `select public.reserve_booking_spots('${seatBooking}', '${future}', array['${retired[0].id}']::uuid[])`, /seating spots is invalid/);
+
+  // Party huts are held by time of day: back-to-back parties can share a hut
+  check('a party holds its hut for its slot plus 15 minutes either side', (await one(`select public.spot_hold_window('hut', '09:30–11:30')::text as w`)).w === '[555,705)');
+  check('day visitors and tables hold a spot all day', (await one(`select public.spot_hold_window('hut', null)::text as a, public.spot_hold_window('table', '09:30–11:30')::text as b`)).a === '[0,1440)' && (await one(`select public.spot_hold_window('table', '09:30–11:30')::text as b`)).b === '[0,1440)');
+  const partyHut = (await one(`select id from public.venue_spots where active and number = 'H16'`)).id;
+  const partyTable = (await one(`select id from public.venue_spots where active and number = 'T12'`)).id;
+  const party = async (ref, slot) => (await one(`select public.reserve_capacity($1::date, 12, ${customer}, $2, 100, $3) as id`, [future, ref, slot])).id;
+  const seat = (id, spot) => db.query(`select public.reserve_booking_spots($1, $2::date, array[$3]::uuid[])`, [id, future, spot]);
+  await seat(await party('BK-HUT-A', '09:30–11:30'), partyHut);
+  let shared = true;
+  try { await seat(await party('BK-HUT-B', '12:00–14:00'), partyHut); } catch { shared = false; }
+  check('a party in the next slot can book the same hut', shared);
+  await expectError('a second party in the same slot cannot book that hut', `select public.reserve_booking_spots('${await party('BK-HUT-C', '09:30–11:30')}', '${future}', array['${partyHut}']::uuid[])`, /just taken/);
+  await expectError('a day visitor cannot book a hut that has a party', `select public.reserve_booking_spots('${await reserve('BK-HUT-DV', 2, 100)}', '${future}', array['${partyHut}']::uuid[])`, /just taken/);
+  await seat(await party('BK-TABLE-A', '09:30–11:30'), partyTable);
+  await expectError('a table is booked for the whole day, even by a party', `select public.reserve_booking_spots('${await party('BK-TABLE-B', '14:30–16:30')}', '${future}', array['${partyTable}']::uuid[])`, /just taken/);
   const seatingReport = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [future])).r.seating;
   check('report totals count only the current map', Number(seatingReport.hutTotal) === 16 && Number(seatingReport.tableTotal) === 12, JSON.stringify(seatingReport));
 
