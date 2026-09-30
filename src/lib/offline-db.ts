@@ -32,6 +32,11 @@ export type OfflineTicket = {
   qr_token: string;
   checked_in_at: string | null;
   checked_in_by_device: string | null;
+  /** Imported from the booking book (no QR code was sent): check in by name, phone or email. */
+  imported?: boolean;
+  /** For the scanner search only. */
+  phone?: string;
+  email?: string;
 };
 
 export type SyncQueueItem = {
@@ -303,6 +308,8 @@ export async function searchTickets(query: string, limit = 20): Promise<OfflineT
   const store = t.objectStore('tickets');
   const results: OfflineTicket[] = [];
   const lowerQuery = query.toLowerCase().trim();
+  // Phone numbers match on their digits, however they were typed.
+  const digits = lowerQuery.replace(/\D/g, '');
 
   return new Promise((resolve, reject) => {
     const cursor = store.openCursor();
@@ -316,7 +323,9 @@ export async function searchTickets(query: string, limit = 20): Promise<OfflineT
       if (
         ticket.customer_name.toLowerCase().includes(lowerQuery) ||
         ticket.booking_ref.toLowerCase().includes(lowerQuery) ||
-        ticket.ticket_uid.toLowerCase().includes(lowerQuery)
+        ticket.ticket_uid.toLowerCase().includes(lowerQuery) ||
+        Boolean(ticket.email && ticket.email.toLowerCase().includes(lowerQuery)) ||
+        Boolean(digits.length >= 6 && ticket.phone && ticket.phone.replace(/\D/g, '').includes(digits))
       ) {
         results.push(ticket);
       }

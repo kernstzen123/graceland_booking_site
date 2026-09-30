@@ -88,7 +88,7 @@ export async function buildDailySummaryWorkbook(summary: DailySummary, date: str
   };
   const addBooking = (booking: SummaryRow) => {
     const row = sheet.getRow(next);
-    row.values = [booking.time, booking.client, { formula: `SUM(D${next}:H${next})`, result: booking.total }, booking.children, booking.toddlers, booking.infants, booking.adults, booking.pensioners, booking.meals, booking.seating, booking.paid, ''];
+    row.values = [booking.time, booking.client, { formula: `SUM(D${next}:H${next})`, result: booking.total }, booking.children, booking.toddlers, booking.infants, booking.adults, booking.pensioners, booking.meals, booking.seating, booking.imported ? 'Imported' : booking.paid, ''];
     styleRow(row);
     next += 1;
   };

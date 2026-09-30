@@ -6,7 +6,7 @@ import { FormEvent, useCallback, useEffect, useState, type ComponentType, type R
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import {
   AlertIcon, CalendarIcon, ChartIcon, CloseIcon, DashboardIcon, GiftIcon, LogoutIcon, MailWarningIcon, MenuIcon,
-  MoreIcon, ReceiptIcon, ScanIcon, SearchIcon, ShieldIcon, TagIcon, TicketIcon, UsersIcon,
+  MoreIcon, PlusIcon, ReceiptIcon, ScanIcon, SearchIcon, ShieldIcon, TagIcon, TicketIcon, UsersIcon,
 } from './AdminIcons';
 
 type Role = 'ADMIN' | 'MANAGER' | 'SCANNER';
@@ -25,6 +25,7 @@ const NAV: NavSection[] = [
   ] },
   { title: 'Bookings', items: [
     { href: '/admin/bookings', label: 'All bookings', icon: CalendarIcon, roles: MANAGEMENT, badge: 'needsAttention', badgeTone: 'danger' },
+    { href: '/admin/add-booking', label: 'Add booking', icon: PlusIcon, roles: MANAGEMENT },
     { href: '/admin/proofs', label: 'Proofs of payment', icon: ReceiptIcon, roles: MANAGEMENT, badge: 'pendingProofs', badgeTone: 'warning' },
     { href: '/admin/conflicts', label: 'Check-in alerts', icon: AlertIcon, roles: MANAGEMENT, badge: 'conflicts', badgeTone: 'danger' },
     { href: '/admin/vouchers', label: 'Vouchers', icon: GiftIcon, roles: MANAGEMENT },

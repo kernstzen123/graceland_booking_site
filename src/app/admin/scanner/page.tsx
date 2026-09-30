@@ -726,7 +726,7 @@ export default function Scanner() {
               padding: 0,
             }}
           >
-            Search name, booking, or ticket ID
+            Search name, phone, email, booking or ticket ID
             <span style={{ fontSize: '1.2rem' }}>{showSearch ? '▲' : '▼'}</span>
           </button>
 
@@ -735,7 +735,7 @@ export default function Scanner() {
               <input
                 value={searchQuery}
                 onChange={e => handleSearch(e.target.value)}
-                placeholder="Type a name, BK-..., or TKT-..."
+                placeholder="Name, phone, email, BK-... or TKT-..."
                 style={{
                   width: '100%',
                   padding: '0.75rem',
@@ -779,6 +779,11 @@ export default function Scanner() {
                           </span>
                         )}
                       </div>
+                      {ticket.imported && (
+                        <div style={{ fontSize: '0.7rem', color: '#fde68a', marginTop: 2, fontWeight: 700 }}>
+                          IMPORTED BOOKING · no QR code · check in by name
+                        </div>
+                      )}
                       <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: 2 }}>
                         {ticket.ticket_uid} · {ticket.package_name}
                         {ticket.seating && ` · ${ticket.seating}`}

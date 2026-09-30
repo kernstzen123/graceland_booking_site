@@ -34,8 +34,8 @@ export async function GET(request: Request) {
         status,
         qr_token,
         packages(name),
-        customers(first_name, last_name),
-        bookings(reference, status, voucher_issued)
+        customers(first_name, last_name, phone, email),
+        bookings(reference, status, voucher_issued, payment_method)
       `)
       .eq('visit_date', date)
       .in('status', ['VALID', 'USED']);
@@ -90,6 +90,11 @@ export async function GET(request: Request) {
           qr_token: t.qr_token,
           checked_in_at: null,
           checked_in_by_device: null,
+          // Imported from the booking book: no QR code was sent, so the gate finds
+          // these by name, phone or email (only used for the scanner search).
+          imported: booking?.payment_method === 'IMPORTED',
+          phone: customer?.phone || '',
+          email: customer?.email || '',
         };
       });
 

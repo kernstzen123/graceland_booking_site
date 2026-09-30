@@ -9,13 +9,15 @@ export type SummaryItem = { quantity: number; metadata?: { itemId?: string; name
 export type SummaryBooking = {
   party_slot: string | null;
   total_amount: number;
+  /** 'IMPORTED' for bookings copied from the booking book (paid outside the system). */
+  payment_method?: string | null;
   customers?: { first_name?: string | null; last_name?: string | null } | Array<{ first_name?: string | null; last_name?: string | null }> | null;
   booking_items?: SummaryItem[] | null;
   booking_spots?: Array<{ venue_spots?: { number: string; type: string } | Array<{ number: string; type: string }> | null }> | null;
 };
 
 export type SummaryCounts = { children: number; toddlers: number; infants: number; adults: number; pensioners: number };
-export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number };
+export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number; imported: boolean };
 export type SummarySection = { slot: string; rows: SummaryRow[] };
 export type DailySummary = { parties: SummarySection[]; dayVisitors: SummaryRow[] };
 
@@ -60,7 +62,9 @@ function toRow(booking: SummaryBooking): SummaryRow {
     ...counts,
     meals,
     seating: spots.sort(compareSpots).map(spot => spot.number).join(', '),
-    paid: Number(booking.total_amount) || 0,
+    // Imported bookings were paid (or part-paid) outside the system: no amount is shown.
+    paid: booking.payment_method === 'IMPORTED' ? 0 : Number(booking.total_amount) || 0,
+    imported: booking.payment_method === 'IMPORTED',
   };
 }
 

@@ -10,9 +10,11 @@ import { DownloadIcon } from '@/components/icons';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
-type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
+type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
 type Action = 'resend_tickets' | 'delete' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
+/** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
+const staffNotes = (notes?: string | null) => (notes || '').split('\n').filter(line => !/^[A-Z_]+$/.test(line.trim())).join(' ').trim();
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }, { value: 'ATTENTION', label: 'Needs attention' }, { value: 'DELETED', label: 'Deleted' }];
 const PAID_STATUSES = ['PAID', 'CONFIRMED'];
@@ -250,6 +252,11 @@ function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (act
       <p style={{ whiteSpace: 'pre-line' }}>{booking.attention_reason}</p>
       <button type="button" className="btn btn-secondary" style={{ marginTop: '0.5rem' }} onClick={() => onAction('resolve_attention')}>Mark as resolved</button>
     </div>}
+    {booking.payment_method === 'IMPORTED' && <div className="callout callout-info">
+      <p><strong>Imported from the booking book</strong></p>
+      <p>No QR tickets were sent. At the gate, find the guests by name, phone or email in the scanner search and check them in. Payments and deposits for this booking are in the book.</p>
+    </div>}
+    {staffNotes(booking.notes) && <p style={{ marginTop: '0.75rem' }}><strong>Notes:</strong> {staffNotes(booking.notes)}</p>}
     {isDeleted && <div className="callout callout-warning">
       <p><strong>Deleted {new Date(booking.deleted_at as string).toLocaleString()}</strong></p>
       {booking.delete_reason && <p>Reason: {booking.delete_reason}</p>}
