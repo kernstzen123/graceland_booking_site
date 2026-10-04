@@ -88,18 +88,25 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
   const newMeals: Array<Record<string, unknown>> = [];
   if (!existingMeals?.length && bookingSpecials?.length) {
     for (const bs of bookingSpecials) {
-      const freeMeals = (bs.snapshot.free_meals || 0) * bs.quantity;
-      for (let i = 0; i < freeMeals; i++) {
-        const mealUid = `MEAL-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-        const qrToken = createQrToken(bookingId, mealUid, String(items[0]?.bookings?.visit_date), 'meal');
-        newMeals.push({
-          booking_id: bookingId,
-          special_id: bs.special_id,
-          meal_uid: mealUid,
-          qr_token: qrToken,
-          visit_date: items[0]?.bookings?.visit_date,
-          display_name: `${mealName} (${bs.snapshot.title})`
-        });
+      const mealDefinitions = bs.snapshot.included_meals?.length 
+        ? bs.snapshot.included_meals 
+        : (bs.snapshot.free_meals > 0 ? [{ name: mealName, quantity: bs.snapshot.free_meals }] : []);
+        
+      for (const mDef of mealDefinitions) {
+        const totalMeals = mDef.quantity * bs.quantity;
+        for (let i = 0; i < totalMeals; i++) {
+          const mealUid = `MEAL-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+          const qrToken = createQrToken(bookingId, mealUid, String(items[0]?.bookings?.visit_date), 'meal');
+          newMeals.push({
+            booking_id: bookingId,
+            special_id: bs.special_id,
+            meal_uid: mealUid,
+            qr_token: qrToken,
+            visit_date: items[0]?.bookings?.visit_date,
+            meal_name: mDef.name,
+            display_name: `${mDef.name} (${bs.snapshot.title})`
+          });
+        }
       }
     }
     labelledMeals = newMeals;
@@ -128,7 +135,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
   if (insertError) throw new Error(`Could not create tickets: ${insertError.message}`);
   if (newMeals.length > 0) {
     const { error: insertMealsError } = await supabase.from('meal_vouchers').insert(newMeals.map(m => ({
-      booking_id: m.booking_id, special_id: m.special_id, meal_uid: m.meal_uid, qr_token: m.qr_token, visit_date: m.visit_date
+      booking_id: m.booking_id, special_id: m.special_id, meal_uid: m.meal_uid, qr_token: m.qr_token, visit_date: m.visit_date, meal_name: m.meal_name
     })));
     if (insertMealsError) throw new Error(`Could not create meal vouchers: ${insertMealsError.message}`);
   }

@@ -117,7 +117,7 @@ export default function SpecialsAdminPage() {
   const defaultSpecial: Partial<Special> = {
     title: '', description: '', badge_text: '', type: 'discount',
     paid_tickets: [{ itemId: 'day-water-adult', quantity: 1 }], free_tickets: [],
-    pricing: { type: 'percentage', discount: 10 }, free_meals: 0,
+    pricing: { type: 'percentage', discount: 10 }, free_meals: 0, included_meals: [],
     valid_from: null, valid_to: null, valid_weekdays: [], stock_limit: null, max_per_booking: null, active: true
   };
 
@@ -266,12 +266,24 @@ export default function SpecialsAdminPage() {
                      }} style={inputStyle} placeholder="Amount" />
                   </div>
                </div>
-               <div style={{ flex: 1 }}>
-                  <h3 style={headerStyle}>Free Meals</h3>
-                  <label style={labelStyle}>
-                    Vouchers per bundle
-                    <input type="number" min="0" value={editing.free_meals || 0} onChange={e => setEditing({ ...editing, free_meals: Number(e.target.value) })} style={inputStyle} />
-                  </label>
+               <div style={{ flex: 1, minWidth: 300 }}>
+                  <h3 style={headerStyle}>Included Meal Vouchers</h3>
+                  {editing.included_meals?.map((m, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 8, alignItems: 'center' }}>
+                      <input type="text" value={m.name} onChange={e => {
+                        const newMeals = [...(editing.included_meals || [])];
+                        newMeals[i].name = e.target.value;
+                        setEditing({ ...editing, included_meals: newMeals });
+                      }} style={{ ...inputStyle, flex: 1 }} placeholder="Voucher Name (e.g. Free Hotdog)" />
+                      <input type="number" min="1" value={m.quantity} onChange={e => {
+                        const newMeals = [...(editing.included_meals || [])];
+                        newMeals[i].quantity = Number(e.target.value);
+                        setEditing({ ...editing, included_meals: newMeals });
+                      }} style={{ ...inputStyle, width: 80 }} />
+                      <button type="button" onClick={() => setEditing({ ...editing, included_meals: editing.included_meals?.filter((_, idx) => idx !== i) })} className="btn" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}>Remove</button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setEditing({ ...editing, included_meals: [...(editing.included_meals || []), { name: 'Special Meal', quantity: 1 }] })} style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 600, cursor: 'pointer', padding: '0.5rem 0' }}>+ Add Meal Voucher</button>
                </div>
             </div>
 

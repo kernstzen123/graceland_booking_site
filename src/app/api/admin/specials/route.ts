@@ -26,7 +26,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       title, description, badge_text, type, paid_tickets, free_tickets, pricing,
-      free_meals, valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking
+      free_meals, included_meals, valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking
     } = body;
 
     if (!title || !type || !paid_tickets || !free_tickets || !pricing) {
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
       .from('specials')
       .insert({
         title, description, badge_text, type, paid_tickets, free_tickets, pricing,
-        free_meals, valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking
+        free_meals, included_meals: included_meals || [], valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking
       })
       .select()
       .single();

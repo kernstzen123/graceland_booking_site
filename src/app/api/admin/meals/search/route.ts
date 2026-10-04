@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     const { data: meals, error: searchError } = await supabase
       .from('meal_vouchers')
       .select(`
-        id, meal_uid, qr_token, visit_date, 
+        id, meal_uid, qr_token, visit_date, meal_name,
         specials(title),
         bookings!inner(reference, customer->>'firstName', customer->>'lastName', customer->>'email')
       `)
@@ -43,6 +43,7 @@ export async function GET(request: Request) {
        meal_uid: m.meal_uid,
        qr_token: m.qr_token,
        visit_date: m.visit_date,
+       meal_name: m.meal_name,
        special_title: m.specials?.title,
        booking_ref: m.bookings?.reference,
        customer_name: `${(m.bookings as any)?.firstName} ${(m.bookings as any)?.lastName}`.trim(),

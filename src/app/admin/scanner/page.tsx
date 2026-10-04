@@ -548,6 +548,7 @@ export default function Scanner() {
               booking_ref: m.booking_ref || 'N/A',
               ticket_id: m.id,
               customer_name: m.customer_name || 'Meal Voucher',
+              package_name: m.meal_name || m.special_title || 'Meal Voucher',
               email: m.email,
               visit_date: m.visit_date,
               status: m.redeemed ? 'USED' : 'UNUSED',

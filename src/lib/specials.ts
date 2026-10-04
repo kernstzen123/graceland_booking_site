@@ -21,6 +21,7 @@ export type SpecialSnapshot = {
   free_tickets: SpecialItemDef[];
   pricing: SpecialPricing;
   free_meals: number;
+  included_meals?: { name: string; quantity: number }[];
 };
 
 export type Special = {
@@ -33,6 +34,7 @@ export type Special = {
   free_tickets: SpecialItemDef[];
   pricing: SpecialPricing;
   free_meals: number;
+  included_meals: { name: string; quantity: number }[];
   valid_from: string | null;
   valid_to: string | null;
   valid_weekdays: number[];

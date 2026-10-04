@@ -10,14 +10,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const body = await request.json();
     const {
       title, description, badge_text, type, paid_tickets, free_tickets, pricing,
-      free_meals, valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking, active
+      free_meals, included_meals, valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking, active
     } = body;
 
     const { data, error: updateError } = await supabase
       .from('specials')
       .update({
         title, description, badge_text, type, paid_tickets, free_tickets, pricing,
-        free_meals, valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking, active
+        free_meals, included_meals: included_meals || [], valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking, active
       })
       .eq('id', id)
       .select()
