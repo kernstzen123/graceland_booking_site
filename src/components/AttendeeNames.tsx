@@ -1,5 +1,7 @@
 import React from 'react';
 import { PACKAGES } from './PackageSelection';
+import type { BookingSpecialSelection } from '@/lib/specials';
+import { BOOKABLE_ITEMS } from '@/lib/pricing';
 
 export type AttendeeName = {
   firstName: string;
@@ -10,6 +12,7 @@ export type AttendeeName = {
 
 interface AttendeeNamesProps {
   selections: Record<string, number>;
+  specials?: BookingSpecialSelection[];
   attendeeNames: AttendeeName[];
   onChange: (names: AttendeeName[]) => void;
   onNext: () => void;
@@ -17,7 +20,7 @@ interface AttendeeNamesProps {
 }
 
 /** Build the initial (empty) attendee name list from the current package selections. */
-export function buildInitialAttendeeNames(selections: Record<string, number>): AttendeeName[] {
+export function buildInitialAttendeeNames(selections: Record<string, number>, specials: BookingSpecialSelection[] = []): AttendeeName[] {
   const names: AttendeeName[] = [];
   PACKAGES.forEach(group => {
     group.items.forEach(item => {
@@ -30,10 +33,24 @@ export function buildInitialAttendeeNames(selections: Record<string, number>): A
       }
     });
   });
+
+  specials.forEach(s => {
+    const tix = [...(s.snapshot.paid_tickets || []), ...(s.snapshot.free_tickets || [])];
+    tix.forEach(t => {
+      if (t.itemId.includes('child') || t.itemId.includes('adult') || t.itemId.includes('pensioner') || t.itemId.includes('infant') || t.itemId.includes('toddler')) {
+        const itemInfo = BOOKABLE_ITEMS[t.itemId];
+        const qty = Number(t.quantity) * Number(s.quantity);
+        for (let i = 0; i < qty; i++) {
+          names.push({ firstName: '', lastName: '', ticketType: `Special — ${s.snapshot.title} (${itemInfo?.name || t.itemId})`, itemId: t.itemId });
+        }
+      }
+    });
+  });
+
   return names;
 }
 
-export function AttendeeNames({ selections, attendeeNames, onChange, onNext, onBack }: AttendeeNamesProps) {
+export function AttendeeNames({ selections, specials = [], attendeeNames, onChange, onNext, onBack }: AttendeeNamesProps) {
   // Group attendees by ticket type for display
   const groups: { ticketType: string; itemId: string; startIndex: number; count: number }[] = [];
   let idx = 0;
@@ -42,6 +59,18 @@ export function AttendeeNames({ selections, attendeeNames, onChange, onNext, onB
       const qty = selections[item.id] || 0;
       if (qty > 0 && (item.id.includes('child') || item.id.includes('adult') || item.id.includes('pensioner') || item.id.includes('infant') || item.id.includes('toddler'))) {
         groups.push({ ticketType: `${group.category} — ${item.name}`, itemId: item.id, startIndex: idx, count: qty });
+        idx += qty;
+      }
+    });
+  });
+
+  specials.forEach(s => {
+    const tix = [...(s.snapshot.paid_tickets || []), ...(s.snapshot.free_tickets || [])];
+    tix.forEach(t => {
+      if (t.itemId.includes('child') || t.itemId.includes('adult') || t.itemId.includes('pensioner') || t.itemId.includes('infant') || t.itemId.includes('toddler')) {
+        const itemInfo = BOOKABLE_ITEMS[t.itemId];
+        const qty = Number(t.quantity) * Number(s.quantity);
+        groups.push({ ticketType: `Special — ${s.snapshot.title} (${itemInfo?.name || t.itemId})`, itemId: t.itemId, startIndex: idx, count: qty });
         idx += qty;
       }
     });

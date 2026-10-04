@@ -347,7 +347,7 @@ export default function Home() {
             } else {
               // Build initial attendee list from selections, preserving any
               // names already entered if the user navigated back
-              const fresh = buildInitialAttendeeNames(selections);
+              const fresh = buildInitialAttendeeNames(selections, selectedSpecials);
               // Keep existing names when the list shape hasn't changed
               if (attendeeNames.length === fresh.length && attendeeNames.every((a, i) => a.itemId === fresh[i].itemId)) {
                 setStep(3);
@@ -364,6 +364,7 @@ export default function Home() {
       {step === 3 && !party.enabled && (
         <AttendeeNames
           selections={selections}
+          specials={selectedSpecials}
           attendeeNames={attendeeNames}
           onChange={setAttendeeNames}
           onNext={() => { setSeatingDone(false); setStep(4); }}
