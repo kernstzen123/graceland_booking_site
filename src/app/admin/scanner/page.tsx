@@ -256,6 +256,54 @@ export default function Scanner() {
     try {
       const code = value.trim();
 
+      let isMeal = code.toUpperCase().startsWith('MEAL-');
+      if (!isMeal && code.includes('.')) {
+        try {
+          const payload = JSON.parse(atob(code.split('.')[0].replace(/-/g, '+').replace(/_/g, '/')));
+          isMeal = payload.type === 'meal';
+        } catch { /* ignore */ }
+      }
+
+      if (isMeal) {
+        if (!navigator.onLine) {
+          playError();
+          setResult({ success: false, status: 'OFFLINE', error: 'Meal vouchers require an internet connection to scan.' });
+          setMessage('Offline error');
+          pauseCamera();
+          return;
+        }
+
+        const token = await getAuthToken();
+        if (!token) throw new Error('Your staff session has expired');
+
+        const response = await fetch('/api/admin/meals/redeem', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: code }),
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          playSuccess();
+          setCount(c => c + 1);
+        } else if (data.message?.includes('already been redeemed')) {
+          playDuplicate();
+        } else {
+          playError();
+        }
+
+        setResult({
+          success: data.success,
+          status: data.success ? 'APPROVED' : (data.message?.includes('already been redeemed') ? 'USED' : 'INVALID'),
+          ticketUid: code.includes('.') ? undefined : code,
+          packageName: data.details?.meal_name || 'Meal Voucher',
+          error: data.success ? undefined : data.message,
+        });
+        setMessage(data.success ? 'Meal redeemed' : data.message || 'Voucher rejected');
+        pauseCamera();
+        return;
+      }
+
       // 1. Try offline lookup first (always, even when online)
       const ticket = await lookupTicket(code);
 

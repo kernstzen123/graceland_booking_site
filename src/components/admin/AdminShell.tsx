@@ -22,7 +22,6 @@ const NAV: NavSection[] = [
   { title: 'Gate', items: [
     { href: '/admin/scanner', label: 'Ticket scanner', icon: ScanIcon },
     { href: '/admin/walk-ins', label: 'Walk-in sales', icon: TicketIcon },
-    { href: '/admin/meals', label: 'Meal scanner', icon: ScanIcon },
   ] },
   { title: 'Bookings', items: [
     { href: '/admin/bookings', label: 'All bookings', icon: CalendarIcon, roles: MANAGEMENT, badge: 'needsAttention', badgeTone: 'danger' },
