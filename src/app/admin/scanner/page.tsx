@@ -259,7 +259,9 @@ export default function Scanner() {
       let isMeal = code.toUpperCase().startsWith('MEAL-');
       if (!isMeal && code.includes('.')) {
         try {
-          const payload = JSON.parse(atob(code.split('.')[0].replace(/-/g, '+').replace(/_/g, '/')));
+          const b64 = code.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, '=');
+          const payload = JSON.parse(atob(padded));
           isMeal = payload.type === 'meal';
         } catch { /* ignore */ }
       }
@@ -282,11 +284,12 @@ export default function Scanner() {
           body: JSON.stringify({ token: code }),
         });
         const data = await response.json();
+        const errorMessage = data.error || data.message;
 
         if (data.success) {
           playSuccess();
           setCount(c => c + 1);
-        } else if (data.message?.includes('already been redeemed')) {
+        } else if (errorMessage?.includes('already been redeemed')) {
           playDuplicate();
         } else {
           playError();
@@ -294,12 +297,12 @@ export default function Scanner() {
 
         setResult({
           success: data.success,
-          status: data.success ? 'APPROVED' : (data.message?.includes('already been redeemed') ? 'USED' : 'INVALID'),
+          status: data.success ? 'APPROVED' : (errorMessage?.includes('already been redeemed') ? 'USED' : 'INVALID'),
           ticketUid: code.includes('.') ? undefined : code,
           packageName: data.details?.meal_name || 'Meal Voucher',
-          error: data.success ? undefined : data.message,
+          error: data.success ? undefined : errorMessage,
         });
-        setMessage(data.success ? 'Meal redeemed' : data.message || 'Voucher rejected');
+        setMessage(data.success ? 'Meal redeemed' : errorMessage || 'Voucher rejected');
         pauseCamera();
         return;
       }
