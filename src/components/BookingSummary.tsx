@@ -1,10 +1,12 @@
 import React from 'react';
 import { calculatePartyTotal, PartyDetails } from '@/lib/parties';
-import { buildPackageGroups, partyChildRate, priceOf, type PriceList } from '@/lib/pricing';
+import { calculateServerTotal, type PriceList } from '@/lib/pricing';
+import type { BookingSpecialSelection } from '@/lib/specials';
 
 interface BookingSummaryProps {
   selectedDate: string;
   selections: Record<string, number>;
+  specials: BookingSpecialSelection[];
   party: PartyDetails;
   prices: PriceList;
   customerDetails: { firstName: string; lastName: string; email: string; phone: string };
@@ -18,24 +20,9 @@ interface BookingSummaryProps {
   onVoucherApplied: (voucher: { code: string; amountUsed: number; amountDue: number; remainingBalance: number } | null) => void;
 }
 
-export function BookingSummary({ selectedDate, selections, party, prices, customerDetails, onBack, onConfirm, submitting = false, termsAccepted, privacyAccepted, onTermsChange, onPrivacyChange, onVoucherApplied }: BookingSummaryProps) {
-  let total = 0;
-  const items: Array<{ id: string; name: string; price: number; type?: string; qty: number }> = [];
+export function BookingSummary({ selectedDate, selections, specials, party, prices, customerDetails, onBack, onConfirm, submitting = false, termsAccepted, privacyAccepted, onTermsChange, onPrivacyChange, onVoucherApplied }: BookingSummaryProps) {
+  const { total: bookingTotal, lineItems: calcItems } = calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials);
   
-  buildPackageGroups(prices).forEach(group => {
-    group.items.forEach(item => {
-      const qty = selections[item.id] || 0;
-      if (qty > 0) {
-        total += qty * item.price;
-        items.push({ ...item, qty });
-      }
-    });
-  });
-
-  const partyTotal = calculatePartyTotal(party, prices);
-  const swimmingAdults = party.adultsWater.filter(Boolean).length;
-  const swimmingChildren = party.additionalChildrenWater.filter(Boolean).length;
-  const bookingTotal = total + partyTotal;
   const [voucherInput, setVoucherInput] = React.useState('');
   const [voucher, setVoucher] = React.useState<{ code: string; amountUsed: number; amountDue: number; remainingBalance: number } | null>(null);
   const [voucherMessage, setVoucherMessage] = React.useState('');
@@ -71,19 +58,15 @@ export function BookingSummary({ selectedDate, selections, party, prices, custom
       <div style={{ marginBottom: '1.5rem' }}>
         <h3 style={{ fontSize: '1.1rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Packages</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {items.map(item => (
-            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>{item.qty}x {item.name}</span>
-              <span>R {item.qty * item.price}</span>
+          {calcItems.map((item, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>{item.quantity}x {item.name}</span>
+              <span>{item.subtotal > 0 ? `R ${item.subtotal}` : 'Free'}</span>
             </div>
           ))}
-          {party.enabled && <>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.children}x Birthday party children ({party.option === 'option-2' ? 'with hotdog' : 'Option 1'})</span><span>R {party.children * partyChildRate(party, prices)}</span></div>
-            {party.adults > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.adults}x Party adults ({swimmingAdults} swimming)</span><span>R {swimmingAdults * priceOf(prices, 'party-adult-swimming') + (party.adults - swimmingAdults) * priceOf(prices, 'party-adult-non-swimming')}</span></div>}
-            {party.additionalChildren > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.additionalChildren}x Additional children ({swimmingChildren} swimming)</span><span>R {swimmingChildren * priceOf(prices, 'party-child-swimming') + (party.additionalChildren - swimmingChildren) * priceOf(prices, 'party-child-non-swimming')}</span></div>}
-            {party.partyPacks > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{party.partyPacks}x Party packs</span><span>R {party.partyPacks * priceOf(prices, 'party-pack')}</span></div>}
-            <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Party slot: {party.slot}</p>
-          </>}
+          {party.enabled && (
+             <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Party slot: {party.slot}</p>
+          )}
         </div>
       </div>
 

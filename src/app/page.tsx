@@ -9,7 +9,8 @@ import { BookingSummary } from '../components/BookingSummary';
 import { PaymentSelection } from '../components/PaymentSelection';
 import { SeatingMap } from '../components/SeatingMap';
 import { calculatePartyTotal, PartyDetails } from '@/lib/parties';
-import { buildPackageGroups, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
+import { buildPackageGroups, DEFAULT_PRICES, calculateServerTotal, type PriceList } from '@/lib/pricing';
+import type { BookingSpecialSelection } from '@/lib/specials';
 import { SupportContact } from '@/components/SupportContact';
 import { SiteFooter } from '@/components/SiteFooter';
 import { BANK_DETAILS } from '@/lib/business-details';
@@ -31,6 +32,7 @@ export default function Home() {
   const [step, setStep] = useState(1);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selections, setSelections] = useState<Record<string, number>>({});
+  const [selectedSpecials, setSelectedSpecials] = useState<BookingSpecialSelection[]>([]);
   const [party, setParty] = useState<PartyDetails>({ enabled: false, option: 'option-1', children: 10, adults: 0, adultsWater: [], additionalChildren: 0, additionalChildrenWater: [], partyPacks: 0, slot: '' });
   const [customerDetails, setCustomerDetails] = useState({ firstName: '', lastName: '', email: '', phone: '' });
   const [attendeeNames, setAttendeeNames] = useState<AttendeeName[]>([]);
@@ -66,6 +68,7 @@ export default function Home() {
     setStep(1);
     setSelectedDate(null);
     setSelections({});
+    setSelectedSpecials([]);
     setParty({ enabled: false, option: 'option-1', children: 10, adults: 0, adultsWater: [], additionalChildren: 0, additionalChildrenWater: [], partyPacks: 0, slot: '' });
     setCustomerDetails({ firstName: '', lastName: '', email: '', phone: '' });
     setAttendeeNames([]);
@@ -180,13 +183,7 @@ export default function Home() {
   };
 
   const calculateTotal = () => {
-    let total = 0;
-    buildPackageGroups(prices).forEach(group => {
-      group.items.forEach(item => {
-        total += (selections[item.id] || 0) * item.price;
-      });
-    });
-    return total + calculatePartyTotal(party, prices);
+    return calculateServerTotal(selections, party.enabled ? party : undefined, prices, selectedSpecials).total;
   };
 
   const totalAmount = calculateTotal();
@@ -202,7 +199,7 @@ export default function Home() {
     window.sessionStorage.setItem('graceland-booking-idempotency', idempotencyKey.current);
     // Call the API to reserve capacity
     try {
-      const buildRequest = () => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedDate, selections, party, customerDetails, totalAmount, spotIds: selectedSpotIds, voucherCode: appliedVoucher?.code || null, idempotencyKey: idempotencyKey.current, termsAccepted, privacyAccepted, attendeeNames: party.enabled ? [] : attendeeNames }) });
+      const buildRequest = () => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selectedDate, selections, party, customerDetails, totalAmount, spotIds: selectedSpotIds, voucherCode: appliedVoucher?.code || null, idempotencyKey: idempotencyKey.current, termsAccepted, privacyAccepted, attendeeNames: party.enabled ? [] : attendeeNames, specials: selectedSpecials }) });
       let res = await fetch('/api/bookings', buildRequest());
       // A transient connection failure can happen after the server has
       // reserved the booking. Retry once with the same idempotency key so the
@@ -335,6 +332,8 @@ export default function Home() {
       {step === 2 && (
         <PackageSelection 
           selections={selections} 
+          specials={selectedSpecials}
+          onSpecialsChange={setSelectedSpecials}
           selectedDate={selectedDate || ''}
           prices={prices}
           party={party}
@@ -389,6 +388,7 @@ export default function Home() {
         <BookingSummary 
           selectedDate={selectedDate}
           selections={selections}
+          specials={selectedSpecials}
           party={party}
           prices={prices}
           customerDetails={customerDetails}

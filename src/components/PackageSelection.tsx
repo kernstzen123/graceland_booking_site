@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties';
-import { buildPackageGroups, PACKAGE_GROUPS, priceOf, type PriceList } from '@/lib/pricing';
+import { buildPackageGroups, PACKAGE_GROUPS, priceOf, calculateServerTotal, type PriceList } from '@/lib/pricing';
+import type { BookingSpecialSelection, Special } from '@/lib/specials';
 import { CheckIcon } from '@/components/icons';
 
 const PARTY_INCLUDES = [
@@ -19,15 +20,18 @@ export const PACKAGES = PACKAGE_GROUPS;
 interface PackageSelectionProps {
   selectedDate: string;
   selections: Record<string, number>;
+  specials: BookingSpecialSelection[];
   prices: PriceList;
   party: PartyDetails;
+  onSpecialsChange: (s: BookingSpecialSelection[]) => void;
   onPartyChange: (party: PartyDetails) => void;
   onUpdateSelection: (id: string, quantity: number) => void;
   onNext: () => void;
   onBack: () => void;
 }
 
-export function PackageSelection({ selectedDate, selections, prices, party, onPartyChange, onUpdateSelection, onNext, onBack }: PackageSelectionProps) {
+export function PackageSelection({ selectedDate, selections, specials, prices, party, onSpecialsChange, onPartyChange, onUpdateSelection, onNext, onBack }: PackageSelectionProps) {
+  const [availableSpecials, setAvailableSpecials] = useState<Special[]>([]);
   const [partyAvailability, setPartyAvailability] = useState<{ slots: string[]; availableSlots: string[]; nextAvailableDate: string | null } | null>(null);
   const [partyError, setPartyError] = useState('');
   const [selectionError, setSelectionError] = useState('');
@@ -36,6 +40,11 @@ export function PackageSelection({ selectedDate, selections, prices, party, onPa
     let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting error state before async fetch
     setPartyError('');
+    fetch(`/api/specials?date=${encodeURIComponent(selectedDate)}`, { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : [])
+      .then(data => { if (!cancelled && Array.isArray(data)) setAvailableSpecials(data); })
+      .catch(() => {});
+
     fetch(`/api/party-availability?date=${encodeURIComponent(selectedDate)}`, { cache: 'no-store' })
       .then(response => response.ok ? response.json() : Promise.reject(new Error('Availability unavailable')))
       .then(data => { if (!cancelled) setPartyAvailability(data); })
@@ -47,24 +56,36 @@ export function PackageSelection({ selectedDate, selections, prices, party, onPa
   const price = (key: string) => priceOf(prices, key);
 
   const calculateTotal = () => {
-    let total = 0;
-    packageGroups.forEach(group => {
-      group.items.forEach(item => {
-        total += (selections[item.id] || 0) * item.price;
-      });
-    });
-    return total;
+    return calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total;
   };
 
-  const groupSize = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('adult') || id.includes('pensioner') || id.includes('infant') || id.includes('toddler') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.adults + party.additionalChildren : 0);
+  let specialGroupSize = 0;
+  for (const s of specials) {
+    const tix = [...(s.snapshot.paid_tickets||[]), ...(s.snapshot.free_tickets||[])];
+    for (const t of tix) {
+      if (t.itemId.includes('child') || t.itemId.includes('adult') || t.itemId.includes('pensioner') || t.itemId.includes('infant') || t.itemId.includes('toddler')) {
+        specialGroupSize += Number(t.quantity) * Number(s.quantity);
+      }
+    }
+  }
+  const groupSize = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('adult') || id.includes('pensioner') || id.includes('infant') || id.includes('toddler') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.adults + party.additionalChildren : 0) + specialGroupSize;
   const maxHuts = groupSize >= 12 ? 2 : groupSize >= 6 ? 1 : 0;
   const maxTables = Math.max(1, Math.ceil(groupSize / 6));
   const paidHuts = Number(selections['hut-covered'] || 0);
 
   const continueToDetails = () => {
-    const selectedPackageCount = Object.values(selections).reduce((sum, quantity) => sum + Number(quantity || 0), 0);
-    const adultCount = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('adult') || id.includes('pensioner') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.adults : 0);
-    const childCount = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('toddler') || id.includes('infant') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.additionalChildren : 0);
+    let specialAdultCount = 0;
+    let specialChildCount = 0;
+    for (const s of specials) {
+      const tix = [...(s.snapshot.paid_tickets||[]), ...(s.snapshot.free_tickets||[])];
+      for (const t of tix) {
+        if (t.itemId.includes('adult') || t.itemId.includes('pensioner')) specialAdultCount += Number(t.quantity) * Number(s.quantity);
+        if (t.itemId.includes('child') || t.itemId.includes('toddler') || t.itemId.includes('infant')) specialChildCount += Number(t.quantity) * Number(s.quantity);
+      }
+    }
+    const selectedPackageCount = Object.values(selections).reduce((sum, quantity) => sum + Number(quantity || 0), 0) + specials.length;
+    const adultCount = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('adult') || id.includes('pensioner') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.adults : 0) + specialAdultCount;
+    const childCount = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('toddler') || id.includes('infant') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.additionalChildren : 0) + specialChildCount;
     if (adultCount + childCount === 0) {
       setSelectionError('Please select at least one entrance package before continuing.');
       return;
@@ -85,6 +106,55 @@ export function PackageSelection({ selectedDate, selections, prices, party, onPa
     <div style={{ maxWidth: '1180px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-start' }}>
       <div className="card" style={{ flex: '1 1 700px', maxWidth: 'none', margin: 0 }}>
         <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Step 2: Select Packages</h2>
+
+        {availableSpecials.length > 0 && (
+          <div style={{ marginBottom: '2.5rem' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '1.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              SPECIAL OFFERS & PACKAGES
+            </h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+              {availableSpecials.map((special) => {
+                 const qty = specials.find(s => s.id === special.id)?.quantity || 0;
+                 return (
+                    <div key={special.id} style={{ border: '2px solid var(--primary)', borderRadius: '12px', padding: '1.5rem', background: 'linear-gradient(to bottom, #f0f9ff, #ffffff)', position: 'relative' }}>
+                       {special.badge_text && (
+                          <div style={{ position: 'absolute', top: -12, left: 16, background: 'var(--primary)', color: '#fff', fontSize: '11px', fontWeight: 'bold', padding: '4px 10px', borderRadius: '999px', letterSpacing: '1px' }}>
+                             {special.badge_text}
+                          </div>
+                       )}
+                       <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--text-main)', marginBottom: '0.5rem', marginTop: special.badge_text ? 8 : 0 }}>{special.title}</h3>
+                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>{special.description}</p>
+                       
+                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ fontWeight: 'bold', color: 'var(--primary)', fontSize: '1.1rem' }}>
+                             Special Rate
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                             <button onClick={() => {
+                                const existing = specials.find(s => s.id === special.id);
+                                if (existing && existing.quantity > 0) {
+                                   onSpecialsChange(specials.map(s => s.id === special.id ? { ...s, quantity: s.quantity - 1 } : s).filter(s => s.quantity > 0));
+                                }
+                             }} disabled={qty === 0} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--border-color)', background: '#fff', fontSize: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: qty === 0 ? 'not-allowed' : 'pointer', opacity: qty === 0 ? 0.5 : 1 }}>-</button>
+                             <span style={{ fontSize: '1.1rem', fontWeight: 600, minWidth: '1.5rem', textAlign: 'center' }}>{qty}</span>
+                             <button onClick={() => {
+                                if (special.stock_limit && qty >= special.stock_limit) return alert('No more stock available for this special on this date.');
+                                if (special.max_per_booking && qty >= special.max_per_booking) return alert('Maximum allowed per booking reached.');
+                                const existing = specials.find(s => s.id === special.id);
+                                if (existing) {
+                                   onSpecialsChange(specials.map(s => s.id === special.id ? { ...s, quantity: s.quantity + 1 } : s));
+                                } else {
+                                   onSpecialsChange([...specials, { id: special.id, quantity: 1, snapshot: special as any }]);
+                                }
+                             }} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--border-color)', background: '#fff', fontSize: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>+</button>
+                          </div>
+                       </div>
+                    </div>
+                 );
+              })}
+            </div>
+          </div>
+        )}
 
         {packageGroups.map((group, i) => (
           <div key={i} style={{ marginBottom: '2rem' }}>
