@@ -22,6 +22,7 @@ const NAV: NavSection[] = [
   { title: 'Gate', items: [
     { href: '/admin/scanner', label: 'Ticket scanner', icon: ScanIcon },
     { href: '/admin/walk-ins', label: 'Walk-in sales', icon: TicketIcon },
+    { href: '/admin/meals', label: 'Meal scanner', icon: ScanIcon },
   ] },
   { title: 'Bookings', items: [
     { href: '/admin/bookings', label: 'All bookings', icon: CalendarIcon, roles: MANAGEMENT, badge: 'needsAttention', badgeTone: 'danger' },
@@ -35,6 +36,7 @@ const NAV: NavSection[] = [
   ] },
   { title: 'Settings', items: [
     { href: '/admin/settings', label: 'Prices & dates', icon: TagIcon, roles: MANAGEMENT },
+    { href: '/admin/specials', label: 'Specials', icon: GiftIcon, roles: MANAGEMENT },
     { href: '/admin/staff', label: 'Staff', icon: UsersIcon, roles: ['ADMIN'] },
     { href: '/admin/notifications', label: 'Email retries', icon: MailWarningIcon, roles: MANAGEMENT, badge: 'failedEmails', badgeTone: 'danger' },
     { href: '/admin/audit', label: 'Audit log', icon: ShieldIcon, roles: MANAGEMENT },

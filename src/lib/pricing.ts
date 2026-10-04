@@ -11,6 +11,7 @@
  */
 
 import type { PartyDetails } from './parties';
+import type { BookingSpecialSelection } from './specials';
 
 // ---------------------------------------------------------------------------
 // Price keys and defaults
@@ -164,6 +165,7 @@ export type LineItem = {
   subtotal: number;
   isPerson: boolean;
   party: boolean;
+  specialId?: string;
 };
 
 /**
@@ -175,6 +177,7 @@ export function calculateServerTotal(
   selections: Record<string, number>,
   party: PartyDetails | undefined,
   prices: PriceList = DEFAULT_PRICES,
+  specials: BookingSpecialSelection[] = [],
 ): { lineItems: LineItem[]; total: number } {
   const lineItems: LineItem[] = [];
   const addLine = (itemId: string, name: string, quantity: number, pricePerUnit: number, isPerson: boolean, isParty: boolean) => {
@@ -206,6 +209,73 @@ export function calculateServerTotal(
     if (swimmingChildren > 0) addLine('party-child-swimming', 'Additional birthday party child entrance (swimming)', swimmingChildren, priceOf(prices, 'party-child-swimming'), true, true);
     if (nonSwimmingChildren > 0) addLine('party-child-non-swimming', 'Additional birthday party child entrance (non-swimming)', nonSwimmingChildren, priceOf(prices, 'party-child-non-swimming'), true, true);
     if (party.partyPacks > 0) addLine('party-pack', 'Optional party pack', party.partyPacks, priceOf(prices, 'party-pack'), false, true);
+  }
+
+  // Specials items
+  for (const selection of specials) {
+    if (selection.quantity <= 0) continue;
+    const { id, quantity, snapshot } = selection;
+
+    let baseTotal = 0;
+    for (const t of snapshot.paid_tickets) {
+      baseTotal += priceOf(prices, t.itemId) * t.quantity;
+    }
+
+    let bundlePrice = baseTotal;
+    if (snapshot.pricing.type === 'percentage') {
+      bundlePrice = Math.max(0, baseTotal * (100 - snapshot.pricing.discount) / 100);
+    } else if (snapshot.pricing.type === 'fixed-off') {
+      bundlePrice = Math.max(0, baseTotal - snapshot.pricing.discount);
+    } else if (snapshot.pricing.type === 'fixed-price') {
+      bundlePrice = snapshot.pricing.price;
+    }
+
+    const discountRatio = baseTotal > 0 ? (baseTotal - bundlePrice) / baseTotal : 0;
+
+    for (const t of snapshot.paid_tickets) {
+      const itemInfo = BOOKABLE_ITEMS[t.itemId];
+      if (!itemInfo) continue;
+      const basePrice = priceOf(prices, t.itemId);
+      const pricePerUnit = Number(Math.max(0, basePrice * (1 - discountRatio)).toFixed(2));
+      lineItems.push({
+        itemId: t.itemId,
+        name: `${itemInfo.name} (Special: ${snapshot.title})`,
+        quantity: t.quantity * quantity,
+        pricePerUnit,
+        subtotal: Number((pricePerUnit * t.quantity * quantity).toFixed(2)),
+        isPerson: itemInfo.isPerson,
+        party: false,
+        specialId: id,
+      });
+    }
+
+    for (const t of snapshot.free_tickets) {
+      const itemInfo = BOOKABLE_ITEMS[t.itemId];
+      if (!itemInfo) continue;
+      lineItems.push({
+        itemId: t.itemId,
+        name: `${itemInfo.name} (Free with ${snapshot.title})`,
+        quantity: t.quantity * quantity,
+        pricePerUnit: 0,
+        subtotal: 0,
+        isPerson: itemInfo.isPerson,
+        party: false,
+        specialId: id,
+      });
+    }
+
+    if (snapshot.free_meals > 0) {
+      lineItems.push({
+        itemId: 'special-meal',
+        name: `Free Meal Voucher (${snapshot.title})`,
+        quantity: snapshot.free_meals * quantity,
+        pricePerUnit: 0,
+        subtotal: 0,
+        isPerson: false,
+        party: false,
+        specialId: id,
+      });
+    }
   }
 
   const total = lineItems.reduce((sum, item) => sum + item.subtotal, 0);

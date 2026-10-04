@@ -58,6 +58,14 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
 
   // ITNs can be retried after ticket creation. Reuse those tickets so a
   // failed email delivery can be retried without issuing duplicate tickets.
+  let labelledMeals: Array<Record<string, unknown>> = [];
+  if (existingMeals?.length) {
+    labelledMeals = existingMeals.map(m => ({
+      ...m,
+      display_name: `${mealName} (${(m.specials as any)?.title || 'Special'})`,
+    }));
+  }
+
   if (existingTickets?.length) {
     const labelledTickets = existingTickets.map((ticket, index) => ({
       ...ticket,
@@ -65,13 +73,32 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
       attendee_name: attendeeFullNames[index] || '',
     }));
     if (options.sendEmail !== false) {
-      await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining);
+      await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining, labelledMeals);
       await markTicketsEmailed(bookingId);
     }
     return labelledTickets;
   }
 
   const newTickets: Array<Record<string, unknown>> = [];
+  const newMeals: Array<Record<string, unknown>> = [];
+  if (!existingMeals?.length && bookingSpecials?.length) {
+    for (const bs of bookingSpecials) {
+      const freeMeals = (bs.snapshot.free_meals || 0) * bs.quantity;
+      for (let i = 0; i < freeMeals; i++) {
+        const mealUid = `MEAL-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+        const qrToken = createQrToken(bookingId, mealUid, String(items[0]?.bookings?.visit_date), 'meal');
+        newMeals.push({
+          booking_id: bookingId,
+          special_id: bs.special_id,
+          meal_uid: mealUid,
+          qr_token: qrToken,
+          visit_date: items[0]?.bookings?.visit_date,
+          display_name: `${mealName} (${bs.snapshot.title})`
+        });
+      }
+    }
+    labelledMeals = newMeals;
+  }
   let personIndex = 0;
   for (const item of items.filter(item => item.metadata?.isPerson === true || item.package_id)) {
     for (let i = 0; i < item.quantity; i++) {
@@ -94,8 +121,14 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     ticket_uid: ticket.ticket_uid, qr_token: ticket.qr_token, visit_date: ticket.visit_date,
   })));
   if (insertError) throw new Error(`Could not create tickets: ${insertError.message}`);
+  if (newMeals.length > 0) {
+    const { error: insertMealsError } = await supabase.from('meal_vouchers').insert(newMeals.map(m => ({
+      booking_id: m.booking_id, special_id: m.special_id, meal_uid: m.meal_uid, qr_token: m.qr_token, visit_date: m.visit_date
+    })));
+    if (insertMealsError) throw new Error(`Could not create meal vouchers: ${insertMealsError.message}`);
+  }
   if (options.sendEmail !== false) {
-    await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining);
+    await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining, labelledMeals);
     await markTicketsEmailed(bookingId);
   }
   return newTickets;
@@ -159,7 +192,7 @@ function buildTicketDisplayNames(items: BookingItem[], seatingLabel = '') {
   return { names, attendeeFullNames };
 }
 
-async function sendTicketsEmail(email: string, name: string, tickets: Array<Record<string, unknown>>, voucherRemaining: number | null = null) {
+async function sendTicketsEmail(email: string, name: string, tickets: Array<Record<string, unknown>>, voucherRemaining: number | null = null, meals: Array<Record<string, unknown>> = []) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
   if (!email) throw new Error('Customer email address is missing');
@@ -176,6 +209,39 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     filename: `${String(ticket.ticket_uid || `ticket-${index + 1}`)}-qr.png`,
     png: await QRCode.toBuffer(ticketScanUrl(appUrl, ticket), { type: 'png', width: 220, margin: 1 }),
   })));
+
+  const mealQrCodes = await Promise.all(meals.map(async (meal, index) => ({
+    contentId: `meal-qr-${index + 1}`,
+    filename: `${String(meal.meal_uid || `meal-${index + 1}`)}-qr.png`,
+    png: await QRCode.toBuffer(mealScanUrl(appUrl, meal), { type: 'png', width: 220, margin: 1 }),
+  })));
+
+  const mealsHtml = meals.map((meal, index) => {
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #16a34a;border-radius:10px;margin-bottom:16px;overflow:hidden;">
+      <tr>
+        <td style="background:#16a34a;padding:8px 16px;">
+          <p style="margin:0;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:1px;">FREE MEAL VOUCHER ${index + 1} OF ${meals.length}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:18px 20px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="vertical-align:top;">
+                <p style="margin:0 0 10px;font-size:13px;font-weight:600;color:#334155;">${escapeHtml(String(meal.display_name || 'Free Meal'))}</p>
+                <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Voucher ID</p>
+                <p style="margin:0 0 12px;font-size:13px;font-family:'Courier New',monospace;color:#0f172a;">${escapeHtml(String(meal.meal_uid))}</p>
+                <p style="margin:0;font-size:11px;color:#94a3b8;">Present this QR code to the kitchen staff.</p>
+              </td>
+              <td width="112" style="vertical-align:top;text-align:center;padding-left:14px;">
+                <img src="cid:${mealQrCodes[index].contentId}" alt="QR Code for Meal" width="104" height="104" style="border:1px solid #16a34a;border-radius:8px;" />
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>`;
+  }).join('');
 
   const ticketsHtml = tickets.map((ticket, index) => {
     const attendeeName = String(ticket.attendee_name || '');
@@ -221,10 +287,12 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
       ${visitDateBanner}
       <p>Each person requires their own ticket to enter${tickets.length > 1 ? ` — you have <strong>${tickets.length} tickets</strong> below` : ''}. A PDF copy of every ticket is also attached to this email.</p>
       ${ticketsHtml}
+      ${mealsHtml.length > 0 ? `<p><strong>Free Meals:</strong> You also have ${meals.length} free meal voucher(s) included.</p>${mealsHtml}` : ''}
       <p>We look forward to seeing you!</p>
     `,
   });
   const attachments = await Promise.all(tickets.map((ticket, index) => createTicketPdf(ticket, qrCodes[index].png, index)));
+  const mealAttachments = await Promise.all(meals.map((meal, index) => createMealPdf(meal, mealQrCodes[index].png, index)));
   await sendEmail({
     to: email,
     subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
@@ -232,7 +300,9 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     replyTo: supportEmail,
     attachments: [
       ...qrCodes.map(qr => ({ filename: qr.filename, content: qr.png, contentType: 'image/png', contentId: qr.contentId })),
+      ...mealQrCodes.map(qr => ({ filename: qr.filename, content: qr.png, contentType: 'image/png', contentId: qr.contentId })),
       ...attachments.map(({ filename, content }) => ({ filename, content, contentType: 'application/pdf' })),
+      ...mealAttachments.map(({ filename, content }) => ({ filename, content, contentType: 'application/pdf' })),
     ],
   });
 }
@@ -349,4 +419,61 @@ function wrapPdfText(text: string, font: Awaited<ReturnType<PDFDocument['embedFo
   while (last.length > 1 && font.widthOfTextAtSize(`${last}…`, size) > maxWidth) last = last.slice(0, -1);
   visible[maxLines - 1] = `${last}…`;
   return visible;
+}
+
+function mealScanUrl(appUrl: string, meal: Record<string, unknown>) {
+  return `${appUrl}/admin/meals?token=${encodeURIComponent(String(meal.qr_token))}`;
+}
+
+async function createMealPdf(meal: Record<string, unknown>, qrBuffer: Buffer, index: number) {
+  const mealUid = String(meal.meal_uid || `meal-${index + 1}`);
+  const displayName = String(meal.display_name || 'Free Meal');
+  const rawVisitDate = String(meal.visit_date || '');
+  const visitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : 'See booking confirmation';
+
+  const document = await PDFDocument.create();
+  const page = document.addPage([595, 842]);
+  const regular = await document.embedFont(StandardFonts.Helvetica);
+  const bold = await document.embedFont(StandardFonts.HelveticaBold);
+  const primary = rgb(22 / 255, 163 / 255, 74 / 255); // green-600
+  const dark = rgb(15 / 255, 23 / 255, 42 / 255);
+  const muted = rgb(100 / 255, 116 / 255, 139 / 255);
+
+  const footerY = 80;
+  page.drawText('This voucher is valid for one meal and may only be redeemed once.', { x: 125, y: footerY, size: 10, font: regular, color: muted });
+
+  const scanInstructionY = 245;
+  page.drawText('Present this QR code to the kitchen staff.', { x: 165, y: scanInstructionY, size: 13, font: regular, color: dark });
+
+  const qrY = 275;
+  const qrImage = await document.embedPng(qrBuffer);
+  page.drawImage(qrImage, { x: 187, y: qrY, width: 220, height: 220 });
+
+  const qrZoneTop = qrY + 220 + 15;
+
+  page.drawRectangle({ x: 40, y: 42, width: 515, height: 758, borderColor: primary, borderWidth: 2 });
+  page.drawText('GRACELAND VENUES', { x: 75, y: 720, size: 24, font: bold, color: primary });
+  page.drawText('FREE MEAL VOUCHER', { x: 77, y: 690, size: 12, font: regular, color: muted });
+
+  let nextY = 660;
+
+  page.drawText(`Visit Date: ${visitDate}`, { x: 75, y: nextY, size: 16, font: bold, color: primary });
+  nextY -= 30;
+
+  const titleSize = 18;
+  const titleLines = wrapPdfText(displayName, bold, 445, titleSize, 3);
+  titleLines.forEach((line) => {
+    if (nextY > qrZoneTop) {
+      page.drawText(line, { x: 75, y: nextY, size: titleSize, font: bold, color: dark });
+      nextY -= 23;
+    }
+  });
+
+  nextY -= 10;
+  if (nextY > qrZoneTop) {
+    page.drawText(`Voucher ID: ${mealUid}`, { x: 75, y: nextY, size: 13, font: regular, color: muted });
+  }
+
+  const content = Buffer.from(await document.save());
+  return { filename: `${mealUid}.pdf`, content };
 }

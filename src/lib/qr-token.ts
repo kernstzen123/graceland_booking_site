@@ -2,7 +2,7 @@ import 'server-only';
 import crypto from 'crypto';
 import { requireEnv } from './env';
 
-type QrClaims = { v: 1; bid: string; tid: string; nonce: string; exp: number };
+type QrClaims = { v: 1; bid: string; tid: string; nonce: string; exp: number; type?: 'ticket' | 'meal' };
 
 function secret() {
   // QR_SIGNING_SECRET must be its own dedicated secret — never fall back to
@@ -18,9 +18,9 @@ function signature(payload: string) {
   return crypto.createHmac('sha256', secret()).update(payload).digest('base64url');
 }
 
-export function createQrToken(bookingId: string, ticketUid: string, visitDate: string) {
+export function createQrToken(bookingId: string, ticketUid: string, visitDate: string, type: 'ticket' | 'meal' = 'ticket') {
   const expiry = new Date(`${visitDate}T23:59:59.999Z`).getTime();
-  const claims: QrClaims = { v: 1, bid: bookingId, tid: ticketUid, nonce: crypto.randomBytes(18).toString('base64url'), exp: Math.floor(expiry / 1000) };
+  const claims: QrClaims = { v: 1, bid: bookingId, tid: ticketUid, nonce: crypto.randomBytes(18).toString('base64url'), exp: Math.floor(expiry / 1000), type };
   const payload = encode(JSON.stringify(claims));
   return `${payload}.${signature(payload)}`;
 }

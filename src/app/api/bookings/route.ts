@@ -16,8 +16,8 @@ export async function POST(request: Request) {
   try {
     if (!(await checkRateLimit(request, 'booking', 10, 60))) return NextResponse.json({ success: false, error: 'Too many booking attempts. Please wait a minute and try again.' }, { status: 429 });
     const body = await request.json();
-    const { selectedDate, selections, customerDetails, totalAmount, party, spotIds, idempotencyKey, voucherCode, termsAccepted, privacyAccepted, attendeeNames } = body;
-    if (!selectedDate || !selections || !customerDetails?.email || Number(totalAmount) < 0) {
+    const { selectedDate, selections, customerDetails, totalAmount, party, spotIds, idempotencyKey, voucherCode, termsAccepted, privacyAccepted, attendeeNames, specials = [] } = body;
+    if (!selectedDate || (!selections && specials.length === 0) || !customerDetails?.email || Number(totalAmount) < 0) {
       throw new Error('Missing or invalid booking details');
     }
     if (termsAccepted !== true || privacyAccepted !== true) throw new Error('You must accept both the Terms and Conditions and Privacy Policy before booking');
@@ -39,8 +39,14 @@ export async function POST(request: Request) {
       if (!/^[a-z0-9-]+$/.test(key) || !Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 500) throw new Error('Invalid package quantity');
     }
     // Verify every selection key is a known bookable item
-    for (const key of Object.keys(selections)) {
+    for (const key of Object.keys(selections || {})) {
       if (Number(selections[key]) > 0 && !BOOKABLE_ITEMS[key]) throw new Error(`Unknown booking item: ${key}`);
+    }
+    if (!Array.isArray(specials)) throw new Error('Invalid specials format');
+    for (const special of specials) {
+      if (typeof special !== 'object' || !special.id || !Number.isInteger(Number(special.quantity)) || Number(special.quantity) < 1 || !special.snapshot) {
+        throw new Error('Invalid special format');
+      }
     }
     const safeCustomerDetails = { firstName, lastName, email, phone };
 
@@ -69,7 +75,7 @@ export async function POST(request: Request) {
       if (qty > 0) serverSelections[key] = qty;
     }
     const prices = await getCurrentPrices();
-    const { lineItems, total: serverTotal } = calculateServerTotal(serverSelections, validatedParty, prices);
+    const { lineItems, total: serverTotal } = calculateServerTotal(serverSelections, validatedParty, prices, specials);
 
     // Reject if the server total is zero or negative
     if (serverTotal <= 0) throw new Error('Invalid booking amount');
@@ -86,7 +92,7 @@ export async function POST(request: Request) {
     let selectedPackageCount = 0;
     let selectedChildCount = 0;
     let selectedAdultCount = 0;
-    Object.keys(selections).forEach(key => {
+    Object.keys(selections || {}).forEach(key => {
       // Assuming packages with these keywords count towards headcount
       if (key.includes('child') || key.includes('adult') || key.includes('pensioner') || key.includes('infant') || key.includes('toddler')) {
         const quantity = Number(selections[key]);
@@ -96,6 +102,19 @@ export async function POST(request: Request) {
         if (key.includes('adult') || key.includes('pensioner')) selectedAdultCount += quantity;
       }
     });
+
+    for (const special of specials) {
+      const tickets = [...(special.snapshot.paid_tickets || []), ...(special.snapshot.free_tickets || [])];
+      for (const t of tickets) {
+        const quantity = Number(t.quantity) * Number(special.quantity);
+        if (t.itemId.includes('child') || t.itemId.includes('adult') || t.itemId.includes('pensioner') || t.itemId.includes('infant') || t.itemId.includes('toddler')) {
+          peopleCount += quantity;
+          selectedPackageCount += quantity;
+          if (t.itemId.includes('child') || t.itemId.includes('toddler') || t.itemId.includes('infant')) selectedChildCount += quantity;
+          if (t.itemId.includes('adult') || t.itemId.includes('pensioner')) selectedAdultCount += quantity;
+        }
+      }
+    }
 
     const partyDetails = validatedParty;
     if (partyDetails?.enabled) {
@@ -111,8 +130,8 @@ export async function POST(request: Request) {
     if (selectedPackageCount === 0) throw new Error('Please select at least one entrance package before continuing.');
     if (selectedChildCount > 0 && selectedAdultCount === 0) throw new Error('A child pass must be booked with at least one adult or pensioner entrance.');
 
-    const selectedTableCount = Number(selections['hut-shaded'] || 0);
-    const selectedPaidHutCount = Number(selections['hut-covered'] || 0);
+    const selectedTableCount = Number((selections && selections['hut-shaded']) || 0);
+    const selectedPaidHutCount = Number((selections && selections['hut-covered']) || 0);
     const requiredHutCount = selectedPaidHutCount + (partyDetails?.enabled ? 1 : 0);
     const maximumHutCount = peopleCount >= 12 ? 2 : peopleCount >= 6 ? 1 : 0;
     const maximumTableCount = Math.max(1, Math.ceil(peopleCount / 6));
@@ -192,6 +211,7 @@ export async function POST(request: Request) {
       p_spot_ids: requestedSpotIds,
       p_terms_version: TERMS_VERSION,
       p_privacy_version: PRIVACY_VERSION,
+      p_specials: specials,
     });
     if (error) {
       // Count wrong voucher codes towards the guessing lockout.
