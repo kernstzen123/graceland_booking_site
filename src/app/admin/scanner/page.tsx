@@ -254,7 +254,13 @@ export default function Scanner() {
     warmUpAudio();
 
     try {
-      const code = value.trim();
+      let code = value.trim();
+
+      // Extract token if it's a URL
+      try {
+        const url = new URL(code);
+        code = url.searchParams.get('token') || code;
+      } catch { /* not a URL */ }
 
       let isMeal = code.toUpperCase().startsWith('MEAL-');
       if (!isMeal && code.includes('.')) {
