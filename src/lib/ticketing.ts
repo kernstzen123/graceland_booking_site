@@ -43,6 +43,11 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     .eq('booking_id', bookingId);
   if (spotsError) throw new Error(`Could not load booking seating: ${spotsError.message}`);
 
+  const { data: existingMeals } = await supabase.from('meal_vouchers').select('meal_uid, qr_token, visit_date, specials(title)').eq('booking_id', bookingId);
+  const { data: bookingSpecials } = await supabase.from('booking_specials').select('special_id, quantity, snapshot').eq('booking_id', bookingId);
+  const { data: settings } = await supabase.from('special_settings').select('meal_name').eq('id', 1).maybeSingle();
+  const mealName = settings?.meal_name || 'Free Meal';
+
   const seatingLabel = (bookingSpots || []).map((row) => {
     const spot = Array.isArray(row.venue_spots) ? row.venue_spots[0] : row.venue_spots;
     if (!spot?.number) return null;
