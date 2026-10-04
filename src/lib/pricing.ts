@@ -173,6 +173,23 @@ export type LineItem = {
  * This is used on the server to verify the client total and to build the
  * booking items that are stored.
  */
+export function calculateSpecialPrice(snapshot: any, prices: PriceList = DEFAULT_PRICES): number {
+  let baseTotal = 0;
+  for (const t of snapshot.paid_tickets) {
+    baseTotal += priceOf(prices, t.itemId) * t.quantity;
+  }
+
+  let bundlePrice = baseTotal;
+  if (snapshot.pricing.type === 'percentage') {
+    bundlePrice = Math.max(0, baseTotal * (100 - snapshot.pricing.discount) / 100);
+  } else if (snapshot.pricing.type === 'fixed-off') {
+    bundlePrice = Math.max(0, baseTotal - snapshot.pricing.discount);
+  } else if (snapshot.pricing.type === 'fixed-price') {
+    bundlePrice = snapshot.pricing.price;
+  }
+  return bundlePrice;
+}
+
 export function calculateServerTotal(
   selections: Record<string, number>,
   party: PartyDetails | undefined,
@@ -221,14 +238,7 @@ export function calculateServerTotal(
       baseTotal += priceOf(prices, t.itemId) * t.quantity;
     }
 
-    let bundlePrice = baseTotal;
-    if (snapshot.pricing.type === 'percentage') {
-      bundlePrice = Math.max(0, baseTotal * (100 - snapshot.pricing.discount) / 100);
-    } else if (snapshot.pricing.type === 'fixed-off') {
-      bundlePrice = Math.max(0, baseTotal - snapshot.pricing.discount);
-    } else if (snapshot.pricing.type === 'fixed-price') {
-      bundlePrice = snapshot.pricing.price;
-    }
+    const bundlePrice = calculateSpecialPrice(snapshot, prices);
 
     const discountRatio = baseTotal > 0 ? (baseTotal - bundlePrice) / baseTotal : 0;
 

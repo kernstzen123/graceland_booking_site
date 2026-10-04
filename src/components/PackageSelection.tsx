@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties';
-import { buildPackageGroups, PACKAGE_GROUPS, priceOf, calculateServerTotal, type PriceList } from '@/lib/pricing';
+import { buildPackageGroups, PACKAGE_GROUPS, priceOf, calculateServerTotal, calculateSpecialPrice, type PriceList } from '@/lib/pricing';
 import type { BookingSpecialSelection, Special } from '@/lib/specials';
 import { CheckIcon } from '@/components/icons';
 
@@ -127,7 +127,7 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
                        
                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <div style={{ fontWeight: 'bold', color: 'var(--primary)', fontSize: '1.1rem' }}>
-                             Special Rate
+                             R {calculateSpecialPrice(special, prices).toFixed(2)}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                              <button onClick={() => {

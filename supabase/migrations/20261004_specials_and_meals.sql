@@ -303,7 +303,7 @@ declare
   v_today date := (now() at time zone 'Africa/Johannesburg')::date;
   v_meal_name text;
 begin
-  select meal_name into v_meal_name from public.special_settings where id = 1;
+  select s.meal_name into v_meal_name from public.special_settings s where s.id = 1;
 
   select * into v_voucher from public.meal_vouchers m where m.meal_uid = p_meal_uid for update;
   if not found then

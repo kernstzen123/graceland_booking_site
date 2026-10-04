@@ -528,8 +528,34 @@ export default function Scanner() {
       return;
     }
     try {
+      // Offline tickets search
       const results = await searchTickets(query, 10);
-      setSearchResults(results);
+      
+      // Online meals search (only if connected)
+      if (navigator.onLine) {
+        try {
+          const res = await fetch(`/api/admin/meals/search?q=${encodeURIComponent(query)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const mealResults: OfflineTicket[] = data.meals.map((m: any) => ({
+              ticket_uid: m.meal_uid,
+              booking_ref: m.booking_ref || 'N/A',
+              ticket_id: m.id,
+              customer_name: m.customer_name || 'Meal Voucher',
+              email: m.email,
+              visit_date: m.visit_date,
+              status: m.redeemed ? 'USED' : 'UNUSED',
+              checked_in_at: m.redeemed_at,
+              isMeal: true,
+            }));
+            results.push(...mealResults);
+          }
+        } catch { /* ignore online search errors */ }
+      }
+      
+      // Remove duplicates just in case and limit
+      const unique = Array.from(new Map(results.map(r => [r.ticket_uid, r])).values());
+      setSearchResults(unique.slice(0, 15));
     } catch {
       setSearchResults([]);
     }
