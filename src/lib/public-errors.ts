@@ -35,6 +35,7 @@ const SAFE_MESSAGES = [
   'This seating spot was just taken. Please choose another spot.',
   'A seating spot was selected more than once',
   'At least one booking item is required',
+  'Special ', 'Cannot book more than', 'is sold out'
 ];
 
 /** Messages that mean "someone else got there first" rather than bad input. */

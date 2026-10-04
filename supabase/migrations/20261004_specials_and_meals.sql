@@ -136,7 +136,7 @@ begin
         raise exception 'Special % is not valid for the selected date', v_special_row.title;
       end if;
       
-      if not (v_special_row.valid_weekdays @> to_jsonb(extract(isodow from p_visit_date)::integer)) then
+      if coalesce(jsonb_array_length(v_special_row.valid_weekdays), 0) > 0 and not (v_special_row.valid_weekdays @> to_jsonb(extract(isodow from p_visit_date)::integer)) then
          raise exception 'Special % is not valid on this day of the week', v_special_row.title;
       end if;
 
