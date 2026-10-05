@@ -77,7 +77,7 @@ export function SeatingMap({ party, selectedDate, requiredTables, requiredHuts, 
       <div aria-label="Scrollable venue seating map" style={{ overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain', touchAction: 'pan-x pinch-zoom', borderRadius: 10, border: '1px solid var(--border-color)', background: '#e2e8f0' }}>
         <div style={{ position: 'relative', width: '100%', minWidth: 900, lineHeight: 0, touchAction: 'pan-x pinch-zoom' }}>
           {/* eslint-disable-next-line @next/next/no-img-element -- Spot markers are positioned as percentages of this exact image, so it must render at its natural aspect ratio */}
-          <img src="/venue-map-2026.webp" alt="Aerial map of Graceland Venues showing the huts and tables" width={1022} height={713} draggable={false} style={{ display: 'block', width: '100%', height: 'auto', userSelect: 'none' }} />
+          <img src="/venue-map-new.jpg" alt="Aerial map of Graceland Venues showing the huts and tables" width={1110} height={1000} draggable={false} style={{ display: 'block', width: '100%', height: 'auto', userSelect: 'none' }} />
           {spots.map(spot => {
             const isSelected = selectedSpotIds.includes(spot.id);
             const typeNeeded = spot.type === 'table' ? requiredTables > 0 : requiredHuts > 0;
