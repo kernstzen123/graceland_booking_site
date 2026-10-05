@@ -10,9 +10,10 @@ import { DownloadIcon } from '@/components/icons';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
-type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ quantity: number; subtotal: number; metadata: { name?: string } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
+type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
-type Action = 'resend_tickets' | 'delete' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
+type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
+const isImported = (booking: Booking) => booking.reference.toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 /** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
 const staffNotes = (notes?: string | null) => (notes || '').split('\n').filter(line => !/^[A-Z_]+$/.test(line.trim())).join(' ').trim();
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
@@ -86,6 +87,10 @@ function BookingsPage() {
       const result = await confirm({ title: 'Delete booking', message: `Delete booking ${selected.reference}? It will be cancelled and removed from the bookings list. Its payments and history are kept for your records, and you can still find it under the "Deleted" filter.`, confirmLabel: 'Delete booking', tone: 'danger', promptLabel: 'Reason', promptPlaceholder: 'e.g. Duplicate booking, test booking…', promptRequired: true });
       if (!result.confirmed) return;
       reason = result.value;
+    } else if (type === 'purge') {
+      const result = await confirm({ title: 'Permanently delete booking', message: `Permanently delete ${selected.reference}? The booking, its items, tickets, meal vouchers, payments and proofs are erased for good and cannot be recovered. It will no longer count in reports or revenue.`, confirmLabel: 'Delete permanently', tone: 'danger', promptLabel: 'Reason', promptPlaceholder: 'e.g. Test booking, duplicate entry…', promptRequired: true });
+      if (!result.confirmed) return;
+      reason = result.value;
     } else if (type === 'mark_paid') {
       const result = await confirm({ title: 'Mark booking as paid', message: `Mark booking ${selected.reference} as paid and issue tickets? Only do this once the money has been received.`, confirmLabel: 'Mark as paid', tone: 'primary', promptLabel: 'How was it paid?', promptPlaceholder: 'e.g. Cash at the office on 3 Oct, receipt 1042', promptRequired: true });
       if (!result.confirmed) return;
@@ -126,11 +131,24 @@ function BookingsPage() {
         data = await response.json();
       }
       setMessage(data.message || data.error); if (!response.ok) return;
-      if (type === 'delete') setSelected(null); else await openBooking(selected.id);
+      if (type === 'delete' || type === 'purge') setSelected(null); else await openBooking(selected.id);
       if (type === 'resolve_attention') showToast('Alert resolved');
       await reload();
       if (type === 'resend_tickets') showToast('Tickets resent successfully');
       if (type === 'refund') showToast(data.emailSent ? 'Voucher issued and email sent' : 'Voucher issued; email queued for retry');
+    } finally { setBusy(''); }
+  };
+  /** Save edits to an imported booking. Returns an error message, or '' when saved. */
+  const saveEdit = async (edit: Record<string, unknown>) => {
+    if (!selected || busy) return 'Please wait…';
+    setBusy('update');
+    try {
+      const response = await fetch('/api/admin/bookings', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: selected.id, action: 'update', edit }) });
+      const data = await response.json();
+      if (!response.ok) return data.error || 'The booking could not be saved.';
+      setMessage(data.message || ''); showToast(data.message || 'Booking updated');
+      await openBooking(selected.id); await reload();
+      return '';
     } finally { setBusy(''); }
   };
   const refundAll = async () => {
@@ -214,13 +232,40 @@ function BookingsPage() {
           <button className="btn" disabled={page * pageSize >= total} onClick={() => reload(page + 1)} style={{ border: '1px solid var(--border-color)' }}>Older →</button>
         </div>}
       </div>
-      {selected && <BookingDetail booking={selected} onAction={action} />}
+      {selected && <BookingDetail booking={selected} onAction={action} onSaveEdit={saveEdit} />}
     </div>
     {dialog}
   </main>;
 }
 
-function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (action: Action, ticketId?: string, deductionPercentage?: number) => void }) {
+type EditItem = { id?: string; name: string; quantity: string; price: string; isPerson: boolean };
+
+function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; onAction: (action: Action, ticketId?: string, deductionPercentage?: number) => void; onSaveEdit: (edit: Record<string, unknown>) => Promise<string> }) {
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', visit_date: '', notes: '', total: '', people: '' });
+  const [editItems, setEditItems] = useState<EditItem[]>([]);
+  const itemsTotal = editItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.price) || 0), 0);
+  const itemsPeople = editItems.reduce((sum, item) => sum + (item.isPerson ? Number(item.quantity) || 0 : 0), 0);
+  const startEditing = () => {
+    const current = customerOf(booking);
+    setForm({ first_name: current?.first_name || '', last_name: current?.last_name || '', email: current?.email || '', phone: current?.phone || '', visit_date: booking.visit_date, notes: staffNotes(booking.notes), total: String(Number(booking.total_amount)), people: String(booking.people_count) });
+    setEditItems((booking.booking_items || []).map(item => ({ id: item.id, name: item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item', quantity: String(item.quantity), price: String(Number(item.price_per_unit ?? 0)), isPerson: item.metadata?.isPerson === true })));
+    setEditError(''); setEditing(true);
+  };
+  const saveEditForm = async () => {
+    setSaving(true); setEditError('');
+    const error = await onSaveEdit({
+      customer: { first_name: form.first_name, last_name: form.last_name, email: form.email, phone: form.phone },
+      visit_date: form.visit_date, notes: form.notes, total_amount: form.total, people_count: form.people,
+      items: editItems.map(item => ({ id: item.id, name: item.name, quantity: Number(item.quantity), price_per_unit: Number(item.price), isPerson: item.isPerson })),
+    });
+    setSaving(false);
+    if (error) setEditError(error); else setEditing(false);
+  };
+  const inputStyle = { padding: '0.55rem', border: '1px solid var(--border-color)', borderRadius: 8, width: '100%' } as const;
+  const labelStyle = { display: 'grid', gap: 4, fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' } as const;
   const [showRefundModal, setShowRefundModal] = useState(false);
   const customer = customerOf(booking);
   const { confirm, dialog } = useConfirm();
@@ -278,11 +323,52 @@ function BookingDetail({ booking, onAction }: { booking: Booking; onAction: (act
     <h3 style={{ marginTop: '1.5rem' }}>Tickets</h3>
     {booking.tickets?.length ? booking.tickets.map(ticket => <div key={ticket.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', flexWrap: 'wrap' }}><span style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>{ticket.ticket_uid} · <strong>{ticket.status}</strong></span>{ticket.status === 'VALID' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onAction('cancel_ticket', ticket.id)}>Invalidate</button>}</div>) : <p style={{ color: 'var(--text-muted)' }}>No tickets issued.</p>}
     {!isDeleted && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: '1.5rem' }}>
+      {isImported(booking) && <button className="btn btn-primary" onClick={startEditing}>Edit booking</button>}
       {isPaid && <button className="btn btn-primary" onClick={() => onAction('resend_tickets')}>Resend tickets</button>}
       {!isPaid && !isCancelled && <button className="btn" onClick={() => onAction('mark_paid')} style={{ border: '1px solid var(--border-color)' }}>Mark paid</button>}
       {isPaid && !booking.voucher_issued && <button className="btn" style={{ color: '#b91c1c', border: '1px solid #b91c1c' }} onClick={() => setShowRefundModal(true)}>Voucher refund</button>}
       {!isPaid && booking.status !== 'PAYMENT_PENDING' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)' }} onClick={() => onAction('delete')}>Delete</button>}
     </div>}
+    <div style={{ marginTop: '0.75rem' }}><button className="btn" style={{ background: '#b91c1c', color: 'white' }} onClick={() => onAction('purge')}>Delete permanently</button></div>
+    {editing && (
+      <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && !saving) setEditing(false); }}>
+        <div className="modal-card" style={{ maxWidth: 640, maxHeight: '90vh', overflowY: 'auto' }} role="dialog" aria-modal="true">
+          <div className="modal-header"><h2>Edit {booking.reference}</h2><button className="modal-close" onClick={() => setEditing(false)} aria-label="Close">✕</button></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <label style={labelStyle}>First name<input style={inputStyle} value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} /></label>
+            <label style={labelStyle}>Surname<input style={inputStyle} value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} /></label>
+            <label style={labelStyle}>Email<input style={inputStyle} type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
+            <label style={labelStyle}>Phone<input style={inputStyle} value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
+            <label style={labelStyle}>Visit date<input style={inputStyle} type="date" value={form.visit_date} onChange={e => setForm({ ...form, visit_date: e.target.value })} /></label>
+            <label style={labelStyle}>People (headcount)<input style={inputStyle} type="number" min={1} value={form.people} onChange={e => setForm({ ...form, people: e.target.value })} /></label>
+          </div>
+          <h3 style={{ margin: '1rem 0 0.5rem' }}>Items</h3>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {editItems.map((item, index) => (
+              <div key={index} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 90px auto auto', gap: 6, alignItems: 'end' }}>
+                <label style={labelStyle}>Name<input style={inputStyle} value={item.name} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, name: e.target.value } : row))} /></label>
+                <label style={labelStyle}>Qty<input style={inputStyle} type="number" min={1} value={item.quantity} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, quantity: e.target.value } : row))} /></label>
+                <label style={labelStyle}>Price each<input style={inputStyle} type="number" min={0} step="0.01" value={item.price} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, price: e.target.value } : row))} /></label>
+                <label style={{ ...labelStyle, alignItems: 'center', justifyItems: 'center' }}>Person<input type="checkbox" checked={item.isPerson} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, isPerson: e.target.checked } : row))} /></label>
+                <button type="button" className="btn" aria-label="Remove item" disabled={editItems.length <= 1} onClick={() => setEditItems(editItems.filter((_, i) => i !== index))} style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.5rem 0.6rem' }}>✕</button>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="btn" onClick={() => setEditItems([...editItems, { name: '', quantity: '1', price: '0', isPerson: true }])} style={{ marginTop: 8, border: '1px solid var(--border-color)' }}>+ Add item</button>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 8 }}>Items marked <strong>Person</strong> get a gate ticket each. Saving rebuilds unscanned tickets to match.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'end', marginTop: 10 }}>
+            <label style={labelStyle}>Total (R)<input style={inputStyle} type="number" min={0} step="0.01" value={form.total} onChange={e => setForm({ ...form, total: e.target.value })} /></label>
+            <button type="button" className="btn" onClick={() => setForm({ ...form, total: itemsTotal.toFixed(2), people: String(itemsPeople || form.people) })} style={{ border: '1px solid var(--border-color)' }}>Use items: R {itemsTotal.toFixed(2)} · {itemsPeople} people</button>
+          </div>
+          <label style={{ ...labelStyle, marginTop: 10 }}>Notes<textarea style={{ ...inputStyle, minHeight: 70 }} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
+          {editError && <p role="alert" style={{ color: 'var(--danger)', marginTop: 10 }}>{editError}</p>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <button className="btn" style={{ flex: 1, border: '1px solid var(--border-color)' }} disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+            <button className="btn btn-primary" style={{ flex: 2 }} disabled={saving} onClick={saveEditForm}>{saving ? 'Saving…' : 'Save changes'}</button>
+          </div>
+        </div>
+      </div>
+    )}
     {!isDeleted && booking.status === 'PAYMENT_PENDING' && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.75rem' }}>A proof of payment is waiting for review on the Proofs of payment page.</p>}
 
     {showRefundModal && (

@@ -7,7 +7,8 @@ import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/l
 
 const DETAIL_FIELDS = 'id,reference,visit_date,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
 const STATUS_FILTERS = ['PAID', 'PENDING', 'CANCELLED', 'FAILED', 'ATTENTION', 'DELETED'];
-const ACTIONS = ['resend_tickets', 'delete', 'mark_paid', 'cancel_ticket', 'resolve_attention'];
+const ACTIONS = ['resend_tickets', 'delete', 'purge', 'update', 'mark_paid', 'cancel_ticket', 'resolve_attention'];
+const isImportedBooking = (booking: { reference?: string | null; payment_method?: string | null }) => String(booking.reference || '').toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 const PAGE_SIZE = 50;
 
 /** Staff notes for the audit log: single line, at most 300 characters. */
@@ -82,7 +83,7 @@ export async function POST(request: Request) {
     if (action === 'refund') return NextResponse.json({ success: false, error: 'Use "Voucher refund" on the booking. Only admins can issue refunds.' }, { status: 400 });
     if (typeof bookingId !== 'string' || !bookingId || !ACTIONS.includes(action)) return NextResponse.json({ success: false, error: 'Invalid booking action' }, { status: 400 });
     const { data: booking, error } = await supabase.from('bookings')
-      .select('id,reference,status,total_amount,amount_due,payment_method,attention_reason,customers(first_name,last_name,email),tickets(id,ticket_uid,status),payments(method,status)')
+      .select('id,reference,status,total_amount,amount_due,payment_method,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,customers(first_name,last_name,email),tickets(id,ticket_uid,status),payments(method,status)')
       .eq('id', bookingId).maybeSingle();
     if (error) throw error;
     if (!booking) return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
@@ -137,6 +138,150 @@ export async function POST(request: Request) {
       if (ticketError) throw ticketError;
       await writeAudit(user.id, 'CANCEL_TICKET', 'ticket', ticketId, { booking_id: booking.id, reference: booking.reference, reason: reason || null });
       return NextResponse.json({ success: true, message: 'Ticket cancelled and invalidated' });
+    }
+
+    if (action === 'update') {
+      if (!isImportedBooking(booking)) return NextResponse.json({ success: false, error: 'Only imported (IM-) bookings can be edited this way.' }, { status: 400 });
+      const text = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '');
+      const edit = body.edit || {};
+      const updates: Record<string, unknown> = {};
+
+      // Visit date
+      let visitDate = booking.visit_date as string;
+      if (edit.visit_date !== undefined) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(edit.visit_date))) return NextResponse.json({ success: false, error: 'Enter a valid visit date.' }, { status: 400 });
+        visitDate = String(edit.visit_date);
+        updates.visit_date = visitDate;
+      }
+
+      // Items
+      let itemsChanged = false;
+      let derivedTotal: number | null = null;
+      let derivedPeople: number | null = null;
+      if (Array.isArray(edit.items)) {
+        const { data: existingItems, error: itemsError } = await supabase.from('booking_items').select('id,metadata').eq('booking_id', booking.id);
+        if (itemsError) throw itemsError;
+        const existingById = new Map((existingItems || []).map(item => [item.id, item]));
+        const clean: Array<{ id?: string; name: string; quantity: number; price: number; isPerson: boolean }> = [];
+        for (const raw of edit.items.slice(0, 60)) {
+          const quantity = Number(raw?.quantity); const price = Number(raw?.price_per_unit);
+          const name = text(raw?.name, 120);
+          if (!name) return NextResponse.json({ success: false, error: 'Every item needs a name.' }, { status: 400 });
+          if (!Number.isInteger(quantity) || quantity < 1 || quantity > 500) return NextResponse.json({ success: false, error: `Quantity for "${name}" must be a whole number from 1 to 500.` }, { status: 400 });
+          if (!Number.isFinite(price) || price < 0 || price > 1000000) return NextResponse.json({ success: false, error: `Price for "${name}" is not valid.` }, { status: 400 });
+          if (raw.id && !existingById.has(raw.id)) return NextResponse.json({ success: false, error: 'An item does not belong to this booking.' }, { status: 400 });
+          clean.push({ id: raw.id, name, quantity, price: Math.round(price * 100) / 100, isPerson: raw.isPerson === true });
+        }
+        if (!clean.length) return NextResponse.json({ success: false, error: 'A booking needs at least one item.' }, { status: 400 });
+        const keepIds = new Set(clean.filter(item => item.id).map(item => item.id as string));
+        const removeIds = (existingItems || []).map(item => item.id).filter(itemId => !keepIds.has(itemId));
+        if (removeIds.length) {
+          const { error: removeError } = await supabase.from('booking_items').delete().in('id', removeIds);
+          if (removeError) throw removeError;
+        }
+        for (const item of clean) {
+          const subtotal = Math.round(item.price * item.quantity * 100) / 100;
+          if (item.id) {
+            const previous = (existingById.get(item.id)?.metadata || {}) as Record<string, unknown>;
+            const { error: updateItemError } = await supabase.from('booking_items').update({ quantity: item.quantity, price_per_unit: item.price, subtotal, metadata: { ...previous, name: item.name, isPerson: item.isPerson } }).eq('id', item.id);
+            if (updateItemError) throw updateItemError;
+          } else {
+            const { error: insertItemError } = await supabase.from('booking_items').insert({ booking_id: booking.id, quantity: item.quantity, price_per_unit: item.price, subtotal, metadata: { name: item.name, isPerson: item.isPerson } });
+            if (insertItemError) throw insertItemError;
+          }
+        }
+        itemsChanged = true;
+        derivedTotal = clean.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        derivedPeople = clean.reduce((sum, item) => sum + (item.isPerson ? item.quantity : 0), 0);
+      }
+
+      // Totals
+      if (edit.total_amount !== undefined && edit.total_amount !== null && edit.total_amount !== '') {
+        const total = Number(edit.total_amount);
+        if (!Number.isFinite(total) || total < 0 || total > 10000000) return NextResponse.json({ success: false, error: 'The total is not valid.' }, { status: 400 });
+        updates.total_amount = Math.round(total * 100) / 100;
+      } else if (derivedTotal !== null) updates.total_amount = Math.round(derivedTotal * 100) / 100;
+      if (edit.people_count !== undefined && edit.people_count !== null && edit.people_count !== '') {
+        const people = Number(edit.people_count);
+        if (!Number.isInteger(people) || people < 1 || people > 5000) return NextResponse.json({ success: false, error: 'People must be a whole number of at least 1.' }, { status: 400 });
+        updates.people_count = people;
+      } else if (derivedPeople) updates.people_count = derivedPeople;
+
+      // Notes keep the system marker line so the booking stays recognisable as imported.
+      if (edit.notes !== undefined) {
+        const staffNote = text(edit.notes, 500);
+        updates.notes = staffNote ? `IMPORTED_FROM_BOOK\n${staffNote}` : 'IMPORTED_FROM_BOOK';
+      }
+
+      // Customer: a fresh customer row, so no other booking sharing the old one is changed.
+      let newCustomerId: string | null = null;
+      if (edit.customer) {
+        const firstName = text(edit.customer.first_name, 80); const lastName = text(edit.customer.last_name, 80);
+        const email = text(edit.customer.email, 254).toLowerCase(); const phone = text(edit.customer.phone, 40);
+        if (!firstName || !lastName) return NextResponse.json({ success: false, error: 'Enter the customer\'s first name and surname.' }, { status: 400 });
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return NextResponse.json({ success: false, error: `"${email}" is not a valid email address.` }, { status: 400 });
+        const { data: newCustomer, error: customerInsertError } = await supabase.from('customers').insert({ first_name: firstName, last_name: lastName, email, phone }).select('id').single();
+        if (customerInsertError) throw customerInsertError;
+        newCustomerId = newCustomer.id;
+        updates.customer_id = newCustomerId;
+      }
+
+      if (Object.keys(updates).length) {
+        const { error: bookingUpdateError } = await supabase.from('bookings').update(updates).eq('id', booking.id);
+        if (bookingUpdateError) throw bookingUpdateError;
+      }
+      if (newCustomerId) await supabase.from('tickets').update({ customer_id: newCustomerId }).eq('booking_id', booking.id);
+      if (edit.visit_date !== undefined && visitDate !== booking.visit_date) {
+        await supabase.from('tickets').update({ visit_date: visitDate }).eq('booking_id', booking.id);
+        await supabase.from('booking_spots').update({ visit_date: visitDate }).eq('booking_id', booking.id);
+        await supabase.from('meal_vouchers').update({ visit_date: visitDate }).eq('booking_id', booking.id);
+      }
+
+      // Gate tickets follow the items. Tickets that were already scanned are never touched.
+      let ticketNote = '';
+      if (itemsChanged) {
+        const hasUsed = (booking.tickets || []).some(ticket => ticket.status === 'USED');
+        if (hasUsed) ticketNote = ' Some tickets were already scanned, so the tickets were left as they are.';
+        else {
+          const { error: clearError } = await supabase.from('tickets').delete().eq('booking_id', booking.id);
+          if (clearError) throw clearError;
+          const finalCustomer = newCustomerId ? edit.customer : customer;
+          const name = [finalCustomer?.first_name, finalCustomer?.last_name].filter(Boolean).join(' ') || 'Customer';
+          try { await generateTicketsAndSendEmail(booking.id, finalCustomer?.email || '', name, { sendEmail: false }); }
+          catch (ticketError) { console.error('Could not rebuild tickets after editing', booking.reference, ticketError); ticketNote = ' The tickets could not be rebuilt: make sure at least one item is marked as a person.'; }
+        }
+      }
+      await writeAudit(user.id, 'EDIT_IMPORTED_BOOKING', 'booking', booking.id, { reference: booking.reference, fields: Object.keys(updates), items_changed: itemsChanged });
+      return NextResponse.json({ success: true, message: `Booking updated.${ticketNote}` });
+    }
+
+    if (action === 'purge') {
+      // Permanent deletion: the booking and everything attached to it are removed for good.
+      if (role !== 'ADMIN') return NextResponse.json({ success: false, error: 'Only admins can permanently delete bookings.' }, { status: 403 });
+      if (reason.length < 3) return NextResponse.json({ success: false, error: 'Enter a reason for permanently deleting this booking.' }, { status: 400 });
+      const { data: issuedCredits } = await supabase.from('booking_credits').select('id').eq('original_booking_id', booking.id).limit(1);
+      if (issuedCredits?.length) return NextResponse.json({ success: false, error: 'A voucher was issued from this booking, so it cannot be permanently deleted. Use Delete instead, which keeps the records.' }, { status: 409 });
+
+      // Give back any voucher balance this booking was still holding.
+      const { data: redemptions } = await supabase.from('credit_redemptions').select('id,credit_id,amount_used,released').eq('booking_id', booking.id);
+      for (const redemption of redemptions || []) {
+        if (redemption.released) continue;
+        const { data: credit } = await supabase.from('booking_credits').select('remaining_balance,status').eq('id', redemption.credit_id).maybeSingle();
+        if (credit && credit.status !== 'void') await supabase.from('booking_credits').update({ remaining_balance: Number(credit.remaining_balance) + Number(redemption.amount_used), status: 'active' }).eq('id', redemption.credit_id);
+      }
+
+      const { data: proofs } = await supabase.from('payment_proofs').select('file_url').eq('booking_id', booking.id);
+      const removals: Array<[string, string]> = [['credit_redemptions', 'booking_id'], ['meal_redemptions', 'booking_id'], ['meal_vouchers', 'booking_id'], ['booking_specials', 'booking_id'], ['tickets', 'booking_id'], ['booking_spots', 'booking_id'], ['booking_items', 'booking_id'], ['payment_proofs', 'booking_id'], ['payments', 'booking_id']];
+      for (const [table, column] of removals) {
+        const { error: removeError } = await supabase.from(table).delete().eq(column, booking.id);
+        if (removeError && !['42P01', 'PGRST205'].includes(removeError.code || '')) throw removeError;
+      }
+      const { error: bookingDeleteError } = await supabase.from('bookings').delete().eq('id', booking.id);
+      if (bookingDeleteError) throw bookingDeleteError;
+      const proofPaths = (proofs || []).map(proof => proof.file_url).filter((path): path is string => typeof path === 'string' && !path.startsWith('http'));
+      if (proofPaths.length) await supabase.storage.from('payment-proofs').remove(proofPaths).catch(() => undefined);
+      await writeAudit(user.id, 'PURGE_BOOKING', 'booking', booking.id, { reference: booking.reference, reason, status: booking.status, total_amount: booking.total_amount });
+      return NextResponse.json({ success: true, message: `Booking ${booking.reference} was permanently deleted.` });
     }
 
     if (action === 'resolve_attention') {
