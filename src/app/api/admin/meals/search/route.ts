@@ -1,57 +1,68 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireAdmin, AdminAuthError } from '@/lib/admin-auth';
+import { cleanText } from '@/lib/request-security';
 
 export async function GET(request: Request) {
   try {
-    await requireAdmin(request);
+    await requireAdmin(request, ['ADMIN', 'MANAGER', 'SCANNER']);
 
     const { searchParams } = new URL(request.url);
-    const query = searchParams.get('q')?.trim() || '';
+    // Strip characters that have meaning inside a PostgREST filter string.
+    const query = cleanText(searchParams.get('q'), 80).replace(/[,()%*]/g, ' ').trim();
 
-    if (query.length < 3) return NextResponse.json({ meals: [] });
+    if (query.length < 2) return NextResponse.json({ meals: [] });
 
-    // Try finding meals by meal_uid, booking reference, or customer name/email
+    const pattern = `%${query}%`;
+
+    // Bookings that match by reference, or whose customer matches by name/email.
+    const [{ data: byReference }, { data: matchingCustomers }] = await Promise.all([
+      supabase.from('bookings').select('id').ilike('reference', pattern).limit(50),
+      supabase.from('customers').select('id')
+        .or(`first_name.ilike.${pattern},last_name.ilike.${pattern},email.ilike.${pattern}`)
+        .limit(50),
+    ]);
+    const customerIds = (matchingCustomers || []).map(c => c.id);
+    let byCustomer: Array<{ id: string }> = [];
+    if (customerIds.length) {
+      const { data } = await supabase.from('bookings').select('id').in('customer_id', customerIds).limit(100);
+      byCustomer = data || [];
+    }
+    const bookingIds = Array.from(new Set([...(byReference || []), ...byCustomer].map(b => b.id)));
+
+    const filters = [`meal_uid.ilike.${pattern}`, `meal_name.ilike.${pattern}`];
+    if (bookingIds.length) filters.push(`booking_id.in.(${bookingIds.join(',')})`);
+
     const { data: meals, error: searchError } = await supabase
       .from('meal_vouchers')
-      .select(`
-        id, meal_uid, qr_token, visit_date, meal_name,
-        specials(title),
-        bookings!inner(reference, customer->>'firstName', customer->>'lastName', customer->>'email')
-      `)
-      .or(`meal_uid.ilike.%${query}%,bookings.reference.ilike.%${query}%,bookings.customer->>email.ilike.%${query}%,bookings.customer->>firstName.ilike.%${query}%,bookings.customer->>lastName.ilike.%${query}%`)
-      .limit(20);
+      .select('id, meal_uid, qr_token, visit_date, status, redeemed_at, meal_name, specials(title), bookings(reference, customers(first_name, last_name, email))')
+      .or(filters.join(','))
+      .order('visit_date', { ascending: false })
+      .limit(30);
 
     if (searchError) throw searchError;
 
-    // Check redemption status for these meals
-    const mealIds = meals.map((m: any) => m.id);
-    let redemptions: Record<string, any> = {};
-    if (mealIds.length > 0) {
-      const { data: reds } = await supabase
-        .from('meal_redemptions')
-        .select('meal_voucher_id, redeemed_at')
-        .in('meal_voucher_id', mealIds);
-      
-      for (const r of reds || []) {
-        redemptions[r.meal_voucher_id] = r;
-      }
-    }
-
-    const results = meals.map((m: any) => ({
-       id: m.id,
-       meal_uid: m.meal_uid,
-       qr_token: m.qr_token,
-       visit_date: m.visit_date,
-       meal_name: m.meal_name,
-       special_title: m.specials?.title,
-       booking_ref: m.bookings?.reference,
-       customer_name: `${(m.bookings as any)?.firstName} ${(m.bookings as any)?.lastName}`.trim(),
-       redeemed_at: redemptions[m.id]?.redeemed_at || null
-    }));
+    const results = (meals || []).map((m: any) => {
+      const booking = Array.isArray(m.bookings) ? m.bookings[0] : m.bookings;
+      const customer = Array.isArray(booking?.customers) ? booking.customers[0] : booking?.customers;
+      const special = Array.isArray(m.specials) ? m.specials[0] : m.specials;
+      return {
+        id: m.id,
+        meal_uid: m.meal_uid,
+        qr_token: m.qr_token,
+        visit_date: m.visit_date,
+        meal_name: m.meal_name,
+        special_title: special?.title,
+        booking_ref: booking?.reference,
+        customer_name: [customer?.first_name, customer?.last_name].filter(Boolean).join(' '),
+        email: customer?.email,
+        status: m.status,
+        redeemed: m.status === 'REDEEMED',
+        redeemed_at: m.redeemed_at || null,
+      };
+    });
 
     return NextResponse.json({ meals: results });
-
   } catch (error: any) {
     if (error instanceof AdminAuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });

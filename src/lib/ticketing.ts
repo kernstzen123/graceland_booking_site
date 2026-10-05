@@ -43,7 +43,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     .eq('booking_id', bookingId);
   if (spotsError) throw new Error(`Could not load booking seating: ${spotsError.message}`);
 
-  const { data: existingMeals } = await supabase.from('meal_vouchers').select('meal_uid, qr_token, visit_date, specials(title)').eq('booking_id', bookingId);
+  const { data: existingMeals } = await supabase.from('meal_vouchers').select('meal_uid, qr_token, visit_date, meal_name, specials(title)').eq('booking_id', bookingId);
   const { data: bookingSpecials } = await supabase.from('booking_specials').select('special_id, quantity, snapshot').eq('booking_id', bookingId);
   const { data: settings } = await supabase.from('special_settings').select('meal_name').eq('id', 1).maybeSingle();
   const mealName = settings?.meal_name || 'Free Meal';
@@ -67,7 +67,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
   if (existingMeals?.length) {
     labelledMeals = existingMeals.map(m => ({
       ...m,
-      display_name: `${mealName} (${(m.specials as any)?.title || 'Special'})`,
+      display_name: `${m.meal_name || mealName} (${(Array.isArray(m.specials) ? (m.specials as any)[0] : (m.specials as any))?.title || 'Special'})`,
     }));
   }
 
@@ -434,7 +434,7 @@ function wrapPdfText(text: string, font: Awaited<ReturnType<PDFDocument['embedFo
 }
 
 function mealScanUrl(appUrl: string, meal: Record<string, unknown>) {
-  return `${appUrl}/admin/meals?token=${encodeURIComponent(String(meal.qr_token))}`;
+  return `${appUrl}/admin/scanner?token=${encodeURIComponent(String(meal.qr_token))}`;
 }
 
 async function createMealPdf(meal: Record<string, unknown>, qrBuffer: Buffer, index: number) {

@@ -274,11 +274,16 @@ export function calculateServerTotal(
       });
     }
 
-    if (snapshot.free_meals > 0) {
+    const includedMeals: Array<{ name: string; quantity: number }> = Array.isArray(snapshot.included_meals) && snapshot.included_meals.length
+      ? snapshot.included_meals
+      : (snapshot.free_meals > 0 ? [{ name: 'Free Meal', quantity: snapshot.free_meals }] : []);
+    for (const meal of includedMeals) {
+      const mealQty = Number(meal.quantity) || 0;
+      if (mealQty <= 0) continue;
       lineItems.push({
         itemId: 'special-meal',
-        name: `Free Meal Voucher (${snapshot.title})`,
-        quantity: snapshot.free_meals * quantity,
+        name: `${meal.name || 'Free Meal'} - meal voucher (${snapshot.title})`,
+        quantity: mealQty * quantity,
         pricePerUnit: 0,
         subtotal: 0,
         isPerson: false,

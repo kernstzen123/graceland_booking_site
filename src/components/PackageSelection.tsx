@@ -123,7 +123,17 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
                           </div>
                        )}
                        <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--text-main)', marginBottom: '0.5rem', marginTop: special.badge_text ? 8 : 0 }}>{special.title}</h3>
-                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>{special.description}</p>
+                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: (special.included_meals?.length || special.free_meals > 0) ? '0.75rem' : '1.5rem' }}>{special.description}</p>
+                       {(special.included_meals?.length > 0 || special.free_meals > 0) && (
+                          <div style={{ marginBottom: '1.25rem', padding: '0.6rem 0.75rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, fontSize: '0.85rem', color: '#166534' }}>
+                             <strong>Includes free meal{(special.included_meals?.length || 0) > 1 || special.free_meals > 1 ? 's' : ''}:</strong>
+                             <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.1rem' }}>
+                                {(special.included_meals?.length ? special.included_meals : [{ name: 'Free Meal', quantity: special.free_meals }]).map((m, idx) => (
+                                   <li key={idx}>{m.quantity}x {m.name}</li>
+                                ))}
+                             </ul>
+                          </div>
+                       )}
                        
                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <div style={{ fontWeight: 'bold', color: 'var(--primary)', fontSize: '1.1rem' }}>

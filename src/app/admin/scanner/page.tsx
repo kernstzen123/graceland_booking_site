@@ -421,7 +421,7 @@ export default function Scanner() {
 
         const lookup = code.toUpperCase().startsWith('BK-')
           ? { reference: code }
-          : code.toUpperCase().startsWith('TKT-')
+          : (code.toUpperCase().startsWith('TKT-') || code.toUpperCase().startsWith('MEAL-'))
             ? { ticketUid: code }
             : { token: code };
 
@@ -540,7 +540,10 @@ export default function Scanner() {
       // Online meals search (only if connected)
       if (navigator.onLine) {
         try {
-          const res = await fetch(`/api/admin/meals/search?q=${encodeURIComponent(query)}`);
+          const searchToken = await getAuthToken();
+          const res = await fetch(`/api/admin/meals/search?q=${encodeURIComponent(query)}`, {
+            headers: searchToken ? { Authorization: `Bearer ${searchToken}` } : {},
+          });
           if (res.ok) {
             const data = await res.json();
             const mealResults: OfflineTicket[] = data.meals.map((m: any) => ({
@@ -566,7 +569,7 @@ export default function Scanner() {
     } catch {
       setSearchResults([]);
     }
-  }, []);
+  }, [getAuthToken]);
 
   const checkInFromSearch = useCallback(async (ticket: OfflineTicket) => {
     setShowSearch(false);

@@ -6,6 +6,24 @@ import { verifyQrToken } from '@/lib/qr-token';
 import { johannesburgToday } from '@/lib/opening-rules';
 import { spotLabel } from '@/lib/seating';
 
+/** Redeem a meal voucher and shape the result like a ticket scan, including the meal's name. */
+async function redeemMeal(mealUid: string, userId: string) {
+  const { data, error } = await supabase.rpc('redeem_meal_voucher', { p_meal_uid: mealUid, p_scanned_by: userId });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('No response from database');
+  const alreadyUsed = row.status === 'REDEEMED';
+  return NextResponse.json({
+    success: Boolean(row.ok),
+    status: row.ok ? 'APPROVED' : (alreadyUsed ? 'USED' : 'INVALID'),
+    ticketUid: mealUid,
+    packageName: row.meal_name || 'Meal Voucher',
+    mealName: row.meal_name || 'Meal Voucher',
+    isMeal: true,
+    ...(row.ok ? { scannedAt: new Date().toISOString() } : { error: alreadyUsed ? 'This meal voucher has already been redeemed' : (row.error_message || 'Meal voucher rejected') }),
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const { user, role } = await requireAdmin(request, ['ADMIN', 'MANAGER', 'SCANNER']);
@@ -23,6 +41,8 @@ export async function POST(request: Request) {
     if (!token && !ticketUid && !reference) return NextResponse.json({ success: false, status: 'INVALID', error: 'Enter a QR token, ticket ID, or booking reference' }, { status: 400 });
     const qrClaims = token ? verifyQrToken(token) : null;
     if (token && !qrClaims) return NextResponse.json({ success: false, status: 'INVALID', error: 'Invalid or expired ticket QR code' });
+    const mealUid = qrClaims?.type === 'meal' ? qrClaims.tid : (ticketUid.toUpperCase().startsWith('MEAL-') ? ticketUid : null);
+    if (mealUid) return await redeemMeal(mealUid, user.id);
     let query = supabase.from('tickets').select('id,ticket_uid,qr_token,status,visit_date,booking_id,customers(first_name,last_name),packages(name),bookings(reference,status,voucher_issued)');
     if (token) query = query.eq('qr_token', token);
     else if (ticketUid) query = query.eq('ticket_uid', ticketUid);
@@ -34,6 +54,11 @@ export async function POST(request: Request) {
     const { data: tickets, error } = await query.limit(1);
     if (error) throw error;
     const ticket = tickets?.[0];
+    if (!ticket && token) {
+      // Not a ticket: it may be a meal voucher whose QR token carries no type marker.
+      const { data: voucher } = await supabase.from('meal_vouchers').select('meal_uid').eq('qr_token', token).maybeSingle();
+      if (voucher) return await redeemMeal(voucher.meal_uid, user.id);
+    }
     if (!ticket) return NextResponse.json({ success: false, status: 'INVALID', error: 'Ticket not found' });
     const booking = Array.isArray(ticket.bookings) ? ticket.bookings[0] : ticket.bookings;
     if (qrClaims && (qrClaims.bid !== ticket.booking_id || qrClaims.tid !== ticket.ticket_uid)) return NextResponse.json({ success: false, status: 'INVALID', error: 'Invalid ticket QR code' });

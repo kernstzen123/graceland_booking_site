@@ -5,7 +5,7 @@ import { verifyQrToken } from '@/lib/qr-token';
 
 export async function POST(request: Request) {
   try {
-    const { user } = await requireAdmin(request);
+    const { user } = await requireAdmin(request, ['ADMIN', 'MANAGER', 'SCANNER']);
 
     const body = await request.json();
     const { token } = body;
