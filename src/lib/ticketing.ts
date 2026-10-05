@@ -297,7 +297,7 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
       <p>Your payment was successful and your booking is confirmed.</p>
       ${voucherNotice}
       ${visitDateBanner}
-      <p>Each person requires their own ticket to enter${tickets.length > 1 ? ` — you have <strong>${tickets.length} tickets</strong> below` : ''}. A PDF copy of every ticket is also attached to this email.</p>
+      <p>Each person requires their own ticket to enter${tickets.length > 1 ? ` — you have <strong>${tickets.length} tickets</strong> below` : ''}. A PDF copy of every ticket is also attached to this email. Please make sure to print your qr code tickets.</p>
       ${ticketsHtml}
       ${mealsHtml.length > 0 ? `<p><strong>Free Meals:</strong> You also have ${meals.length} free meal voucher(s) included.</p>${mealsHtml}` : ''}
       <p>We look forward to seeing you!</p>
