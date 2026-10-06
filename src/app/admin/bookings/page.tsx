@@ -248,13 +248,14 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', visit_date: '', notes: '', total: '', people: '' });
+  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', visit_date: '', notes: '', total: '', people: '', spot: '' });
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const itemsTotal = editItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.price) || 0), 0);
   const itemsPeople = editItems.reduce((sum, item) => sum + (item.isPerson ? Number(item.quantity) || 0 : 0), 0);
   const startEditing = () => {
     const current = customerOf(booking);
-    setForm({ first_name: current?.first_name || '', last_name: current?.last_name || '', email: current?.email || '', phone: current?.phone || '', visit_date: booking.visit_date, notes: staffNotes(booking.notes), total: String(Number(booking.total_amount)), people: String(booking.people_count) });
+    const spot = (booking.booking_spots || []).map(bs => bs.venue_spots).filter(Boolean)[0]?.number || '';
+    setForm({ first_name: current?.first_name || '', last_name: current?.last_name || '', email: current?.email || '', phone: current?.phone || '', visit_date: booking.visit_date, notes: staffNotes(booking.notes), total: String(Number(booking.total_amount)), people: String(booking.people_count), spot });
     setEditItems((booking.booking_items || []).map(item => ({ id: item.id, name: item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item', quantity: String(item.quantity), price: String(Number(item.price_per_unit ?? 0)), isPerson: item.metadata?.isPerson === true })));
     setEditError(''); setEditing(true);
   };
@@ -262,7 +263,7 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
     setSaving(true); setEditError('');
     const error = await onSaveEdit({
       customer: { first_name: form.first_name, last_name: form.last_name, email: form.email, phone: form.phone },
-      visit_date: form.visit_date, notes: form.notes, total_amount: form.total, people_count: form.people,
+      visit_date: form.visit_date, notes: form.notes, total_amount: form.total, people_count: form.people, spot: form.spot,
       items: editItems.map(item => ({ id: item.id, name: item.name, quantity: Number(item.quantity), price_per_unit: Number(item.price), isPerson: item.isPerson })),
     });
     setSaving(false);
@@ -318,7 +319,7 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
       <p><strong>Visit date:</strong> {booking.visit_date}</p>
       <p><strong>Total:</strong> R {Number(booking.total_amount).toFixed(2)}</p>
       <p><strong>People:</strong> {booking.people_count}</p>
-      {spots.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><p><strong>Seating:</strong> {spots.map(s => `${s?.type === 'hut' ? 'Hut' : 'Table'} ${s?.number}`).join(', ')}</p><button type="button" className="btn" onClick={() => onAction('update_spot')} style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', border: '1px solid var(--border-color)' }}>Edit</button></div>}
+      {spots.length > 0 && <p><strong>Seating:</strong> {spots.map(s => `${s?.type === 'hut' ? 'Hut' : 'Table'} ${s?.number}`).join(', ')}</p>}
       <p><strong>Payment:</strong> {booking.payment_method || 'Pending'}</p>
       {booking.refunded_at && <p><strong>Voucher issued:</strong> {new Date(booking.refunded_at).toLocaleString()}</p>}
     </div>
@@ -347,6 +348,7 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
             <label style={labelStyle}>Phone<input style={inputStyle} value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
             <label style={labelStyle}>Visit date<input style={inputStyle} type="date" value={form.visit_date} onChange={e => setForm({ ...form, visit_date: e.target.value })} /></label>
             <label style={labelStyle}>People (headcount)<input style={inputStyle} type="number" min={1} value={form.people} onChange={e => setForm({ ...form, people: e.target.value })} /></label>
+            <label style={labelStyle}>Table/Hut number<input style={inputStyle} value={form.spot} onChange={e => setForm({ ...form, spot: e.target.value })} placeholder="e.g. 12" /></label>
           </div>
           <h3 style={{ margin: '1rem 0 0.5rem' }}>Items</h3>
           <div style={{ display: 'grid', gap: 8 }}>

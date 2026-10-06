@@ -230,6 +230,46 @@ export async function POST(request: Request) {
         const { error: bookingUpdateError } = await supabase.from('bookings').update(updates).eq('id', booking.id);
         if (bookingUpdateError) throw bookingUpdateError;
       }
+      
+      let spotChanged = false;
+      if (edit.spot !== undefined) {
+        const spotNumber = String(edit.spot).trim();
+        if (spotNumber) {
+          const { data: newSpot } = await supabase.from('venue_spots').select('id,type,number').eq('number', spotNumber).maybeSingle();
+          if (!newSpot) return NextResponse.json({ success: false, error: `Spot number "${spotNumber}" does not exist.` }, { status: 400 });
+          
+          const { data: takenBy } = await supabase.from('booking_spots')
+            .select('booking_id,bookings!inner(status,expires_at)')
+            .eq('visit_date', visitDate)
+            .eq('spot_id', newSpot.id)
+            .neq('booking_id', booking.id);
+          
+          const isTaken = (takenBy || []).some(t => {
+            const bookingRecord = Array.isArray(t.bookings) ? t.bookings[0] : t.bookings;
+            const status = bookingRecord?.status;
+            if (!status) return false;
+            if (['PAID', 'CONFIRMED', 'PAYMENT_PENDING'].includes(status)) return true;
+            if (status === 'UNPAID' && new Date(bookingRecord.expires_at) > new Date()) return true;
+            return false;
+          });
+
+          if (isTaken) return NextResponse.json({ success: false, error: `Spot ${spotNumber} is already taken on this date.` }, { status: 409 });
+
+          await supabase.from('booking_spots').delete().eq('booking_id', booking.id);
+          const { error: insertError } = await supabase.from('booking_spots').insert({
+            booking_id: booking.id,
+            spot_id: newSpot.id,
+            visit_date: visitDate,
+          });
+          if (insertError) throw insertError;
+          spotChanged = true;
+        } else {
+          const { error: deleteSpotError } = await supabase.from('booking_spots').delete().eq('booking_id', booking.id);
+          if (deleteSpotError) throw deleteSpotError;
+          spotChanged = true;
+        }
+      }
+
       if (newCustomerId) await supabase.from('tickets').update({ customer_id: newCustomerId }).eq('booking_id', booking.id);
       if (edit.visit_date !== undefined && visitDate !== booking.visit_date) {
         await supabase.from('tickets').update({ visit_date: visitDate }).eq('booking_id', booking.id);
@@ -251,7 +291,7 @@ export async function POST(request: Request) {
           catch (ticketError) { console.error('Could not rebuild tickets after editing', booking.reference, ticketError); ticketNote = ' The tickets could not be rebuilt: make sure at least one item is marked as a person.'; }
         }
       }
-      await writeAudit(user.id, 'EDIT_IMPORTED_BOOKING', 'booking', booking.id, { reference: booking.reference, fields: Object.keys(updates), items_changed: itemsChanged });
+      await writeAudit(user.id, 'EDIT_IMPORTED_BOOKING', 'booking', booking.id, { reference: booking.reference, fields: Object.keys(updates), items_changed: itemsChanged, spot_changed: spotChanged });
       return NextResponse.json({ success: true, message: `Booking updated.${ticketNote}` });
     }
 
