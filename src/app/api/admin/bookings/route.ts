@@ -271,10 +271,11 @@ export async function POST(request: Request) {
         .neq('booking_id', booking.id);
       
       const isTaken = (takenBy || []).some(t => {
-        const status = t.bookings?.status;
+        const bookingRecord = Array.isArray(t.bookings) ? t.bookings[0] : t.bookings;
+        const status = bookingRecord?.status;
         if (!status) return false;
         if (['PAID', 'CONFIRMED', 'PAYMENT_PENDING'].includes(status)) return true;
-        if (status === 'UNPAID' && new Date(t.bookings.expires_at) > new Date()) return true;
+        if (status === 'UNPAID' && new Date(bookingRecord.expires_at) > new Date()) return true;
         return false;
       });
 
