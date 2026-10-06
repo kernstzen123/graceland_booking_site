@@ -10,9 +10,9 @@ import { DownloadIcon } from '@/components/icons';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
-type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
+type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
-type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
+type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention' | 'update_spot';
 const isImported = (booking: Booking) => booking.reference.toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 /** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
 const staffNotes = (notes?: string | null) => (notes || '').split('\n').filter(line => !/^[A-Z_]+$/.test(line.trim())).join(' ').trim();
@@ -99,6 +99,10 @@ function BookingsPage() {
       const result = await confirm({ title: 'Resolve alert', message: 'Mark this alert as resolved? Describe what was done so it is recorded in the audit log.', confirmLabel: 'Mark resolved', tone: 'primary', promptLabel: 'What was done?', promptPlaceholder: 'e.g. Refunded R 450 in PayFast on 3 Oct', promptRequired: true });
       if (!result.confirmed) return;
       reason = result.value;
+    } else if (type === 'update_spot') {
+      const result = await confirm({ title: 'Edit seating', message: 'Enter the new table or hut number.', confirmLabel: 'Save spot', tone: 'primary', promptLabel: 'Spot number', promptPlaceholder: 'e.g. 12', promptRequired: true });
+      if (!result.confirmed) return;
+      reason = result.value;
     } else if (type === 'resend_tickets') {
       const result = await confirm({ title: 'Resend tickets', message: `Resend tickets for ${selected.reference} to the customer's email?`, confirmLabel: 'Resend tickets', tone: 'primary' });
       if (!result.confirmed) return;
@@ -119,7 +123,7 @@ function BookingsPage() {
         body = JSON.stringify({ deductionPercentage: deductionPercentage || 0 });
       } else {
         endpoint = '/api/admin/bookings';
-        body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason });
+        body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason, spotNumber: type === 'update_spot' ? reason : undefined });
       }
       let response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body });
       let data = await response.json();
@@ -274,6 +278,7 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
   const isCancelled = ['CANCELLED', 'REFUNDED'].includes(booking.status);
   const paidAmount = paidAmountOf(booking);
   const voucherFor = (feePercent: number) => Math.round(paidAmount * (100 - feePercent)) / 100;
+  const spots = (booking.booking_spots || []).map(bs => bs.venue_spots).filter(Boolean);
 
   const handleRefundOption = async (feePercent: number) => {
     const finalAmount = voucherFor(feePercent);
@@ -313,6 +318,7 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
       <p><strong>Visit date:</strong> {booking.visit_date}</p>
       <p><strong>Total:</strong> R {Number(booking.total_amount).toFixed(2)}</p>
       <p><strong>People:</strong> {booking.people_count}</p>
+      {spots.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><p><strong>Seating:</strong> {spots.map(s => `${s?.type === 'hut' ? 'Hut' : 'Table'} ${s?.number}`).join(', ')}</p><button type="button" className="btn" onClick={() => onAction('update_spot')} style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', border: '1px solid var(--border-color)' }}>Edit</button></div>}
       <p><strong>Payment:</strong> {booking.payment_method || 'Pending'}</p>
       {booking.refunded_at && <p><strong>Voucher issued:</strong> {new Date(booking.refunded_at).toLocaleString()}</p>}
     </div>

@@ -5,9 +5,9 @@ import { emailTicketsOnce, generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
 
-const DETAIL_FIELDS = 'id,reference,visit_date,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
+const DETAIL_FIELDS = 'id,reference,visit_date,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),booking_spots(spot_id,venue_spots(number,type)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
 const STATUS_FILTERS = ['PAID', 'PENDING', 'CANCELLED', 'FAILED', 'ATTENTION', 'DELETED'];
-const ACTIONS = ['resend_tickets', 'delete', 'purge', 'update', 'mark_paid', 'cancel_ticket', 'resolve_attention'];
+const ACTIONS = ['resend_tickets', 'delete', 'purge', 'update', 'update_spot', 'mark_paid', 'cancel_ticket', 'resolve_attention'];
 const isImportedBooking = (booking: { reference?: string | null; payment_method?: string | null }) => String(booking.reference || '').toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 const PAGE_SIZE = 50;
 
@@ -253,6 +253,44 @@ export async function POST(request: Request) {
       }
       await writeAudit(user.id, 'EDIT_IMPORTED_BOOKING', 'booking', booking.id, { reference: booking.reference, fields: Object.keys(updates), items_changed: itemsChanged });
       return NextResponse.json({ success: true, message: `Booking updated.${ticketNote}` });
+    }
+
+    if (action === 'update_spot') {
+      const spotNumber = String(body.spotNumber || '').trim();
+      const visitDate = booking.visit_date as string;
+      if (!spotNumber) return NextResponse.json({ success: false, error: 'Provide a spot number.' }, { status: 400 });
+      
+      const { data: newSpot } = await supabase.from('venue_spots').select('id,type,number').eq('number', spotNumber).maybeSingle();
+      if (!newSpot) return NextResponse.json({ success: false, error: `Spot number "${spotNumber}" does not exist.` }, { status: 400 });
+
+      // Check if spot is already taken
+      const { data: takenBy } = await supabase.from('booking_spots')
+        .select('booking_id,bookings!inner(status,expires_at)')
+        .eq('visit_date', visitDate)
+        .eq('spot_id', newSpot.id)
+        .neq('booking_id', booking.id);
+      
+      const isTaken = (takenBy || []).some(t => {
+        const status = t.bookings?.status;
+        if (!status) return false;
+        if (['PAID', 'CONFIRMED', 'PAYMENT_PENDING'].includes(status)) return true;
+        if (status === 'UNPAID' && new Date(t.bookings.expires_at) > new Date()) return true;
+        return false;
+      });
+
+      if (isTaken) return NextResponse.json({ success: false, error: `Spot ${spotNumber} is already taken on this date.` }, { status: 409 });
+
+      // Delete old spot and insert new one
+      await supabase.from('booking_spots').delete().eq('booking_id', booking.id);
+      const { error: insertError } = await supabase.from('booking_spots').insert({
+        booking_id: booking.id,
+        spot_id: newSpot.id,
+        visit_date: visitDate,
+      });
+      if (insertError) throw insertError;
+      
+      await writeAudit(user.id, 'UPDATE_BOOKING_SPOT', 'booking', booking.id, { reference: booking.reference, new_spot: spotNumber });
+      return NextResponse.json({ success: true, message: `Seating updated to ${newSpot.type} ${spotNumber}.` });
     }
 
     if (action === 'purge') {
