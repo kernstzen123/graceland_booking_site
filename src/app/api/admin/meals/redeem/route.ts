@@ -42,8 +42,9 @@ export async function POST(request: Request) {
       }
     });
 
-  } catch (error: any) {
+  } catch (error) {
     if (error instanceof AdminAuthError) return NextResponse.json({ error: error.message }, { status: error.status });
-    return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });
+    console.error('Meal voucher redeem error', error);
+    return NextResponse.json({ error: 'Could not redeem the meal voucher. Please try again.' }, { status: 500 });
   }
 }

@@ -350,6 +350,18 @@ it('database migrations and functions behave correctly', async () => {
   await lapse(saturday.booking_id);
   r = await one(`select * from public.set_booking_payment_status($1, 'PAID', 'PAYFAST')`, [saturday.booking_id]);
   check('reviving a lapsed booking checks only that day\'s stock', r.ok === true, `${r.reason}: ${r.detail}`);
+  // ── Imported (booking book) bookings in reports ─────────────────────────
+  const importedBooking = (await one(`select * from public.create_booking($1::date, 4, ${customer}, 'IM-REPORT-1', 900, null, null, null, $2::jsonb)`, [weekend.sat, specialItems])).booking_id;
+  await db.query(`update public.bookings set status = 'PAID', payment_method = 'IMPORTED', notes = 'IMPORTED_FROM_BOOK', expires_at = null where id = $1`, [importedBooking]);
+  const today = (await one(`select (now() at time zone 'Africa/Johannesburg')::date::text as d`)).d;
+  const byVisit = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [weekend.sat])).r;
+  const byBooked = (await one(`select public.admin_report_data($1::date, $1::date, 'booked') as r`, [today])).r;
+  check('imported bookings count in reports by visit date', byVisit.bookings.some(b => b.reference === 'IM-REPORT-1'));
+  check('imported bookings are left out of reports by booking date (created when imported)', !byBooked.bookings.some(b => b.reference === 'IM-REPORT-1') && byBooked.bookings.length > 0);
+  const tomorrow = (await one(`select ($1::date + 1)::text as d`, [today])).d;
+  const nextDay = (await one(`select public.admin_report_data($1::date, $1::date, 'booked') as r`, [tomorrow])).r;
+  check('previous-period cash collected leaves imported bookings out', Number(nextDay.previous.collected) === Number(byBooked.bookings.filter(b => ['PAID', 'CONFIRMED'].includes(b.status) && b.payment_method !== 'IMPORTED').reduce((sum, b) => sum + Number(b.amount_due ?? Number(b.total_amount) - Number(b.voucher_amount_used || 0)), 0)), `${nextDay.previous.collected}`);
+
   await db.query(`update public.specials set archived_at = now() where id = $1`, [special]);
   await expectError('an archived special is refused', `select * from public.create_booking('${weekend.sat}', 4, ${customer}, 'BK-SP-ARCH', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 1 }])}'::jsonb)`, /no longer available/);
 

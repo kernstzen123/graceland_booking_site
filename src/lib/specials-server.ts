@@ -48,6 +48,101 @@ function cleanTicketLines(lines: unknown): SpecialItemDef[] {
     .filter(line => BOOKABLE_ITEMS[line.itemId] && Number.isInteger(line.quantity) && line.quantity > 0);
 }
 
+/** A problem with a special entered by staff; the message is safe to show. */
+export class SpecialInputError extends Error {}
+
+const SPECIAL_TYPES = ['discount', 'buy_x_get_y', 'tickets_and_meals'] as const;
+const isDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+const optionalText = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, max) : '');
+const optionalWhole = (value: unknown, label: string) => {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > 100000) throw new SpecialInputError(`${label} must be a whole number of at least 1, or left empty.`);
+  return number;
+};
+
+function ticketLinesInput(value: unknown, label: string): SpecialItemDef[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 20) throw new SpecialInputError(`${label} are not valid.`);
+  return value.map(line => {
+    const itemId = String(line?.itemId || '');
+    const quantity = Number(line?.quantity);
+    if (!BOOKABLE_ITEMS[itemId]) throw new SpecialInputError(`${label}: choose a ticket type for every line.`);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) throw new SpecialInputError(`${label}: each quantity must be a whole number from 1 to 100.`);
+    return { itemId, quantity };
+  });
+}
+
+/** The fields of a special as staff may set them, checked and cleaned. Throws SpecialInputError. */
+export function parseSpecialInput(body: Record<string, unknown>) {
+  const title = optionalText(body.title, 120);
+  if (!title) throw new SpecialInputError('Enter a title.');
+  const type = String(body.type || '');
+  if (!SPECIAL_TYPES.includes(type as (typeof SPECIAL_TYPES)[number])) throw new SpecialInputError('Choose a special type.');
+
+  const paid_tickets = ticketLinesInput(body.paid_tickets, 'Paid tickets');
+  const free_tickets = ticketLinesInput(body.free_tickets, 'Free tickets');
+  if (!paid_tickets.length && !free_tickets.length) throw new SpecialInputError('Add at least one ticket to the special.');
+
+  const rawPricing = (body.pricing || {}) as Record<string, unknown>;
+  let pricing: Special['pricing'];
+  if (rawPricing.type === 'percentage') {
+    const discount = Number(rawPricing.discount);
+    if (!Number.isFinite(discount) || discount < 0 || discount > 100) throw new SpecialInputError('The % off must be from 0 to 100.');
+    pricing = { type: 'percentage', discount };
+  } else if (rawPricing.type === 'fixed-off') {
+    const discount = Number(rawPricing.discount);
+    if (!Number.isFinite(discount) || discount < 0 || discount > 1000000) throw new SpecialInputError('The rand discount is not valid.');
+    pricing = { type: 'fixed-off', discount: Math.round(discount * 100) / 100 };
+  } else if (rawPricing.type === 'fixed-price') {
+    const price = Number(rawPricing.price);
+    if (!Number.isFinite(price) || price < 0 || price > 1000000) throw new SpecialInputError('The fixed price is not valid.');
+    pricing = { type: 'fixed-price', price: Math.round(price * 100) / 100 };
+  } else {
+    throw new SpecialInputError('Choose how the special is priced.');
+  }
+
+  const freeMeals = Number(body.free_meals ?? 0);
+  if (!Number.isInteger(freeMeals) || freeMeals < 0 || freeMeals > 100) throw new SpecialInputError('Free meals must be a whole number from 0 to 100.');
+  const rawMeals = body.included_meals ?? [];
+  if (!Array.isArray(rawMeals) || rawMeals.length > 20) throw new SpecialInputError('The meal vouchers are not valid.');
+  const included_meals = rawMeals.map(meal => {
+    const name = optionalText(meal?.name, 80);
+    const quantity = Number(meal?.quantity);
+    if (!name) throw new SpecialInputError('Give every meal voucher a name.');
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) throw new SpecialInputError(`"${name}": the quantity must be a whole number from 1 to 100.`);
+    return { name, quantity };
+  });
+
+  const valid_from = body.valid_from ? String(body.valid_from) : null;
+  const valid_to = body.valid_to ? String(body.valid_to) : null;
+  if ((valid_from && !isDate(valid_from)) || (valid_to && !isDate(valid_to))) throw new SpecialInputError('Enter valid dates.');
+  if (valid_from && valid_to && valid_to < valid_from) throw new SpecialInputError('"Valid to" must be on or after "Valid from".');
+  const rawWeekdays = body.valid_weekdays ?? [];
+  if (!Array.isArray(rawWeekdays)) throw new SpecialInputError('The weekdays are not valid.');
+  // Stored as 0 = Sunday … 6 = Saturday; 7 is also read as Sunday.
+  const valid_weekdays = [...new Set(rawWeekdays.map(Number).map(day => (day === 7 ? 0 : day)))].sort();
+  if (valid_weekdays.some(day => !Number.isInteger(day) || day < 0 || day > 6)) throw new SpecialInputError('The weekdays are not valid.');
+
+  return {
+    title,
+    description: optionalText(body.description, 1000) || null,
+    badge_text: optionalText(body.badge_text, 40) || null,
+    type: type as Special['type'],
+    paid_tickets,
+    free_tickets,
+    pricing,
+    free_meals: freeMeals,
+    included_meals,
+    valid_from,
+    valid_to,
+    valid_weekdays,
+    stock_limit: optionalWhole(body.stock_limit, 'The daily stock limit'),
+    max_per_booking: optionalWhole(body.max_per_booking, 'Max per booking'),
+    active: body.active !== false,
+  };
+}
+
 /** The copy of a special stored with a booking, built from the specials table. */
 export function snapshotFromSpecial(special: Special): SpecialSnapshot {
   return {

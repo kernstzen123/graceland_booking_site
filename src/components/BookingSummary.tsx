@@ -1,5 +1,5 @@
 import React from 'react';
-import { calculatePartyTotal, PartyDetails } from '@/lib/parties';
+import type { PartyDetails } from '@/lib/parties';
 import { calculateServerTotal, type PriceList } from '@/lib/pricing';
 import type { BookingSpecialSelection } from '@/lib/specials';
 

@@ -127,7 +127,7 @@ export function buildReportWorkbook(report: Report) {
 
   // ── Summary ──
   const summary = addSheet(workbook, 'Summary');
-  let row = addTitle(summary, 'Business report', report, `Compared with the previous period ${report.range.previousFrom} to ${report.range.previousTo}. Generated ${new Date(report.range.generatedAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })}.`);
+  let row = addTitle(summary, 'Business report', report, `Compared with the previous period ${report.range.previousFrom} to ${report.range.previousTo}. Generated ${new Date(report.range.generatedAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })}.${report.range.basis === 'booked' ? ' Bookings imported from the booking book are left out of reports by booking date.' : ''}`);
   const kpiHeader = summary.getRow(row);
   ['Measure', 'This period', 'Previous period', 'Change', 'Notes'].forEach((header, i) => {
     const cell = kpiHeader.getCell(i + 1);

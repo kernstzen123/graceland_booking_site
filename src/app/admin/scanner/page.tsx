@@ -546,15 +546,21 @@ export default function Scanner() {
           });
           if (res.ok) {
             const data = await res.json();
-            const mealResults: OfflineTicket[] = data.meals.map((m: any) => ({
+            type MealSearchResult = { id: string; meal_uid: string; booking_ref?: string; customer_name?: string; meal_name?: string; special_title?: string; email?: string; visit_date: string; redeemed: boolean; redeemed_at: string | null };
+            const mealResults: OfflineTicket[] = (data.meals as MealSearchResult[]).map(m => ({
               ticket_uid: m.meal_uid,
+              booking_id: '',
               booking_ref: m.booking_ref || 'N/A',
               ticket_id: m.id,
+              seating: '',
+              qr_token: '',
+              checked_in_by_device: null,
               customer_name: m.customer_name || 'Meal Voucher',
               package_name: m.meal_name || m.special_title || 'Meal Voucher',
               email: m.email,
               visit_date: m.visit_date,
-              status: m.redeemed ? 'USED' : 'UNUSED',
+              // 'VALID' so an unredeemed voucher shows the VALID badge like a ticket.
+              status: m.redeemed ? 'USED' : 'VALID',
               checked_in_at: m.redeemed_at,
               isMeal: true,
             }));

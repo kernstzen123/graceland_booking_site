@@ -215,7 +215,7 @@ export default function ReportsPage() {
     {!report && loading && <div className="card">Loading report…</div>}
 
     {report && <div style={{ opacity: loading ? 0.6 : 1, transition: 'opacity 0.2s' }}>
-      <p style={{ color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>Compared with the previous {report.range.days} days ({report.range.previousFrom} to {report.range.previousTo}). Revenue counts paid bookings only.</p>
+      <p style={{ color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>Compared with the previous {report.range.days} days ({report.range.previousFrom} to {report.range.previousTo}). Revenue counts paid bookings only.{report.range.basis === 'booked' && ' Bookings imported from the booking book are left out here, because their original booking dates are not known; count by visit date to include them.'}</p>
       <div className="report-kpis">{report.kpis.map(kpi => <KpiCard key={kpi.label} kpi={kpi} />)}</div>
 
       <Section title={`Trend by ${trend.unit}`} subtitle={`Paid bookings, grouped by ${dateWord}.`} table={trend.rows}>

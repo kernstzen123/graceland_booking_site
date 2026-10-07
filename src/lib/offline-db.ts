@@ -36,6 +36,8 @@ export type OfflineTicket = {
   imported?: boolean;
   /** For the scanner search only. */
   phone?: string;
+  /** A meal voucher found by the scanner search (not stored offline). */
+  isMeal?: boolean;
   email?: string;
 };
 

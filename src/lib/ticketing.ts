@@ -43,8 +43,10 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     .eq('booking_id', bookingId);
   if (spotsError) throw new Error(`Could not load booking seating: ${spotsError.message}`);
 
-  const { data: existingMeals } = await supabase.from('meal_vouchers').select('meal_uid, qr_token, visit_date, meal_name, specials(title)').eq('booking_id', bookingId);
-  const { data: bookingSpecials } = await supabase.from('booking_specials').select('special_id, quantity, snapshot').eq('booking_id', bookingId);
+  const { data: existingMeals, error: existingMealsError } = await supabase.from('meal_vouchers').select('meal_uid, qr_token, visit_date, meal_name, specials(title)').eq('booking_id', bookingId);
+  if (existingMealsError) throw new Error(`Could not load meal vouchers: ${existingMealsError.message}`);
+  const { data: bookingSpecials, error: bookingSpecialsError } = await supabase.from('booking_specials').select('special_id, quantity, snapshot').eq('booking_id', bookingId);
+  if (bookingSpecialsError) throw new Error(`Could not load booking specials: ${bookingSpecialsError.message}`);
   const { data: settings } = await supabase.from('special_settings').select('meal_name').eq('id', 1).maybeSingle();
   const mealName = settings?.meal_name || 'Free Meal';
 
@@ -61,16 +63,49 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     voucherRemaining = credit ? Number(credit.remaining_balance) : null;
   }
 
-  // ITNs can be retried after ticket creation. Reuse those tickets so a
-  // failed email delivery can be retried without issuing duplicate tickets.
-  let labelledMeals: Array<Record<string, unknown>> = [];
-  if (existingMeals?.length) {
-    labelledMeals = existingMeals.map(m => ({
-      ...m,
-      display_name: `${m.meal_name || mealName} (${(Array.isArray(m.specials) ? (m.specials as any)[0] : (m.specials as any))?.title || 'Special'})`,
-    }));
+  // Meal vouchers come first and do not depend on the tickets: if an earlier
+  // attempt saved the tickets but failed before the meal vouchers, a retry still
+  // issues them (the tickets branch below returns early when tickets exist).
+  type SpecialTitle = { title?: string } | null;
+  let labelledMeals: Array<Record<string, unknown>> = (existingMeals || []).map(m => {
+    const special = (Array.isArray(m.specials) ? m.specials[0] : m.specials) as SpecialTitle;
+    return { ...m, display_name: `${m.meal_name || mealName} (${special?.title || 'Special'})` };
+  });
+  if (!existingMeals?.length && bookingSpecials?.length) {
+    const visitDate = String(items[0]?.bookings?.visit_date);
+    const newMeals: Array<Record<string, unknown>> = [];
+    for (const bs of bookingSpecials) {
+      const snapshot = bs.snapshot as { title?: string; free_meals?: number; included_meals?: Array<{ name: string; quantity: number }> };
+      const mealDefinitions = snapshot.included_meals?.length
+        ? snapshot.included_meals
+        : (Number(snapshot.free_meals) > 0 ? [{ name: mealName, quantity: Number(snapshot.free_meals) }] : []);
+      for (const mDef of mealDefinitions) {
+        const totalMeals = Number(mDef.quantity) * Number(bs.quantity);
+        for (let i = 0; i < totalMeals; i++) {
+          const mealUid = `MEAL-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+          newMeals.push({
+            booking_id: bookingId,
+            special_id: bs.special_id,
+            meal_uid: mealUid,
+            qr_token: createQrToken(bookingId, mealUid, visitDate, 'meal'),
+            visit_date: visitDate,
+            meal_name: mDef.name,
+            display_name: `${mDef.name} (${snapshot.title || 'Special'})`,
+          });
+        }
+      }
+    }
+    if (newMeals.length) {
+      const { error: insertMealsError } = await supabase.from('meal_vouchers').insert(newMeals.map(m => ({
+        booking_id: m.booking_id, special_id: m.special_id, meal_uid: m.meal_uid, qr_token: m.qr_token, visit_date: m.visit_date, meal_name: m.meal_name,
+      })));
+      if (insertMealsError) throw new Error(`Could not create meal vouchers: ${insertMealsError.message}`);
+      labelledMeals = newMeals;
+    }
   }
 
+  // ITNs can be retried after ticket creation. Reuse those tickets so a
+  // failed email delivery can be retried without issuing duplicate tickets.
   if (existingTickets?.length) {
     const labelledTickets = existingTickets.map((ticket, index) => ({
       ...ticket,
@@ -85,32 +120,6 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
   }
 
   const newTickets: Array<Record<string, unknown>> = [];
-  const newMeals: Array<Record<string, unknown>> = [];
-  if (!existingMeals?.length && bookingSpecials?.length) {
-    for (const bs of bookingSpecials) {
-      const mealDefinitions = bs.snapshot.included_meals?.length 
-        ? bs.snapshot.included_meals 
-        : (bs.snapshot.free_meals > 0 ? [{ name: mealName, quantity: bs.snapshot.free_meals }] : []);
-        
-      for (const mDef of mealDefinitions) {
-        const totalMeals = mDef.quantity * bs.quantity;
-        for (let i = 0; i < totalMeals; i++) {
-          const mealUid = `MEAL-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-          const qrToken = createQrToken(bookingId, mealUid, String(items[0]?.bookings?.visit_date), 'meal');
-          newMeals.push({
-            booking_id: bookingId,
-            special_id: bs.special_id,
-            meal_uid: mealUid,
-            qr_token: qrToken,
-            visit_date: items[0]?.bookings?.visit_date,
-            meal_name: mDef.name,
-            display_name: `${mDef.name} (${bs.snapshot.title})`
-          });
-        }
-      }
-    }
-    labelledMeals = newMeals;
-  }
   let personIndex = 0;
   for (const item of items.filter(item => item.metadata?.isPerson === true || item.package_id)) {
     for (let i = 0; i < item.quantity; i++) {
@@ -133,17 +142,36 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     ticket_uid: ticket.ticket_uid, qr_token: ticket.qr_token, visit_date: ticket.visit_date,
   })));
   if (insertError) throw new Error(`Could not create tickets: ${insertError.message}`);
-  if (newMeals.length > 0) {
-    const { error: insertMealsError } = await supabase.from('meal_vouchers').insert(newMeals.map(m => ({
-      booking_id: m.booking_id, special_id: m.special_id, meal_uid: m.meal_uid, qr_token: m.qr_token, visit_date: m.visit_date, meal_name: m.meal_name
-    })));
-    if (insertMealsError) throw new Error(`Could not create meal vouchers: ${insertMealsError.message}`);
-  }
   if (options.sendEmail !== false) {
     await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining, labelledMeals);
     await markTicketsEmailed(bookingId);
   }
   return newTickets;
+}
+
+/**
+ * Re-sign the QR codes of a booking's unused tickets and meal vouchers for a new
+ * visit date. A QR code stops working after the visit date it was signed for, so
+ * this must run whenever a booking's date changes. Ticket and voucher IDs stay
+ * the same, so staff can still look them up by ID; scanned or cancelled ones are
+ * left alone.
+ */
+export async function resignBookingQrCodes(bookingId: string, visitDate: string) {
+  const [{ data: tickets, error: ticketsError }, { data: meals, error: mealsError }] = await Promise.all([
+    supabase.from('tickets').select('id,ticket_uid').eq('booking_id', bookingId).eq('status', 'VALID'),
+    supabase.from('meal_vouchers').select('id,meal_uid').eq('booking_id', bookingId).eq('status', 'VALID'),
+  ]);
+  if (ticketsError) throw ticketsError;
+  if (mealsError) throw mealsError;
+  for (const ticket of tickets || []) {
+    const { error } = await supabase.from('tickets').update({ visit_date: visitDate, qr_token: createQrToken(bookingId, ticket.ticket_uid, visitDate) }).eq('id', ticket.id);
+    if (error) throw error;
+  }
+  for (const meal of meals || []) {
+    const { error } = await supabase.from('meal_vouchers').update({ visit_date: visitDate, qr_token: createQrToken(bookingId, meal.meal_uid, visitDate, 'meal') }).eq('id', meal.id);
+    if (error) throw error;
+  }
+  return { tickets: tickets?.length || 0, meals: meals?.length || 0 };
 }
 
 /** Record that the tickets email went out (the booking status page and retries use this). */

@@ -42,7 +42,10 @@ export async function GET(request: Request) {
 
     if (searchError) throw searchError;
 
-    const results = (meals || []).map((m: any) => {
+    type Customer = { first_name: string | null; last_name: string | null; email: string | null };
+    type BookingRef = { reference: string; customers: Customer | Customer[] | null };
+    type MealRow = { id: string; meal_uid: string; qr_token: string; visit_date: string; status: string; redeemed_at: string | null; meal_name: string | null; specials: { title: string } | { title: string }[] | null; bookings: BookingRef | BookingRef[] | null };
+    const results = ((meals || []) as unknown as MealRow[]).map(m => {
       const booking = Array.isArray(m.bookings) ? m.bookings[0] : m.bookings;
       const customer = Array.isArray(booking?.customers) ? booking.customers[0] : booking?.customers;
       const special = Array.isArray(m.specials) ? m.specials[0] : m.specials;
@@ -63,8 +66,9 @@ export async function GET(request: Request) {
     });
 
     return NextResponse.json({ meals: results });
-  } catch (error: any) {
+  } catch (error) {
     if (error instanceof AdminAuthError) return NextResponse.json({ error: error.message }, { status: error.status });
-    return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });
+    console.error('Meal voucher search error', error);
+    return NextResponse.json({ error: 'Could not search meal vouchers. Please try again.' }, { status: 500 });
   }
 }

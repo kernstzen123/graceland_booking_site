@@ -1,51 +1,29 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { requireAdmin, AdminAuthError } from '@/lib/admin-auth';
+import { requireAdmin, writeAudit } from '@/lib/admin-auth';
+import { parseSpecialInput } from '@/lib/specials-server';
+import { SPECIALS_ROLES, specialsErrorResponse } from '@/lib/specials-admin';
 
 export async function GET(request: Request) {
   try {
-    await requireAdmin(request);
-
-    const { data: specials, error: fetchError } = await supabase
-      .from('specials')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (fetchError) throw fetchError;
+    await requireAdmin(request, SPECIALS_ROLES);
+    const { data: specials, error } = await supabase.from('specials').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
     return NextResponse.json({ specials });
-  } catch (error: any) {
-    if (error instanceof AdminAuthError) return NextResponse.json({ error: error.message }, { status: error.status });
-    return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });
+  } catch (error) {
+    return specialsErrorResponse(error, 'Could not load specials.');
   }
 }
 
 export async function POST(request: Request) {
   try {
-    await requireAdmin(request);
-
-    const body = await request.json();
-    const {
-      title, description, badge_text, type, paid_tickets, free_tickets, pricing,
-      free_meals, included_meals, valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking
-    } = body;
-
-    if (!title || !type || !paid_tickets || !free_tickets || !pricing) {
-      return NextResponse.json({ error: 'Missing required special fields' }, { status: 400 });
-    }
-
-    const { data, error: insertError } = await supabase
-      .from('specials')
-      .insert({
-        title, description, badge_text, type, paid_tickets, free_tickets, pricing,
-        free_meals, included_meals: included_meals || [], valid_from, valid_to, valid_weekdays, stock_limit, max_per_booking
-      })
-      .select()
-      .single();
-
-    if (insertError) throw insertError;
+    const { user } = await requireAdmin(request, SPECIALS_ROLES);
+    const special = parseSpecialInput(await request.json());
+    const { data, error } = await supabase.from('specials').insert({ ...special, created_by: user.id }).select().single();
+    if (error) throw error;
+    await writeAudit(user.id, 'CREATE_SPECIAL', 'special', data.id, { title: special.title, pricing: special.pricing, paid_tickets: special.paid_tickets, free_tickets: special.free_tickets, active: special.active });
     return NextResponse.json({ special: data });
-  } catch (error: any) {
-    if (error instanceof AdminAuthError) return NextResponse.json({ error: error.message }, { status: error.status });
-    return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });
+  } catch (error) {
+    return specialsErrorResponse(error, 'Could not create the special.');
   }
 }

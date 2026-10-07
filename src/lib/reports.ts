@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { getClosedDates, applyClosure } from '@/lib/closed-dates';
 import { johannesburgToday } from '@/lib/opening-rules';
 import { GATE_PAYMENT_LABELS, isGateSale } from '@/lib/walk-ins';
+import { IMPORTED_PAYMENT_METHOD, OFFICE_PAYMENT_METHODS } from '@/lib/staff-bookings';
 
 export type ReportBasis = 'visit' | 'booked';
 
@@ -125,9 +126,26 @@ function outcome(booking: Pick<BookingRow, 'status' | 'expires_at'>) {
 }
 
 const isPaid = (booking: Pick<BookingRow, 'status'>) => PAID.includes(booking.status);
-const cashCollected = (booking: BookingRow) => money(booking.amount_due ?? Number(booking.total_amount) - Number(booking.voucher_amount_used || 0));
+/** Copied from the paper booking book: paid before the system, and created on the day they were imported. */
+const isImported = (booking: Pick<BookingRow, 'payment_method'>) => booking.payment_method === IMPORTED_PAYMENT_METHOD;
+/** Money taken through the system. Imported bookings were paid before it, and vouchers are not cash. */
+const cashCollected = (booking: BookingRow) => (isImported(booking) ? 0 : money(booking.amount_due ?? Number(booking.total_amount) - Number(booking.voucher_amount_used || 0)));
 
-const PAYMENT_LABELS: Record<string, string> = { PAYFAST: 'PayFast (card / instant EFT)', MANUAL_EFT: 'Manual EFT', VOUCHER: 'Voucher only', ADMIN_OVERRIDE: 'Marked paid by staff', ...GATE_PAYMENT_LABELS };
+const PAYMENT_LABELS: Record<string, string> = {
+  PAYFAST: 'PayFast (card / instant EFT)', MANUAL_EFT: 'Manual EFT', VOUCHER: 'Voucher only', ADMIN_OVERRIDE: 'Marked paid by staff',
+  ...GATE_PAYMENT_LABELS,
+  ...Object.fromEntries(Object.values(OFFICE_PAYMENT_METHODS).map(method => [method.code, `Office / phone: ${method.label}`])),
+  [IMPORTED_PAYMENT_METHOD]: 'Booking book (imported)',
+};
+
+const CHANNELS = ['Online bookings', 'Office / phone bookings', 'Walk-in (gate) sales', 'Booking book (imported)'] as const;
+/** Where a booking was made, from how it was paid. */
+function channelOf(booking: Pick<BookingRow, 'payment_method'>): (typeof CHANNELS)[number] {
+  if (isGateSale(booking.payment_method)) return 'Walk-in (gate) sales';
+  if (booking.payment_method?.startsWith('OFFICE_')) return 'Office / phone bookings';
+  if (isImported(booking)) return 'Booking book (imported)';
+  return 'Online bookings';
+}
 
 /** Age group and water option for a booking line, based on its item id or name. */
 function visitorCategory(item: ItemTotal): { age: string; water: string } | null {
@@ -199,12 +217,17 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
     if (booking.tickets_issued > 0 && booking.tickets_used === 0) noShowBookings += 1;
   }
 
-  const leadTimes = paid.map(b => Math.max(0, daysBetween(saDateTime(b.created_at).date, b.visit_date) - 1));
+  // Imported bookings were created when they were copied in, not when the customer booked,
+  // so they are left out of "how far ahead" and "time of day" figures.
+  const timedPaid = paid.filter(b => !isImported(b));
+  const leadTimes = timedPaid.map(b => Math.max(0, daysBetween(saDateTime(b.created_at).date, b.visit_date) - 1));
+  const imported = paid.filter(isImported);
+  const importedRevenue = money(imported.reduce((sum, b) => sum + Number(b.total_amount), 0));
   const openDays = basis === 'visit' ? eachDate(from, to).filter(date => applyClosure(date, closed).open).length : days;
 
   const kpis: Kpi[] = [
     { label: 'Revenue (paid bookings)', value: revenue, format: 'currency', previous: previousRevenue, hint: 'Total value of paid bookings, including the part paid with vouchers.' },
-    { label: 'Cash collected', value: collected, format: 'currency', previous: money(previous.collected), hint: 'Paid by PayFast, EFT or at the desk (excludes vouchers).' },
+    { label: 'Cash collected', value: collected, format: 'currency', previous: money(previous.collected), hint: 'Paid by PayFast, EFT, at the gate or at the office. Excludes vouchers and bookings imported from the booking book (paid before the system).' },
     { label: 'Paid bookings', value: paid.length, format: 'number', previous: previousPaid },
     { label: 'Visitors', value: visitors, format: 'number', previous: previousVisitors },
     { label: 'Average booking value', value: avg(revenue, paid.length), format: 'currency', previous: avg(previousRevenue, previousPaid) },
@@ -216,6 +239,7 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
     { label: 'No-show bookings', value: noShowBookings, format: 'number', hint: 'Paid bookings for past dates where no ticket was scanned.' },
     { label: 'Party bookings', value: partyBookings.length, format: 'number' },
     { label: 'Walk-in sales', value: walkInRevenue, format: 'currency', hint: `${walkIns.length} sale${walkIns.length === 1 ? '' : 's'} at the gate, ${ratio(walkInRevenue, revenue)}% of revenue.` },
+    { label: 'Imported from booking book', value: importedRevenue, format: 'currency', hint: basis === 'visit' ? `${imported.length} booking${imported.length === 1 ? '' : 's'} copied from the paper booking book, ${ratio(importedRevenue, revenue)}% of revenue.` : 'Imported bookings are only counted by visit date: their original booking dates are not known.' },
     { label: 'Vouchers redeemed', value: voucherRedeemed, format: 'currency' },
     { label: 'Cancelled / refunded', value: cancelled.length, format: 'number', hint: `R ${money(cancelled.reduce((sum, b) => sum + Number(b.total_amount), 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in value.` },
     { label: 'Average days booked ahead', value: avg(leadTimes.reduce((a, b) => a + b, 0), leadTimes.length), format: 'days' },
@@ -357,8 +381,7 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
   const paymentMethods = [...methods.entries()].sort((a, b) => b[1].revenue - a[1].revenue).map(([method, entry]) => ({ Method: method, Bookings: entry.bookings, 'Share %': ratio(entry.bookings, paid.length), 'Booking value (R)': money(entry.revenue), 'Cash collected (R)': money(entry.collected) }));
 
   // ── Sales channel ──
-  const online = paid.filter(b => !isGateSale(b.payment_method));
-  const channels = ([['Online bookings', online], ['Walk-in (gate) sales', walkIns]] as const).map(([channel, rows]) => {
+  const channels = CHANNELS.map(channel => [channel, paid.filter(b => channelOf(b) === channel)] as const).map(([channel, rows]) => {
     const value = rows.reduce((sum, b) => sum + Number(b.total_amount), 0);
     const guests = rows.reduce((sum, b) => sum + Number(b.people_count || 0), 0);
     return { Channel: channel, 'Paid bookings': rows.length, Visitors: guests, 'Revenue (R)': money(value), 'Share of revenue %': ratio(value, revenue), 'Average sale (R)': avg(value, rows.length) };
@@ -400,17 +423,17 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
   // ── Booking behaviour ──
   const leadBuckets: Array<[string, number, number]> = [['Same day', 0, 0], ['1 day ahead', 1, 1], ['2-3 days ahead', 2, 3], ['4-7 days ahead', 4, 7], ['8-14 days ahead', 8, 14], ['15-30 days ahead', 15, 30], ['More than 30 days ahead', 31, Infinity]];
   const leadTime = leadBuckets.map(([label, min, max]) => {
-    const matches = paid.filter((_, index) => leadTimes[index] >= min && leadTimes[index] <= max);
-    return { 'Booked': label, 'Paid bookings': matches.length, 'Share %': ratio(matches.length, paid.length), 'Revenue (R)': money(matches.reduce((sum, b) => sum + Number(b.total_amount), 0)) };
+    const matches = timedPaid.filter((_, index) => leadTimes[index] >= min && leadTimes[index] <= max);
+    return { 'Booked': label, 'Paid bookings': matches.length, 'Share %': ratio(matches.length, timedPaid.length), 'Revenue (R)': money(matches.reduce((sum, b) => sum + Number(b.total_amount), 0)) };
   });
 
   const hours = Array.from({ length: 24 }, () => ({ started: 0, paid: 0 }));
-  for (const booking of bookings) {
+  for (const booking of bookings.filter(b => !isImported(b))) {
     const { hour } = saDateTime(booking.created_at);
     hours[hour].started += 1;
     if (isPaid(booking)) hours[hour].paid += 1;
   }
-  const bookingHours = hours.map((entry, hour) => ({ Hour: `${String(hour).padStart(2, '0')}:00`, 'Bookings started': entry.started, 'Paid bookings': entry.paid, 'Share of paid %': ratio(entry.paid, paid.length) }));
+  const bookingHours = hours.map((entry, hour) => ({ Hour: `${String(hour).padStart(2, '0')}:00`, 'Bookings started': entry.started, 'Paid bookings': entry.paid, 'Share of paid %': ratio(entry.paid, timedPaid.length) }));
 
   const peakDays = [...daily].filter(row => Number(row.Visitors) > 0).sort((a, b) => Number(b.Visitors) - Number(a.Visitors)).slice(0, 15)
     .map(row => ({ Date: row.Date, Weekday: row.Weekday, Visitors: row.Visitors, 'Paid bookings': row['Paid bookings'], 'Revenue (R)': row['Revenue (R)'], ...(basis === 'visit' ? { 'Capacity used %': row['Capacity used %'] } : {}) }));

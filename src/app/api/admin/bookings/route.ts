@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
-import { emailTicketsOnce, generateTicketsAndSendEmail } from '@/lib/ticketing';
+import { emailTicketsOnce, generateTicketsAndSendEmail, resignBookingQrCodes } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
 
@@ -272,9 +272,14 @@ export async function POST(request: Request) {
 
       if (newCustomerId) await supabase.from('tickets').update({ customer_id: newCustomerId }).eq('booking_id', booking.id);
       if (edit.visit_date !== undefined && visitDate !== booking.visit_date) {
-        await supabase.from('tickets').update({ visit_date: visitDate }).eq('booking_id', booking.id);
-        await supabase.from('booking_spots').update({ visit_date: visitDate }).eq('booking_id', booking.id);
-        await supabase.from('meal_vouchers').update({ visit_date: visitDate }).eq('booking_id', booking.id);
+        const { error: ticketDateError } = await supabase.from('tickets').update({ visit_date: visitDate }).eq('booking_id', booking.id);
+        if (ticketDateError) throw ticketDateError;
+        const { error: spotDateError } = await supabase.from('booking_spots').update({ visit_date: visitDate }).eq('booking_id', booking.id);
+        if (spotDateError) throw spotDateError;
+        const { error: mealDateError } = await supabase.from('meal_vouchers').update({ visit_date: visitDate }).eq('booking_id', booking.id);
+        if (mealDateError) throw mealDateError;
+        // QR codes are only valid up to the date they were signed for: re-sign them for the new date.
+        await resignBookingQrCodes(booking.id, visitDate);
       }
 
       // Gate tickets follow the items. Tickets that were already scanned are never touched.

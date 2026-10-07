@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { BOOKABLE_ITEMS } from '@/lib/pricing';
-import type { Special } from '@/lib/specials';
+import type { Special, SpecialItemDef, SpecialPricing, SpecialType } from '@/lib/specials';
 
 const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
 
@@ -17,6 +17,11 @@ const WEEKDAYS = [
 const inputStyle = { padding: '0.6rem', border: '1px solid var(--border-color)', borderRadius: 8, width: '100%', fontSize: '0.9rem' } as const;
 const labelStyle = { display: 'grid', gap: 4, fontSize: '0.85rem', fontWeight: 600, flex: 1 };
 const rowStyle = { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: '1rem' } as const;
+const errorText = (error: unknown) => (error instanceof Error ? error.message : 'Something went wrong. Please try again.');
+
+/** Replace one line of a list without changing the original (the saved special stays untouched until Save). */
+const updateAt = <T,>(list: T[] | undefined, index: number, change: Partial<T>) => (list || []).map((item, i) => (i === index ? { ...item, ...change } : item));
+
 const headerStyle = { fontSize: '1rem', color: 'var(--primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: 6, marginBottom: 12, marginTop: '1.5rem' };
 
 export default function SpecialsAdminPage() {
@@ -41,16 +46,15 @@ export default function SpecialsAdminPage() {
       if (!mealRes.ok) throw new Error(mealData.error || 'Failed to load settings');
       setSpecials(spData.specials || []);
       setMealName(mealData.settings?.meal_name || 'Free Meal');
-    } catch (e: any) {
-      setMessage({ tone: 'error', text: e.message });
+    } catch (error) {
+      setMessage({ tone: 'error', text: errorText(error) });
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial load; state is set after the requests finish
+  useEffect(() => { loadData(); }, [loadData]);
 
   const saveMealSettings = async () => {
     setSaving(true);
@@ -63,8 +67,8 @@ export default function SpecialsAdminPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setMessage({ tone: 'ok', text: 'Meal name updated.' });
-    } catch (e: any) {
-      setMessage({ tone: 'error', text: e.message });
+    } catch (error) {
+      setMessage({ tone: 'error', text: errorText(error) });
     } finally {
       setSaving(false);
     }
@@ -86,15 +90,16 @@ export default function SpecialsAdminPage() {
       setMessage({ tone: 'ok', text: editing?.id ? 'Special updated.' : 'Special created.' });
       setEditing(null);
       loadData();
-    } catch (e: any) {
-      setMessage({ tone: 'error', text: e.message });
+    } catch (error) {
+      setMessage({ tone: 'error', text: errorText(error) });
     } finally {
       setSaving(false);
     }
   };
 
   const archiveSpecial = async (id: string) => {
-    if (!await confirm({ title: 'Archive Special', message: 'Are you sure you want to archive this special? It will no longer be bookable.', confirmLabel: 'Archive' })) return;
+    const answer = await confirm({ title: 'Archive special', message: 'Archive this special? It will no longer be bookable. Existing bookings keep it.', confirmLabel: 'Archive', tone: 'danger' });
+    if (!answer.confirmed) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/admin/specials/${id}`, {
@@ -107,8 +112,8 @@ export default function SpecialsAdminPage() {
       }
       setMessage({ tone: 'ok', text: 'Special archived.' });
       loadData();
-    } catch (e: any) {
-      setMessage({ tone: 'error', text: e.message });
+    } catch (error) {
+      setMessage({ tone: 'error', text: errorText(error) });
     } finally {
       setSaving(false);
     }
@@ -184,7 +189,7 @@ export default function SpecialsAdminPage() {
             <div style={rowStyle}>
               <label style={labelStyle}>
                 Special Type
-                <select value={editing.type} onChange={e => setEditing({ ...editing, type: e.target.value as any })} style={inputStyle}>
+                <select value={editing.type} onChange={e => setEditing({ ...editing, type: e.target.value as SpecialType })} style={inputStyle}>
                   <option value="discount">Bundle Discount</option>
                   <option value="buy_x_get_y">Buy X Get Y Free</option>
                   <option value="tickets_and_meals">Tickets + Meals</option>
@@ -199,40 +204,24 @@ export default function SpecialsAdminPage() {
             <h3 style={headerStyle}>Paid Tickets in Bundle</h3>
             {editing.paid_tickets?.map((t, i) => (
               <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-                <select value={t.itemId} onChange={e => {
-                  const newTickets = [...(editing.paid_tickets || [])];
-                  newTickets[i].itemId = e.target.value;
-                  setEditing({ ...editing, paid_tickets: newTickets });
-                }} style={{ ...inputStyle, flex: 1 }}>
+                <select value={t.itemId} onChange={e => setEditing({ ...editing, paid_tickets: updateAt<SpecialItemDef>(editing.paid_tickets, i, { itemId: e.target.value }) })} style={{ ...inputStyle, flex: 1 }}>
                   {Object.entries(BOOKABLE_ITEMS).map(([id, info]) => <option key={id} value={id}>{info.name}</option>)}
                 </select>
-                <input type="number" min="1" value={t.quantity} onChange={e => {
-                  const newTickets = [...(editing.paid_tickets || [])];
-                  newTickets[i].quantity = Number(e.target.value);
-                  setEditing({ ...editing, paid_tickets: newTickets });
-                }} style={{ ...inputStyle, width: 80 }} />
+                <input type="number" min="1" value={t.quantity} onChange={e => setEditing({ ...editing, paid_tickets: updateAt<SpecialItemDef>(editing.paid_tickets, i, { quantity: Number(e.target.value) }) })} style={{ ...inputStyle, width: 80 }} />
                 <button type="button" onClick={() => setEditing({ ...editing, paid_tickets: editing.paid_tickets?.filter((_, idx) => idx !== i) })} className="btn" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}>Remove</button>
               </div>
             ))}
             <button type="button" onClick={() => setEditing({ ...editing, paid_tickets: [...(editing.paid_tickets || []), { itemId: 'day-water-adult', quantity: 1 }] })} style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 600, cursor: 'pointer', padding: '0.5rem 0' }}>+ Add ticket type</button>
 
-            {(editing.type === 'buy_x_get_y' || editing.free_tickets?.length! > 0) && (
+            {(editing.type === 'buy_x_get_y' || (editing.free_tickets?.length ?? 0) > 0) && (
               <>
                 <h3 style={headerStyle}>Free Tickets in Bundle</h3>
                 {editing.free_tickets?.map((t, i) => (
                   <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-                    <select value={t.itemId} onChange={e => {
-                      const newTickets = [...(editing.free_tickets || [])];
-                      newTickets[i].itemId = e.target.value;
-                      setEditing({ ...editing, free_tickets: newTickets });
-                    }} style={{ ...inputStyle, flex: 1 }}>
+                    <select value={t.itemId} onChange={e => setEditing({ ...editing, free_tickets: updateAt<SpecialItemDef>(editing.free_tickets, i, { itemId: e.target.value }) })} style={{ ...inputStyle, flex: 1 }}>
                       {Object.entries(BOOKABLE_ITEMS).map(([id, info]) => <option key={id} value={id}>{info.name}</option>)}
                     </select>
-                    <input type="number" min="1" value={t.quantity} onChange={e => {
-                      const newTickets = [...(editing.free_tickets || [])];
-                      newTickets[i].quantity = Number(e.target.value);
-                      setEditing({ ...editing, free_tickets: newTickets });
-                    }} style={{ ...inputStyle, width: 80 }} />
+                    <input type="number" min="1" value={t.quantity} onChange={e => setEditing({ ...editing, free_tickets: updateAt<SpecialItemDef>(editing.free_tickets, i, { quantity: Number(e.target.value) }) })} style={{ ...inputStyle, width: 80 }} />
                     <button type="button" onClick={() => setEditing({ ...editing, free_tickets: editing.free_tickets?.filter((_, idx) => idx !== i) })} className="btn" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}>Remove</button>
                   </div>
                 ))}
@@ -245,7 +234,7 @@ export default function SpecialsAdminPage() {
                   <h3 style={headerStyle}>Pricing Override</h3>
                   <div style={{ display: 'flex', gap: 12 }}>
                      <select value={editing.pricing?.type} onChange={e => {
-                        const type = e.target.value as any;
+                        const type = e.target.value as SpecialPricing['type'];
                         if (type === 'percentage') setEditing({ ...editing, pricing: { type, discount: 10 } });
                         if (type === 'fixed-off') setEditing({ ...editing, pricing: { type, discount: 50 } });
                         if (type === 'fixed-price') setEditing({ ...editing, pricing: { type, price: 500 } });
@@ -257,7 +246,7 @@ export default function SpecialsAdminPage() {
                      <input type="number" min="0" value={
                         editing.pricing?.type === 'percentage' ? editing.pricing.discount :
                         editing.pricing?.type === 'fixed-off' ? editing.pricing.discount :
-                        editing.pricing?.type === 'fixed-price' ? (editing.pricing as any).price : 0
+                        editing.pricing?.type === 'fixed-price' ? editing.pricing.price : 0
                      } onChange={e => {
                         const val = Number(e.target.value);
                         if (editing.pricing?.type === 'percentage') setEditing({ ...editing, pricing: { type: 'percentage', discount: val } });
@@ -270,16 +259,8 @@ export default function SpecialsAdminPage() {
                   <h3 style={headerStyle}>Included Meal Vouchers</h3>
                   {editing.included_meals?.map((m, i) => (
                     <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 8, alignItems: 'center' }}>
-                      <input type="text" value={m.name} onChange={e => {
-                        const newMeals = [...(editing.included_meals || [])];
-                        newMeals[i].name = e.target.value;
-                        setEditing({ ...editing, included_meals: newMeals });
-                      }} style={{ ...inputStyle, flex: 1 }} placeholder="Voucher Name (e.g. Free Hotdog)" />
-                      <input type="number" min="1" value={m.quantity} onChange={e => {
-                        const newMeals = [...(editing.included_meals || [])];
-                        newMeals[i].quantity = Number(e.target.value);
-                        setEditing({ ...editing, included_meals: newMeals });
-                      }} style={{ ...inputStyle, width: 80 }} />
+                      <input type="text" value={m.name} onChange={e => setEditing({ ...editing, included_meals: updateAt(editing.included_meals, i, { name: e.target.value }) })} style={{ ...inputStyle, flex: 1 }} placeholder="Voucher Name (e.g. Free Hotdog)" />
+                      <input type="number" min="1" value={m.quantity} onChange={e => setEditing({ ...editing, included_meals: updateAt(editing.included_meals, i, { quantity: Number(e.target.value) }) })} style={{ ...inputStyle, width: 80 }} />
                       <button type="button" onClick={() => setEditing({ ...editing, included_meals: editing.included_meals?.filter((_, idx) => idx !== i) })} className="btn" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}>Remove</button>
                     </div>
                   ))}
@@ -336,7 +317,7 @@ export default function SpecialsAdminPage() {
         <section className="card">
           <h2>Active Specials</h2>
           <div style={{ marginTop: '1.5rem' }}>
-            {specials.filter(s => !s.archived_at).length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>No specials found. Click "Create special" to add one.</p>}
+            {specials.filter(s => !s.archived_at).length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>No specials found. Click &quot;Create special&quot; to add one.</p>}
             {specials.filter(s => !s.archived_at).map(s => (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border-color)', gap: 16, flexWrap: 'wrap' }}>
                  <div style={{ flex: 1 }}>
