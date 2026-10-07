@@ -27,6 +27,14 @@ type BookingRow = {
   first_name: string | null; last_name: string | null; email: string | null; phone: string | null;
   tickets_issued: number; tickets_used: number;
   items_summary: string | null; party_children: number; party_option: string | null; party_packs: number;
+  specials?: Array<{ title: string; quantity: number }> | null;
+};
+
+/** One special's sales in the period, as returned by admin_report_data (paid bookings only). */
+type SpecialTotal = {
+  id: string; title: string; type: string;
+  bundles_sold: number; bookings: number; revenue: number; discount_value: number; free_tickets: number;
+  meals_issued: number; meals_redeemed: number; meals_cancelled: number;
 };
 
 /** Paid booking lines grouped by item, as returned by admin_report_data. */
@@ -41,6 +49,8 @@ export type ReportData = {
   seating: { hutTotal: number; tableTotal: number; hutBooked: number; tableBooked: number } | null;
   vouchers: { issuedCount: number; issuedValue: number; voidCount: number; voidValue: number; redeemedCount: number; redeemedValue: number; outstandingCount: number; outstandingValue: number };
   capacity: number;
+  /** Missing until supabase/migrations/20261004_specials_and_meals.sql has been applied. */
+  specials?: SpecialTotal[];
 };
 
 export type Row = Record<string, string | number | null>;
@@ -67,6 +77,7 @@ export type Report = {
   checkIns: Row[];
   customers: { summary: Row[]; top: Row[] };
   vouchers: Row[];
+  specials: { summary: Row[]; bySpecial: Row[] };
   bookings: Row[];
 };
 
@@ -493,6 +504,48 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
     { Measure: 'Outstanding voucher balance today (all time)', Count: Number(v.outstandingCount), 'Value (R)': money(v.outstandingValue) },
   ];
 
+  // ── Specials ──
+  const SPECIAL_TYPE_LABELS: Record<string, string> = { discount: 'Bundle discount', buy_x_get_y: 'Buy X get Y free', tickets_and_meals: 'Tickets + meals' };
+  const specialTotals = (data.specials || []).map(row => ({
+    ...row,
+    bundles_sold: Number(row.bundles_sold || 0), bookings: Number(row.bookings || 0), revenue: Number(row.revenue || 0),
+    discount_value: Number(row.discount_value || 0), free_tickets: Number(row.free_tickets || 0),
+    meals_issued: Number(row.meals_issued || 0), meals_redeemed: Number(row.meals_redeemed || 0),
+  }));
+  const sumOf = (key: 'bundles_sold' | 'revenue' | 'discount_value' | 'free_tickets' | 'meals_issued' | 'meals_redeemed') => specialTotals.reduce((sum, row) => sum + row[key], 0);
+  // A booking can hold more than one special, so bookings are counted from the booking rows, not summed per special.
+  const bookingsWithSpecials = paid.filter(b => Array.isArray(b.specials) && b.specials.length > 0).length;
+  const specialRevenue = money(sumOf('revenue'));
+  const specials = {
+    summary: [
+      { Measure: 'Specials sold', Value: sumOf('bundles_sold') },
+      { Measure: 'Bookings with a special', Value: bookingsWithSpecials },
+      { Measure: 'Share of paid bookings %', Value: ratio(bookingsWithSpecials, paid.length) },
+      { Measure: 'Special revenue (R)', Value: specialRevenue },
+      { Measure: 'Share of revenue %', Value: ratio(specialRevenue, revenue) },
+      { Measure: 'Discount given (R)', Value: money(sumOf('discount_value')) },
+      { Measure: 'Free tickets given', Value: sumOf('free_tickets') },
+      { Measure: 'Meal vouchers issued', Value: sumOf('meals_issued') },
+      { Measure: 'Meal vouchers redeemed', Value: sumOf('meals_redeemed') },
+      { Measure: 'Meal redemption %', Value: ratio(sumOf('meals_redeemed'), sumOf('meals_issued')) },
+    ] as Row[],
+    bySpecial: [...specialTotals]
+      .sort((a, b) => b.revenue - a.revenue || b.bundles_sold - a.bundles_sold || a.title.localeCompare(b.title))
+      .map(row => ({
+        Special: row.title,
+        Type: SPECIAL_TYPE_LABELS[row.type] || row.type,
+        Bookings: row.bookings,
+        'Sold': row.bundles_sold,
+        'Revenue (R)': money(row.revenue),
+        'Average price (R)': avg(row.revenue, row.bundles_sold),
+        'Discount given (R)': money(row.discount_value),
+        'Free tickets': row.free_tickets,
+        'Meals issued': row.meals_issued,
+        'Meals redeemed': row.meals_redeemed,
+        'Meal redemption %': ratio(row.meals_redeemed, row.meals_issued),
+      })) as Row[],
+  };
+
   // ── Raw bookings ──
   const bookingRows = [...bookings].sort((a, b) => a.visit_date.localeCompare(b.visit_date) || a.created_at.localeCompare(b.created_at)).map(booking => {
     return {
@@ -509,6 +562,7 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
       'Voucher used (R)': money(booking.voucher_amount_used),
       'Cash collected (R)': isPaid(booking) ? cashCollected(booking) : 0,
       Party: booking.party_slot ? `Yes (${booking.party_slot})` : 'No',
+      Specials: (booking.specials || []).map(special => `${special.quantity}× ${special.title}`).join('; '),
       Items: booking.items_summary || '',
       'Tickets scanned': `${booking.tickets_used}/${booking.tickets_issued}`,
     };
@@ -532,6 +586,7 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
     checkIns,
     customers,
     vouchers,
+    specials,
     bookings: bookingRows,
   };
 }

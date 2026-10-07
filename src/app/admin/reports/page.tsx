@@ -262,6 +262,14 @@ export default function ReportsPage() {
         </Section>
       </div>
 
+      <Section title="Specials" subtitle="Paid bookings with a special in this period. Revenue and discounts are tracked for specials booked from 8 October 2026." table={report.specials.bySpecial}>
+        {report.specials.bySpecial.length ? <>
+          <div className="report-mini-stats" style={{ marginTop: 0, marginBottom: '1rem' }}>{report.specials.summary.map(row => <div key={String(row.Measure)}><span>{String(row.Measure)}</span><strong>{formatCell(String(row.Measure), row.Value)}</strong></div>)}</div>
+          <h3 className="report-group-heading">Revenue by special</h3>
+          <BarList rows={report.specials.bySpecial.map(row => ({ ...row, Detail: `${row.Sold} sold` }))} labelKey="Special" valueKey="Revenue (R)" detailKey="Detail" />
+        </> : <p style={{ color: 'var(--text-muted)' }}>No specials were sold in this period.</p>}
+      </Section>
+
       <div className="report-grid">
         <Section title="How far ahead people book" subtitle="Time between booking and visit." table={report.leadTime}>
           <BarList rows={report.leadTime} labelKey="Booked" valueKey="Paid bookings" detailKey="Share %" />

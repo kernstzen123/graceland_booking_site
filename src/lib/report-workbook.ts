@@ -185,6 +185,10 @@ export function buildReportWorkbook(report: Report) {
   row = addTable(parties, row, report.parties.summary, { heading: 'Overview' });
   row = addTable(parties, row, report.parties.slots, { heading: 'By time slot', totals: true, emptyText: 'No paid parties in this period.' });
   addTable(parties, row, report.parties.options, { heading: 'By package', totals: true, emptyText: 'No paid parties in this period.' });
+  const specials = addSheet(workbook, 'Specials');
+  row = addTitle(specials, 'Specials', report, 'Paid bookings with a special in this period. Revenue and discounts are tracked for specials booked from 8 October 2026.');
+  row = addTable(specials, row, report.specials.summary, { heading: 'Overview' });
+  addTable(specials, row, report.specials.bySpecial, { heading: 'By special', totals: true, emptyText: 'No specials were sold in this period.' });
 
   // ── Behaviour and operations ──
   const behaviour = addSheet(workbook, 'Booking behaviour');

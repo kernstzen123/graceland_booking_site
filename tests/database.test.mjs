@@ -362,6 +362,34 @@ it('database migrations and functions behave correctly', async () => {
   const nextDay = (await one(`select public.admin_report_data($1::date, $1::date, 'booked') as r`, [tomorrow])).r;
   check('previous-period cash collected leaves imported bookings out', Number(nextDay.previous.collected) === Number(byBooked.bookings.filter(b => ['PAID', 'CONFIRMED'].includes(b.status) && b.payment_method !== 'IMPORTED').reduce((sum, b) => sum + Number(b.amount_due ?? Number(b.total_amount) - Number(b.voucher_amount_used || 0)), 0)), `${nextDay.previous.collected}`);
 
+  // ── Per-special statistics in reports ───────────────────────────────────
+  // 10% off 2 adults (R230 → R207 each), plus a free toddler (R110) and a pizza, booked twice in one booking.
+  const statsSpecial = (await one(`insert into public.specials (type, title, paid_tickets, free_tickets, pricing, included_meals, valid_weekdays, max_per_booking)
+    values ('discount', 'Stats Special', '[{"itemId":"day-water-adult","quantity":2}]', '[{"itemId":"day-water-toddler","quantity":1}]', '{"type":"percentage","discount":10}', '[{"name":"Pizza","quantity":1}]', '[]', 5)
+    returning id`)).id;
+  const statsItems = (bundles) => JSON.stringify([
+    { quantity: 2 * bundles, price_per_unit: 207, subtotal: 414 * bundles, metadata: { name: 'Adult (Special)', isPerson: true, specialId: statsSpecial, specialRole: 'paid', fullPricePerUnit: 230 } },
+    { quantity: bundles, price_per_unit: 0, subtotal: 0, metadata: { name: 'Toddler (Free)', isPerson: true, specialId: statsSpecial, specialRole: 'free', fullPricePerUnit: 110 } },
+    { quantity: bundles, price_per_unit: 0, subtotal: 0, metadata: { name: 'Pizza - meal voucher', isPerson: false, specialId: statsSpecial, specialRole: 'meal' } },
+  ]);
+  const paidSpecialBooking = async (ref, date, bundles) => {
+    const id = (await one(`select * from public.create_booking($1::date, 3, ${customer}, $2, $3, null, null, null, $4::jsonb, array[]::uuid[], null, null, $5::jsonb)`, [date, ref, 414 * bundles, statsItems(bundles), JSON.stringify([{ id: statsSpecial, quantity: bundles }])])).booking_id;
+    await db.query(`update public.bookings set status = 'PAID', payment_method = 'PAYFAST', expires_at = null where id = $1`, [id]);
+    for (let i = 0; i < bundles; i++) await db.query(`insert into public.meal_vouchers (booking_id, special_id, meal_uid, qr_token, visit_date, meal_name) values ($1, $2, $3, $4, $5::date, 'Pizza')`, [id, statsSpecial, `MEAL-${ref}-${i}`, `token-${ref}-${i}`, date]);
+    return id;
+  };
+  await paidSpecialBooking('BK-STATS-IN', weekend.sat, 2);
+  await paidSpecialBooking('BK-STATS-OUT', weekday, 1); // the Tuesday after: outside the weekend report
+  const unpaidStats = (await one(`select * from public.create_booking($1::date, 3, ${customer}, 'BK-STATS-UNPAID', 414, null, null, null, $2::jsonb, array[]::uuid[], null, null, $3::jsonb)`, [weekend.sun, statsItems(1), JSON.stringify([{ id: statsSpecial, quantity: 1 }])])).booking_id;
+  check('(unpaid special booking created)', Boolean(unpaidStats));
+  const weekendStats = (await one(`select public.admin_report_data($1::date, $2::date, 'visit') as r`, [weekend.sat, weekend.sun])).r.specials.find(s => s.id === statsSpecial);
+  check('special statistics count only paid bookings in the period, once each', weekendStats && Number(weekendStats.bookings) === 1 && Number(weekendStats.bundles_sold) === 2, JSON.stringify(weekendStats));
+  check('special revenue works for a % off special', weekendStats && Number(weekendStats.revenue) === 828, JSON.stringify(weekendStats));
+  check('special discount = normal price less price paid, free tickets included', weekendStats && Number(weekendStats.discount_value) === 312, JSON.stringify(weekendStats));
+  check('special free tickets and meals are counted', weekendStats && Number(weekendStats.free_tickets) === 2 && Number(weekendStats.meals_issued) === 2, JSON.stringify(weekendStats));
+  const noSales = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [(await one(`select ($1::date - 3)::text as d`, [weekend.sat])).d])).r.specials;
+  check('a period with no sales shows no special statistics', noSales.length === 0, JSON.stringify(noSales));
+
   await db.query(`update public.specials set archived_at = now() where id = $1`, [special]);
   await expectError('an archived special is refused', `select * from public.create_booking('${weekend.sat}', 4, ${customer}, 'BK-SP-ARCH', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 1 }])}'::jsonb)`, /no longer available/);
 

@@ -165,7 +165,12 @@ export type LineItem = {
   subtotal: number;
   isPerson: boolean;
   party: boolean;
+  /** Set on lines that belong to a special, so reports can attribute them to it. */
   specialId?: string;
+  /** paid: a discounted ticket in the bundle; free: a free ticket; meal: a meal voucher line. */
+  specialRole?: 'paid' | 'free' | 'meal';
+  /** Normal price of one ticket on a special line, so reports can show the discount given. */
+  fullPricePerUnit?: number;
 };
 
 /**
@@ -265,6 +270,8 @@ export function calculateServerTotal(
         isPerson: itemInfo.isPerson,
         party: false,
         specialId: id,
+        specialRole: 'paid',
+        fullPricePerUnit: basePrice,
       });
     }
 
@@ -280,6 +287,8 @@ export function calculateServerTotal(
         isPerson: itemInfo.isPerson,
         party: false,
         specialId: id,
+        specialRole: 'free',
+        fullPricePerUnit: priceOf(prices, t.itemId),
       });
     }
 
@@ -298,6 +307,7 @@ export function calculateServerTotal(
         isPerson: false,
         party: false,
         specialId: id,
+        specialRole: 'meal',
       });
     }
   }

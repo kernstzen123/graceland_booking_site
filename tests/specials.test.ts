@@ -69,6 +69,21 @@ describe('booking specials are priced from the database', () => {
   });
 });
 
+describe('special booking lines record their special', () => {
+  it('tags paid, free and meal lines with the special, their role and the normal price', () => {
+    const selection: BookingSpecialSelection = {
+      id: familyPackage.id, quantity: 2,
+      snapshot: { title: 'T', type: 'discount', paid_tickets: [{ itemId: 'day-water-adult', quantity: 2 }], free_tickets: [{ itemId: 'day-water-toddler', quantity: 1 }], pricing: { type: 'percentage', discount: 10 }, free_meals: 0, included_meals: [{ name: 'Pizza', quantity: 1 }] },
+    };
+    const lines = calculateServerTotal({}, undefined, DEFAULT_PRICES, [selection]).lineItems;
+    const role = (r: string) => lines.find(line => line.specialRole === r);
+    expect(lines.every(line => line.specialId === familyPackage.id)).toBe(true);
+    expect(role('paid')).toMatchObject({ quantity: 4, pricePerUnit: DEFAULT_PRICES['day-water-adult'] * 0.9, fullPricePerUnit: DEFAULT_PRICES['day-water-adult'] });
+    expect(role('free')).toMatchObject({ quantity: 2, pricePerUnit: 0, fullPricePerUnit: DEFAULT_PRICES['day-water-toddler'] });
+    expect(role('meal')).toMatchObject({ quantity: 2, itemId: 'special-meal' });
+  });
+});
+
 describe('special price calculation cannot be pushed below zero', () => {
   const tamper = (snapshot: Partial<BookingSpecialSelection['snapshot']>): BookingSpecialSelection => ({
     id: familyPackage.id, quantity: 1,

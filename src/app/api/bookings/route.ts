@@ -184,6 +184,8 @@ export async function POST(request: Request) {
             itemId: line.itemId,
             name: line.name,
             isPerson: line.isPerson,
+            // Lines from a special carry it, so reports can attribute revenue, free tickets and discounts.
+            ...(line.specialId ? { specialId: line.specialId, specialRole: line.specialRole, ...(line.fullPricePerUnit !== undefined ? { fullPricePerUnit: line.fullPricePerUnit } : {}) } : {}),
             ...(attendeeNamesForItem.length > 0 ? { attendeeNames: attendeeNamesForItem } : {}),
           },
         });
