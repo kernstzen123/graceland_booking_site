@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import type { Special } from '@/lib/specials';
+import { specialsSoldOn, specialValidOnWeekday } from '@/lib/specials-server';
 
+/**
+ * GET /api/specials?date=YYYY-MM-DD — specials that can be booked for that visit date.
+ * Uses the same rules as the booking check: weekdays (0 = Sunday), and stock
+ * counted per visit date, including unpaid bookings that are still being held.
+ * `remaining` is how many are left that day (null = no limit).
+ */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -11,55 +18,24 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Invalid date' }, { status: 400 });
     }
 
-    const targetDate = new Date(`${date}T00:00:00Z`);
-    const dayOfWeek = targetDate.getDay(); // 0 = Sunday, 1 = Monday...
-
     const { data: specials, error } = await supabase
       .from('specials')
       .select('*')
       .eq('active', true)
+      .is('archived_at', null)
       .or(`valid_from.is.null,valid_from.lte.${date}`)
       .or(`valid_to.is.null,valid_to.gte.${date}`);
 
     if (error) throw error;
 
-    // Filter by weekday
-    let availableSpecials = (specials as Special[]).filter(s => 
-      !s.valid_weekdays || s.valid_weekdays.length === 0 || s.valid_weekdays.includes(dayOfWeek)
-    );
+    const onThisDay = ((specials || []) as Special[]).filter(special => specialValidOnWeekday(special.valid_weekdays, date));
+    const sold = await specialsSoldOn(date, onThisDay.filter(special => special.stock_limit !== null).map(special => special.id));
 
-    // If there are stock limits, calculate current usage
-    const specialsWithLimit = availableSpecials.filter(s => s.stock_limit !== null);
-    if (specialsWithLimit.length > 0) {
-      const specialIds = specialsWithLimit.map(s => s.id);
-      
-      const { data: usageData, error: usageError } = await supabase
-        .from('booking_specials')
-        .select(`
-          special_id,
-          quantity,
-          bookings!inner(visit_date, status)
-        `)
-        .eq('bookings.visit_date', date)
-        .in('bookings.status', ['PAID', 'PENDING'])
-        .in('special_id', specialIds);
-        
-      if (usageError) throw usageError;
+    const available = onThisDay
+      .map(special => ({ ...special, remaining: special.stock_limit === null ? null : Math.max(0, special.stock_limit - (sold.get(special.id) || 0)) }))
+      .filter(special => special.remaining === null || special.remaining > 0);
 
-      // Group usage by special_id
-      const usageMap: Record<string, number> = {};
-      for (const row of usageData || []) {
-        usageMap[row.special_id] = (usageMap[row.special_id] || 0) + row.quantity;
-      }
-
-      availableSpecials = availableSpecials.filter(s => {
-        if (s.stock_limit === null) return true;
-        const used = usageMap[s.id] || 0;
-        return used < s.stock_limit;
-      });
-    }
-
-    return NextResponse.json(availableSpecials);
+    return NextResponse.json(available, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('Error fetching specials:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

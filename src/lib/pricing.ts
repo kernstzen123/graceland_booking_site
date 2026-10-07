@@ -11,7 +11,7 @@
  */
 
 import type { PartyDetails } from './parties';
-import type { BookingSpecialSelection } from './specials';
+import type { BookingSpecialSelection, SpecialItemDef, SpecialSnapshot } from './specials';
 
 // ---------------------------------------------------------------------------
 // Price keys and defaults
@@ -173,21 +173,29 @@ export type LineItem = {
  * This is used on the server to verify the client total and to build the
  * booking items that are stored.
  */
-export function calculateSpecialPrice(snapshot: any, prices: PriceList = DEFAULT_PRICES): number {
+/** Ticket lines of a special that can be priced: known items with whole, positive quantities. */
+function validTicketLines(lines: SpecialItemDef[] | undefined) {
+  return (Array.isArray(lines) ? lines : []).filter(line => BOOKABLE_ITEMS[line?.itemId] && Number.isInteger(Number(line.quantity)) && Number(line.quantity) > 0);
+}
+
+/** A non-negative finite number, or 0. */
+const nonNegative = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+};
+
+/** The price of one of a special, from its paid tickets and its pricing rule. Never negative. */
+export function calculateSpecialPrice(snapshot: Pick<SpecialSnapshot, 'paid_tickets' | 'pricing'>, prices: PriceList = DEFAULT_PRICES): number {
   let baseTotal = 0;
-  for (const t of snapshot.paid_tickets) {
-    baseTotal += priceOf(prices, t.itemId) * t.quantity;
+  for (const t of validTicketLines(snapshot.paid_tickets)) {
+    baseTotal += priceOf(prices, t.itemId) * Number(t.quantity);
   }
 
-  let bundlePrice = baseTotal;
-  if (snapshot.pricing.type === 'percentage') {
-    bundlePrice = Math.max(0, baseTotal * (100 - snapshot.pricing.discount) / 100);
-  } else if (snapshot.pricing.type === 'fixed-off') {
-    bundlePrice = Math.max(0, baseTotal - snapshot.pricing.discount);
-  } else if (snapshot.pricing.type === 'fixed-price') {
-    bundlePrice = snapshot.pricing.price;
-  }
-  return bundlePrice;
+  const pricing = snapshot.pricing;
+  if (pricing?.type === 'percentage') return baseTotal * (100 - Math.min(100, nonNegative(pricing.discount))) / 100;
+  if (pricing?.type === 'fixed-off') return Math.max(0, baseTotal - nonNegative(pricing.discount));
+  if (pricing?.type === 'fixed-price') return nonNegative(pricing.price);
+  return baseTotal;
 }
 
 export function calculateServerTotal(
@@ -233,16 +241,17 @@ export function calculateServerTotal(
     if (selection.quantity <= 0) continue;
     const { id, quantity, snapshot } = selection;
 
+    const paidTickets = validTicketLines(snapshot.paid_tickets);
     let baseTotal = 0;
-    for (const t of snapshot.paid_tickets) {
-      baseTotal += priceOf(prices, t.itemId) * t.quantity;
+    for (const t of paidTickets) {
+      baseTotal += priceOf(prices, t.itemId) * Number(t.quantity);
     }
 
     const bundlePrice = calculateSpecialPrice(snapshot, prices);
 
     const discountRatio = baseTotal > 0 ? (baseTotal - bundlePrice) / baseTotal : 0;
 
-    for (const t of snapshot.paid_tickets) {
+    for (const t of paidTickets) {
       const itemInfo = BOOKABLE_ITEMS[t.itemId];
       if (!itemInfo) continue;
       const basePrice = priceOf(prices, t.itemId);
@@ -259,7 +268,7 @@ export function calculateServerTotal(
       });
     }
 
-    for (const t of snapshot.free_tickets) {
+    for (const t of validTicketLines(snapshot.free_tickets)) {
       const itemInfo = BOOKABLE_ITEMS[t.itemId];
       if (!itemInfo) continue;
       lineItems.push({

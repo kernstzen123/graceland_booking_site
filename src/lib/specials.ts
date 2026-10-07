@@ -1,6 +1,3 @@
-import { BOOKABLE_ITEMS, priceOf, PriceList, DEFAULT_PRICES } from './pricing';
-import type { LineItem } from './pricing';
-
 export type SpecialType = 'discount' | 'buy_x_get_y' | 'tickets_and_meals';
 
 export type SpecialPricing =
@@ -43,6 +40,8 @@ export type Special = {
   active: boolean;
   archived_at: string | null;
   created_at: string;
+  /** From /api/specials: how many are left on the requested date (null = no limit). */
+  remaining?: number | null;
 };
 
 export type BookingSpecialSelection = {

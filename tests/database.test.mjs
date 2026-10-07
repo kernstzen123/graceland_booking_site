@@ -324,6 +324,35 @@ it('database migrations and functions behave correctly', async () => {
   const seatingReport = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [future])).r.seating;
   check('report totals count only the current map', Number(seatingReport.hutTotal) === 16 && Number(seatingReport.tableTotal) === 12, JSON.stringify(seatingReport));
 
+  // ── Specials ────────────────────────────────────────────────────────────
+  // A Saturday and the Sunday after it, at least a week from now.
+  const weekend = await one(`select d::date::text as sat, (d + 1)::date::text as sun from (select (now() at time zone 'Africa/Johannesburg')::date + 7 + ((6 - extract(dow from (now() at time zone 'Africa/Johannesburg')::date + 7)::int + 7) % 7) as d) x`);
+  const special = (await one(`insert into public.specials (type, title, paid_tickets, free_tickets, pricing, free_meals, included_meals, valid_weekdays, stock_limit, max_per_booking)
+    values ('tickets_and_meals', 'Family Package', '[{"itemId":"day-no-water-adult","quantity":2},{"itemId":"day-water-child","quantity":2}]', '[]', '{"type":"fixed-price","price":660}', 0, '[{"name":"Pizza","quantity":1}]', '[6,0]', 2, 1)
+    returning id`)).id;
+  const specialItems = JSON.stringify([{ quantity: 4, price_per_unit: 165, subtotal: 660, metadata: { name: 'Family Package tickets', isPerson: true } }]);
+  const bookSpecial = (ref, date, specials) => one(`select * from public.create_booking($1::date, 4, ${customer}, $2, 660, null, null, null, $3::jsonb, array[]::uuid[], null, null, $4::jsonb)`, [date, ref, specialItems, JSON.stringify(specials)]);
+  const forged = { title: 'Family Package', type: 'tickets_and_meals', pricing: { type: 'fixed-price', price: 0 }, paid_tickets: [], free_tickets: [{ itemId: 'day-water-adult', quantity: 50 }], free_meals: 99, included_meals: [{ name: 'Pizza', quantity: 99 }] };
+
+  const sunday = await bookSpecial('BK-SP-SUN1', weekend.sun, [{ id: special, quantity: 1, snapshot: forged }]);
+  check('a Saturday/Sunday special can be booked on a Sunday', sunday.created === true);
+  const saved = (await one(`select snapshot from public.booking_specials where booking_id = $1`, [sunday.booking_id])).snapshot;
+  check('the saved special comes from the specials table, not the request', Number(saved.pricing.price) === 660 && saved.free_tickets.length === 0 && saved.free_meals === 0 && saved.included_meals[0].quantity === 1 && saved.paid_tickets.length === 2, JSON.stringify(saved));
+  await bookSpecial('BK-SP-SUN2', weekend.sun, [{ id: special, quantity: 1, snapshot: forged }]);
+  await expectError('the daily stock limit is enforced on that day', `select * from public.create_booking('${weekend.sun}', 4, ${customer}, 'BK-SP-SUN3', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 1 }])}'::jsonb)`, /sold out/);
+  const saturday = await bookSpecial('BK-SP-SAT1', weekend.sat, [{ id: special, quantity: 1 }]);
+  check('the stock limit is per day: Saturday still has stock after Sunday sold out', saturday.created === true);
+  const weekday = (await one(`select ($1::date + 2)::text as d`, [weekend.sun])).d; // Tuesday
+  await expectError('a weekend-only special is refused on a weekday', `select * from public.create_booking('${weekday}', 4, ${customer}, 'BK-SP-TUE', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 1 }])}'::jsonb)`, /not valid on this day of the week/);
+  check('7 is also accepted as Sunday, and an empty list means every day', (await one(`select public.special_valid_on_weekday('[7]', $1::date) as a, public.special_valid_on_weekday('[]', $2::date) as b, public.special_valid_on_weekday('[6]', $1::date) as c`, [weekend.sun, weekday])).a === true && (await one(`select public.special_valid_on_weekday('[]', $1::date) as b`, [weekday])).b === true && (await one(`select public.special_valid_on_weekday('[6]', $1::date) as c`, [weekend.sun])).c === false);
+  await expectError('a quantity below 1 is refused', `select * from public.create_booking('${weekend.sat}', 4, ${customer}, 'BK-SP-ZERO', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 0 }])}'::jsonb)`, /Invalid special quantity/);
+  // A lapsed Saturday booking can be revived while Sunday is sold out (stock counted per day).
+  await lapse(saturday.booking_id);
+  r = await one(`select * from public.set_booking_payment_status($1, 'PAID', 'PAYFAST')`, [saturday.booking_id]);
+  check('reviving a lapsed booking checks only that day\'s stock', r.ok === true, `${r.reason}: ${r.detail}`);
+  await db.query(`update public.specials set archived_at = now() where id = $1`, [special]);
+  await expectError('an archived special is refused', `select * from public.create_booking('${weekend.sat}', 4, ${customer}, 'BK-SP-ARCH', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 1 }])}'::jsonb)`, /no longer available/);
+
   await db.exec(`reset role`);
   expect(failures).toEqual([]);
 });

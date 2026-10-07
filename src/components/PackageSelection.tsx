@@ -148,13 +148,13 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
                              }} disabled={qty === 0} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--border-color)', background: '#fff', fontSize: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: qty === 0 ? 'not-allowed' : 'pointer', opacity: qty === 0 ? 0.5 : 1 }}>-</button>
                              <span style={{ fontSize: '1.1rem', fontWeight: 600, minWidth: '1.5rem', textAlign: 'center' }}>{qty}</span>
                              <button onClick={() => {
-                                if (special.stock_limit && qty >= special.stock_limit) return alert('No more stock available for this special on this date.');
+                                if (typeof special.remaining === 'number' && qty >= special.remaining) return alert('No more stock available for this special on this date.');
                                 if (special.max_per_booking && qty >= special.max_per_booking) return alert('Maximum allowed per booking reached.');
                                 const existing = specials.find(s => s.id === special.id);
                                 if (existing) {
                                    onSpecialsChange(specials.map(s => s.id === special.id ? { ...s, quantity: s.quantity + 1 } : s));
                                 } else {
-                                   onSpecialsChange([...specials, { id: special.id, quantity: 1, snapshot: special as any }]);
+                                   onSpecialsChange([...specials, { id: special.id, quantity: 1, snapshot: { title: special.title, badge_text: special.badge_text || undefined, type: special.type, paid_tickets: special.paid_tickets, free_tickets: special.free_tickets, pricing: special.pricing, free_meals: special.free_meals, included_meals: special.included_meals } }]);
                                 }
                              }} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--border-color)', background: '#fff', fontSize: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>+</button>
                           </div>

@@ -11,13 +11,14 @@ import { PRIVACY_VERSION, TERMS_VERSION } from '@/lib/legal';
 import { BOOKABLE_ITEMS, calculateServerTotal, validatePartyFields } from '@/lib/pricing';
 import { getCurrentPrices } from '@/lib/price-store';
 import { validateBookableDate } from '@/lib/closed-dates';
+import { loadBookingSpecials, SpecialSelectionError } from '@/lib/specials-server';
 
 export async function POST(request: Request) {
   try {
     if (!(await checkRateLimit(request, 'booking', 10, 60))) return NextResponse.json({ success: false, error: 'Too many booking attempts. Please wait a minute and try again.' }, { status: 429 });
     const body = await request.json();
-    const { selectedDate, selections, customerDetails, totalAmount, party, spotIds, idempotencyKey, voucherCode, termsAccepted, privacyAccepted, attendeeNames, specials = [] } = body;
-    if (!selectedDate || (!selections && specials.length === 0) || !customerDetails?.email || Number(totalAmount) < 0) {
+    const { selectedDate, selections, customerDetails, totalAmount, party, spotIds, idempotencyKey, voucherCode, termsAccepted, privacyAccepted, attendeeNames, specials: requestedSpecials } = body;
+    if (!selectedDate || (!selections && !(Array.isArray(requestedSpecials) && requestedSpecials.length)) || !customerDetails?.email || Number(totalAmount) < 0) {
       throw new Error('Missing or invalid booking details');
     }
     if (termsAccepted !== true || privacyAccepted !== true) throw new Error('You must accept both the Terms and Conditions and Privacy Policy before booking');
@@ -42,11 +43,14 @@ export async function POST(request: Request) {
     for (const key of Object.keys(selections || {})) {
       if (Number(selections[key]) > 0 && !BOOKABLE_ITEMS[key]) throw new Error(`Unknown booking item: ${key}`);
     }
-    if (!Array.isArray(specials)) throw new Error('Invalid specials format');
-    for (const special of specials) {
-      if (typeof special !== 'object' || !special.id || !Number.isInteger(Number(special.quantity)) || Number(special.quantity) < 1 || !special.snapshot) {
-        throw new Error('Invalid special format');
-      }
+    // Only each special's id and quantity are taken from the request: its price,
+    // tickets and meals are loaded from the database, never from the browser.
+    let specials;
+    try {
+      specials = await loadBookingSpecials(requestedSpecials, selectedDate);
+    } catch (specialError) {
+      if (specialError instanceof SpecialSelectionError) return NextResponse.json({ success: false, error: specialError.message }, { status: 400 });
+      throw specialError;
     }
     const safeCustomerDetails = { firstName, lastName, email, phone };
 
