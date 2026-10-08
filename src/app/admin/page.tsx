@@ -9,7 +9,8 @@ import { DownloadIcon } from '@/components/icons';
 
 type Sales = { units: number; revenue: number };
 type HutBooking = { slot: string | null; client: string; reference: string; paid: boolean };
-type HutSchedule = { slots: string[]; huts: Array<{ number: string; bookings: HutBooking[] }> };
+type SpotBookings = { number: string; bookings: HutBooking[] };
+type HutSchedule = { slots: string[]; huts: SpotBookings[]; tables?: SpotBookings[] };
 type Overview = { date: string; today: { headcount: number; revenue: number; bookings: number; unscanned: number; scanned: number; capacity: number; breakdown: Record<string, Sales> }; comparison: { lastWeekHeadcount: number; percent: number | null }; pendingProofs: number };
 
 const johannesburgToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date());
@@ -160,19 +161,27 @@ export default function AdminDashboard() {
 }
 
 /**
- * Who has each hut on the day. A hut can host a party in every time slot, so
- * this shows staff when to clear a hut for the next group.
+ * Who has each hut and table on the day. A hut can host a party in every time
+ * slot, so this shows staff when to clear a hut for the next group. Tables are
+ * booked for the whole day.
  */
 function HutScheduleCard({ schedule }: { schedule: HutSchedule }) {
   const cell = (bookings: HutBooking[]) => bookings.length
     ? bookings.map(booking => <div key={booking.reference}>{booking.client}{booking.paid ? '' : ' (awaiting payment)'}</div>)
     : <span style={{ color: 'var(--text-muted)' }}>Free</span>;
-  const booked = schedule.huts.filter(hut => hut.bookings.length).length;
+  const tables = schedule.tables || [];
+  const bookedHuts = schedule.huts.filter(hut => hut.bookings.length).length;
+  const bookedTables = tables.filter(table => table.bookings.length).length;
+  // A table is held all day, also by a party: show the party's slot next to the name.
+  const tableCell = (bookings: HutBooking[]) => bookings.length
+    ? bookings.map(booking => <div key={booking.reference}>{booking.client}{booking.slot ? ` (party ${booking.slot})` : ''}{booking.paid ? '' : ' (awaiting payment)'}</div>)
+    : <span style={{ color: 'var(--text-muted)' }}>Free</span>;
   return <section className="card" style={{ marginTop: '1rem' }}>
     <div style={{ marginBottom: '0.75rem' }}>
-      <h2 style={{ fontSize: '1.15rem' }}>Hut schedule</h2>
-      <p className="admin-stat-note">{booked} of {schedule.huts.length} huts booked. A party has its hut from 15 minutes before its slot until 15 minutes after, so the hut must be cleared for the next party.</p>
+      <h2 style={{ fontSize: '1.15rem' }}>Hut &amp; table schedule</h2>
+      <p className="admin-stat-note">{bookedHuts} of {schedule.huts.length} huts and {bookedTables} of {tables.length} tables booked. A party has its hut from 15 minutes before its slot until 15 minutes after, so the hut must be cleared for the next party. Tables are booked for the whole day.</p>
     </div>
+    <h3 className="report-group-heading">Covered huts</h3>
     <div className="admin-table-wrap">
       <table className="report-table" style={{ minWidth: 520 }}>
         <thead><tr><th>Hut</th><th>All day (day visitors)</th>{schedule.slots.map(slot => <th key={slot}>Party {slot}</th>)}</tr></thead>
@@ -186,5 +195,14 @@ function HutScheduleCard({ schedule }: { schedule: HutSchedule }) {
         })}</tbody>
       </table>
     </div>
+    {tables.length > 0 && <>
+      <h3 className="report-group-heading" style={{ marginTop: '1.25rem' }}>Shaded tables</h3>
+      <div className="admin-table-wrap">
+        <table className="report-table" style={{ minWidth: 320 }}>
+          <thead><tr><th style={{ textAlign: 'left', width: 90 }}>Table</th><th style={{ textAlign: 'left' }}>Booked by (all day)</th></tr></thead>
+          <tbody>{tables.map(table => <tr key={table.number}><td><strong>{table.number}</strong></td><td>{tableCell(table.bookings)}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </>}
   </section>;
 }

@@ -10,9 +10,10 @@ type Row = {
 };
 
 /**
- * Who has each hut on a date: day visitors all day, parties per time slot.
- * One hut can host several parties in different slots, so staff use this to
- * see when a hut must be cleared for the next group.
+ * Who has each hut and table on a date. Huts: day visitors all day, parties
+ * per time slot (one hut can host several parties in different slots, so staff
+ * see when a hut must be cleared for the next group). Tables are always held
+ * for the whole day, by day visitors and parties alike.
  */
 export async function GET(request: Request) {
   try {
@@ -20,11 +21,11 @@ export async function GET(request: Request) {
     const date = new URL(request.url).searchParams.get('date') || '';
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ success: false, error: 'Choose a date' }, { status: 400 });
 
-    const [{ data: huts, error: hutsError }, { data: held, error: heldError }] = await Promise.all([
-      supabase.from('venue_spots').select('id,number,type').eq('active', true).eq('type', 'hut'),
+    const [{ data: spots, error: spotsError }, { data: held, error: heldError }] = await Promise.all([
+      supabase.from('venue_spots').select('id,number,type').eq('active', true),
       supabase.from('booking_spots').select('spot_id,bookings!inner(reference,status,expires_at,party_slot,deleted_at,customers(first_name,last_name))').eq('visit_date', date).is('bookings.deleted_at', null),
     ]);
-    if (hutsError || heldError) throw hutsError || heldError;
+    if (spotsError || heldError) throw spotsError || heldError;
 
     const now = Date.now();
     const bookingsByHut = new Map<string, Array<{ slot: string | null; client: string; reference: string; paid: boolean }>>();
@@ -47,11 +48,12 @@ export async function GET(request: Request) {
     return NextResponse.json({
       date,
       slots,
-      huts: [...(huts || [])].sort(compareSpots).map(hut => ({ number: hut.number, bookings: bookingsByHut.get(hut.id) || [] })),
+      huts: [...(spots || [])].filter(spot => spot.type === 'hut').sort(compareSpots).map(hut => ({ number: hut.number, bookings: bookingsByHut.get(hut.id) || [] })),
+      tables: [...(spots || [])].filter(spot => spot.type === 'table').sort(compareSpots).map(table => ({ number: table.number, bookings: bookingsByHut.get(table.id) || [] })),
     });
   } catch (error) {
     if (error instanceof AdminAuthError) return NextResponse.json({ success: false, error: error.message }, { status: error.status });
-    console.error('Hut schedule error', error);
-    return NextResponse.json({ success: false, error: 'Could not load the hut schedule' }, { status: 500 });
+    console.error('Hut and table schedule error', error);
+    return NextResponse.json({ success: false, error: 'Could not load the hut and table schedule' }, { status: 500 });
   }
 }

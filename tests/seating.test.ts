@@ -30,3 +30,14 @@ describe('when a booking holds a spot', () => {
     expect(windowsOverlap(spotHoldWindow('hut', null), spotHoldWindow('hut', '14:30–16:30'))).toBe(true);
   });
 });
+
+describe('huts and tables per online booking', () => {
+  it('allows one hut per 6 people, up to 3 huts', async () => {
+    const { maxHutsFor } = await import('@/lib/seating');
+    expect([0, 5, 6, 11, 12, 17, 18, 40].map(maxHutsFor)).toEqual([0, 0, 1, 1, 2, 2, 3, 3]);
+  });
+  it('allows one table per 6 people, and always at least one', async () => {
+    const { maxTablesFor } = await import('@/lib/seating');
+    expect([0, 1, 6, 7, 12, 13, 18, 19].map(maxTablesFor)).toEqual([1, 1, 1, 2, 2, 3, 3, 4]);
+  });
+});

@@ -12,6 +12,7 @@ import { BOOKABLE_ITEMS, calculateServerTotal, validatePartyFields } from '@/lib
 import { getCurrentPrices } from '@/lib/price-store';
 import { validateBookableDate } from '@/lib/closed-dates';
 import { loadBookingSpecials, SpecialSelectionError } from '@/lib/specials-server';
+import { maxHutsFor, maxTablesFor, PEOPLE_PER_HUT } from '@/lib/seating';
 
 export async function POST(request: Request) {
   try {
@@ -137,11 +138,11 @@ export async function POST(request: Request) {
     const selectedTableCount = Number((selections && selections['hut-shaded']) || 0);
     const selectedPaidHutCount = Number((selections && selections['hut-covered']) || 0);
     const requiredHutCount = selectedPaidHutCount + (partyDetails?.enabled ? 1 : 0);
-    const maximumHutCount = peopleCount >= 12 ? 2 : peopleCount >= 6 ? 1 : 0;
-    const maximumTableCount = Math.max(1, Math.ceil(peopleCount / 6));
-    if (requiredHutCount > 0 && peopleCount < 6) throw new Error('Covered huts require a minimum of 6 people.');
-    if (requiredHutCount > 1 && peopleCount < 12) throw new Error('Booking 2 huts requires a minimum of 12 people.');
-    if (requiredHutCount > maximumHutCount) throw new Error(`This group can select a maximum of ${maximumHutCount} hut${maximumHutCount === 1 ? '' : 's'}.`);
+    // Same limits as the booking page (src/lib/seating.ts): one hut per 6 people, up to 3; one table per 6 people.
+    const maximumHutCount = maxHutsFor(peopleCount);
+    const maximumTableCount = maxTablesFor(peopleCount);
+    if (requiredHutCount > 0 && peopleCount < PEOPLE_PER_HUT) throw new Error('Covered huts require a minimum of 6 people.');
+    if (requiredHutCount > maximumHutCount) throw new Error(`This group can select a maximum of ${maximumHutCount} hut${maximumHutCount === 1 ? '' : 's'}${partyDetails?.enabled ? ', including the party hut' : ''}. Each hut needs at least ${PEOPLE_PER_HUT} people in the group.`);
     if (selectedTableCount > maximumTableCount) throw new Error(`This group can select a maximum of ${maximumTableCount} table${maximumTableCount === 1 ? '' : 's'}.`);
     const requestedSpotIds = Array.isArray(spotIds) ? spotIds.filter(value => typeof value === 'string') : [];
     const seatingRequired = selectedTableCount > 0 || requiredHutCount > 0;

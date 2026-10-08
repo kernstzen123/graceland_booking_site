@@ -3,6 +3,7 @@ import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties'
 import { buildPackageGroups, PACKAGE_GROUPS, priceOf, calculateServerTotal, calculateSpecialPrice, type PriceList } from '@/lib/pricing';
 import type { BookingSpecialSelection, Special } from '@/lib/specials';
 import { CheckIcon } from '@/components/icons';
+import { maxHutsFor, maxTablesFor } from '@/lib/seating';
 
 const PARTY_INCLUDES = [
   'Unlimited waterslides (September–April)',
@@ -69,8 +70,8 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
     }
   }
   const groupSize = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('adult') || id.includes('pensioner') || id.includes('infant') || id.includes('toddler') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.adults + party.additionalChildren : 0) + specialGroupSize;
-  const maxHuts = groupSize >= 12 ? 2 : groupSize >= 6 ? 1 : 0;
-  const maxTables = Math.max(1, Math.ceil(groupSize / 6));
+  const maxHuts = maxHutsFor(groupSize);
+  const maxTables = maxTablesFor(groupSize);
   const paidHuts = Number(selections['hut-covered'] || 0);
 
   const continueToDetails = () => {
@@ -194,7 +195,7 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
                   </div>
                 </div>
               ))}
-              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any group can book a shaded table (seating for 6). Covered huts require a minimum of 6 people; groups of 12 or more may select 2 huts. Birthday parties include one selectable hut.</p>}
+              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any group can book a shaded table (seating for 6). Covered huts need at least 6 people per hut: groups of 6 or more may book 1 hut, 12 or more 2 huts, and 18 or more up to 3 huts. Groups can also book one table for every 6 people. Birthday parties include one selectable hut.</p>}
             </div>
           </div>
         ))}
