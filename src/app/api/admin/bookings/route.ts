@@ -4,10 +4,12 @@ import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce, generateTicketsAndSendEmail, resignBookingQrCodes } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
+import { BookingEditError, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
+import { spotLabel } from '@/lib/seating';
 
 const DETAIL_FIELDS = 'id,reference,visit_date,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),booking_spots(spot_id,venue_spots(number,type)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
 const STATUS_FILTERS = ['PAID', 'PENDING', 'CANCELLED', 'FAILED', 'ATTENTION', 'DELETED'];
-const ACTIONS = ['resend_tickets', 'delete', 'purge', 'update', 'update_spot', 'mark_paid', 'cancel_ticket', 'resolve_attention'];
+const ACTIONS = ['resend_tickets', 'delete', 'purge', 'update', 'mark_paid', 'cancel_ticket', 'resolve_attention'];
 const isImportedBooking = (booking: { reference?: string | null; payment_method?: string | null }) => String(booking.reference || '').toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 const PAGE_SIZE = 50;
 
@@ -83,7 +85,7 @@ export async function POST(request: Request) {
     if (action === 'refund') return NextResponse.json({ success: false, error: 'Use "Voucher refund" on the booking. Only admins can issue refunds.' }, { status: 400 });
     if (typeof bookingId !== 'string' || !bookingId || !ACTIONS.includes(action)) return NextResponse.json({ success: false, error: 'Invalid booking action' }, { status: 400 });
     const { data: booking, error } = await supabase.from('bookings')
-      .select('id,reference,status,total_amount,amount_due,payment_method,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,customers(first_name,last_name,email),tickets(id,ticket_uid,status),payments(method,status)')
+      .select('id,reference,status,total_amount,amount_due,payment_method,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,party_slot,customers(first_name,last_name,email,phone),tickets(id,ticket_uid,status),payments(method,status),booking_spots(spot_id,venue_spots(number,type))')
       .eq('id', bookingId).maybeSingle();
     if (error) throw error;
     if (!booking) return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
@@ -145,137 +147,130 @@ export async function POST(request: Request) {
       const text = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '');
       const edit = body.edit || {};
       const updates: Record<string, unknown> = {};
+      const fail = (message: string, status = 400) => NextResponse.json({ success: false, error: message }, { status });
 
-      // Visit date
+      // ── Check everything first; nothing is saved until all of it is valid ──
       let visitDate = booking.visit_date as string;
       if (edit.visit_date !== undefined) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(edit.visit_date))) return NextResponse.json({ success: false, error: 'Enter a valid visit date.' }, { status: 400 });
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(edit.visit_date))) return fail('Enter a valid visit date.');
         visitDate = String(edit.visit_date);
-        updates.visit_date = visitDate;
+        if (visitDate !== booking.visit_date) updates.visit_date = visitDate;
+      }
+      const dateChanged = visitDate !== booking.visit_date;
+
+      // Items: chosen from the price list (see EDITABLE_ITEMS), so names, ticket codes and the
+      // party/person flags match online bookings and are counted the same everywhere.
+      const { data: storedItems, error: itemsError } = await supabase.from('booking_items').select('id,quantity,price_per_unit,metadata').eq('booking_id', booking.id);
+      if (itemsError) throw itemsError;
+      const existingLines = (storedItems || []) as StoredLine[];
+      let lines;
+      try { lines = Array.isArray(edit.items) ? parseEditedItems(edit.items, existingLines, booking.party_slot || null) : null; }
+      catch (editError) { if (editError instanceof BookingEditError) return fail(editError.message); throw editError; }
+      const itemsChanged = lines ? linesChanged(lines, existingLines) : false;
+
+      // Seating: spots picked from the map (current spots only), one per hut or table on the booking.
+      const currentSpotIds = (booking.booking_spots || []).map(row => row.spot_id as string);
+      let spotIds = currentSpotIds;
+      if (edit.spot_ids !== undefined) {
+        if (!Array.isArray(edit.spot_ids) || edit.spot_ids.some((spotId: unknown) => typeof spotId !== 'string')) return fail('The seating is not valid.');
+        spotIds = [...new Set(edit.spot_ids as string[])];
+        if (spotIds.length !== edit.spot_ids.length) return fail('The same hut or table was chosen twice.');
+      }
+      const seatsChanged = spotIds.length !== currentSpotIds.length || spotIds.some(spotId => !currentSpotIds.includes(spotId));
+      let chosenSpots: Array<{ id: string; type: string; number: string }> = [];
+      if (spotIds.length) {
+        const { data: spotRows, error: spotError } = await supabase.from('venue_spots').select('id,type,number,active').in('id', spotIds);
+        if (spotError) throw spotError;
+        chosenSpots = (spotRows || []) as typeof chosenSpots;
+        if (chosenSpots.length !== spotIds.length) return fail('One of the huts or tables does not exist.');
+        if (seatsChanged && (spotRows || []).some(spot => !spot.active)) return fail('Choose huts and tables from the current map.');
+      }
+      // When the items or seats change, the seats must match the huts and tables on the booking.
+      if ((itemsChanged || seatsChanged) && lines) {
+        const need = seatsNeeded(lines);
+        const huts = chosenSpots.filter(spot => spot.type === 'hut').length;
+        const tables = chosenSpots.filter(spot => spot.type === 'table').length;
+        if (huts !== need.huts || tables !== need.tables) {
+          const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+          return fail(`The items need ${plural(need.huts, 'hut')} and ${plural(need.tables, 'table')}${lines.some(line => line.item?.id.startsWith('party-children-')) ? ' (a party includes one hut)' : ''}, but ${plural(huts, 'hut')} and ${plural(tables, 'table')} ${huts + tables === 1 ? 'is' : 'are'} chosen.`);
+        }
       }
 
-      // Items
-      let itemsChanged = false;
-      let derivedTotal: number | null = null;
-      let derivedPeople: number | null = null;
-      if (Array.isArray(edit.items)) {
-        const { data: existingItems, error: itemsError } = await supabase.from('booking_items').select('id,metadata').eq('booking_id', booking.id);
-        if (itemsError) throw itemsError;
-        const existingById = new Map((existingItems || []).map(item => [item.id, item]));
-        const clean: Array<{ id?: string; name: string; quantity: number; price: number; isPerson: boolean }> = [];
-        for (const raw of edit.items.slice(0, 60)) {
-          const quantity = Number(raw?.quantity); const price = Number(raw?.price_per_unit);
-          const name = text(raw?.name, 120);
-          if (!name) return NextResponse.json({ success: false, error: 'Every item needs a name.' }, { status: 400 });
-          if (!Number.isInteger(quantity) || quantity < 1 || quantity > 500) return NextResponse.json({ success: false, error: `Quantity for "${name}" must be a whole number from 1 to 500.` }, { status: 400 });
-          if (!Number.isFinite(price) || price < 0 || price > 1000000) return NextResponse.json({ success: false, error: `Price for "${name}" is not valid.` }, { status: 400 });
-          if (raw.id && !existingById.has(raw.id)) return NextResponse.json({ success: false, error: 'An item does not belong to this booking.' }, { status: 400 });
-          clean.push({ id: raw.id, name, quantity, price: Math.round(price * 100) / 100, isPerson: raw.isPerson === true });
-        }
-        if (!clean.length) return NextResponse.json({ success: false, error: 'A booking needs at least one item.' }, { status: 400 });
-        const keepIds = new Set(clean.filter(item => item.id).map(item => item.id as string));
-        const removeIds = (existingItems || []).map(item => item.id).filter(itemId => !keepIds.has(itemId));
-        if (removeIds.length) {
-          const { error: removeError } = await supabase.from('booking_items').delete().in('id', removeIds);
-          if (removeError) throw removeError;
-        }
-        for (const item of clean) {
-          const subtotal = Math.round(item.price * item.quantity * 100) / 100;
-          if (item.id) {
-            const previous = (existingById.get(item.id)?.metadata || {}) as Record<string, unknown>;
-            const { error: updateItemError } = await supabase.from('booking_items').update({ quantity: item.quantity, price_per_unit: item.price, subtotal, metadata: { ...previous, name: item.name, isPerson: item.isPerson } }).eq('id', item.id);
-            if (updateItemError) throw updateItemError;
-          } else {
-            const { error: insertItemError } = await supabase.from('booking_items').insert({ booking_id: booking.id, quantity: item.quantity, price_per_unit: item.price, subtotal, metadata: { name: item.name, isPerson: item.isPerson } });
-            if (insertItemError) throw insertItemError;
-          }
-        }
-        itemsChanged = true;
-        derivedTotal = clean.reduce((sum, item) => sum + item.price * item.quantity, 0);
-        derivedPeople = clean.reduce((sum, item) => sum + (item.isPerson ? item.quantity : 0), 0);
-      }
-
-      // Totals
       if (edit.total_amount !== undefined && edit.total_amount !== null && edit.total_amount !== '') {
         const total = Number(edit.total_amount);
-        if (!Number.isFinite(total) || total < 0 || total > 10000000) return NextResponse.json({ success: false, error: 'The total is not valid.' }, { status: 400 });
+        if (!Number.isFinite(total) || total < 0 || total > 10000000) return fail('The total is not valid.');
         updates.total_amount = Math.round(total * 100) / 100;
-      } else if (derivedTotal !== null) updates.total_amount = Math.round(derivedTotal * 100) / 100;
+      } else if (lines && itemsChanged) updates.total_amount = Math.round(lines.reduce((sum, line) => sum + line.price * line.quantity, 0) * 100) / 100;
       if (edit.people_count !== undefined && edit.people_count !== null && edit.people_count !== '') {
         const people = Number(edit.people_count);
-        if (!Number.isInteger(people) || people < 1 || people > 5000) return NextResponse.json({ success: false, error: 'People must be a whole number of at least 1.' }, { status: 400 });
+        if (!Number.isInteger(people) || people < 1 || people > 5000) return fail('People must be a whole number of at least 1.');
         updates.people_count = people;
-      } else if (derivedPeople) updates.people_count = derivedPeople;
+      } else if (lines && itemsChanged) updates.people_count = lines.reduce((sum, line) => sum + (line.isPerson ? line.quantity : 0), 0);
+      for (const key of ['total_amount', 'people_count'] as const) if (updates[key] !== undefined && Number(updates[key]) === Number(booking[key])) delete updates[key];
 
       // Notes keep the system marker line so the booking stays recognisable as imported.
       if (edit.notes !== undefined) {
         const staffNote = text(edit.notes, 500);
-        updates.notes = staffNote ? `IMPORTED_FROM_BOOK\n${staffNote}` : 'IMPORTED_FROM_BOOK';
+        const notes = staffNote ? `IMPORTED_FROM_BOOK\n${staffNote}` : 'IMPORTED_FROM_BOOK';
+        if (notes !== booking.notes) updates.notes = notes;
       }
 
-      // Customer: a fresh customer row, so no other booking sharing the old one is changed.
-      let newCustomerId: string | null = null;
+      // Customer: only when something changed, as a fresh customer row so no other booking sharing the old one is changed.
+      let newCustomer: { first_name: string; last_name: string; email: string; phone: string } | null = null;
       if (edit.customer) {
-        const firstName = text(edit.customer.first_name, 80); const lastName = text(edit.customer.last_name, 80);
-        const email = text(edit.customer.email, 254).toLowerCase(); const phone = text(edit.customer.phone, 40);
-        if (!firstName || !lastName) return NextResponse.json({ success: false, error: 'Enter the customer\'s first name and surname.' }, { status: 400 });
-        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return NextResponse.json({ success: false, error: `"${email}" is not a valid email address.` }, { status: 400 });
-        const { data: newCustomer, error: customerInsertError } = await supabase.from('customers').insert({ first_name: firstName, last_name: lastName, email, phone }).select('id').single();
-        if (customerInsertError) throw customerInsertError;
-        newCustomerId = newCustomer.id;
-        updates.customer_id = newCustomerId;
+        const next = { first_name: text(edit.customer.first_name, 80), last_name: text(edit.customer.last_name, 80), email: text(edit.customer.email, 254).toLowerCase(), phone: text(edit.customer.phone, 40) };
+        if (!next.first_name || !next.last_name) return fail('Enter the customer\'s first name and surname.');
+        if (next.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.email)) return fail(`"${next.email}" is not a valid email address.`);
+        const before = customer as { first_name?: string; last_name?: string; email?: string; phone?: string } | null;
+        if (next.first_name !== (before?.first_name || '') || next.last_name !== (before?.last_name || '') || next.email !== (before?.email || '') || next.phone !== (before?.phone || '')) newCustomer = next;
       }
 
+      // ── Save ──
+      // Seats first: the database swaps them in one step, checks clashes (party huts by time
+      // slot) under the seating lock, and refuses a taken spot, leaving the booking untouched.
+      const seatsMoved = seatsChanged || (dateChanged && spotIds.length > 0);
+      if (seatsMoved) {
+        if (spotIds.length) {
+          const { error: reserveError } = await supabase.rpc('reserve_booking_spots', { p_booking_id: booking.id, p_visit_date: visitDate, p_spot_ids: spotIds });
+          if (reserveError) {
+            if (/just taken|invalid|more than once/i.test(reserveError.message)) return fail(`${reserveError.message.replace('Please choose another spot.', '')}Choose another hut or table${dateChanged ? ` for ${visitDate}` : ''}.`, 409);
+            throw reserveError;
+          }
+        } else {
+          const { error: clearSpotsError } = await supabase.from('booking_spots').delete().eq('booking_id', booking.id);
+          if (clearSpotsError) throw clearSpotsError;
+        }
+      }
+
+      if (lines && itemsChanged) {
+        const keepIds = new Set(lines.filter(line => line.id).map(line => line.id as string));
+        const removeIds = existingLines.map(line => line.id).filter(lineId => !keepIds.has(lineId));
+        if (removeIds.length) {
+          const { error: removeError } = await supabase.from('booking_items').delete().in('id', removeIds);
+          if (removeError) throw removeError;
+        }
+        for (const line of lines) {
+          const row = { quantity: line.quantity, price_per_unit: line.price, subtotal: Math.round(line.price * line.quantity * 100) / 100, metadata: line.metadata };
+          const { error: saveItemError } = line.id
+            ? await supabase.from('booking_items').update(row).eq('id', line.id)
+            : await supabase.from('booking_items').insert({ booking_id: booking.id, ...row });
+          if (saveItemError) throw saveItemError;
+        }
+      }
+
+      if (newCustomer) {
+        const { data: customerRow, error: customerInsertError } = await supabase.from('customers').insert(newCustomer).select('id').single();
+        if (customerInsertError) throw customerInsertError;
+        updates.customer_id = customerRow.id;
+      }
       if (Object.keys(updates).length) {
         const { error: bookingUpdateError } = await supabase.from('bookings').update(updates).eq('id', booking.id);
         if (bookingUpdateError) throw bookingUpdateError;
       }
-      
-      let spotChanged = false;
-      if (edit.spot !== undefined) {
-        const spotNumber = String(edit.spot).trim();
-        if (spotNumber) {
-          const { data: newSpot } = await supabase.from('venue_spots').select('id,type,number').eq('number', spotNumber).maybeSingle();
-          if (!newSpot) return NextResponse.json({ success: false, error: `Spot number "${spotNumber}" does not exist.` }, { status: 400 });
-          
-          const { data: takenBy } = await supabase.from('booking_spots')
-            .select('booking_id,bookings!inner(status,expires_at)')
-            .eq('visit_date', visitDate)
-            .eq('spot_id', newSpot.id)
-            .neq('booking_id', booking.id);
-          
-          const isTaken = (takenBy || []).some(t => {
-            const bookingRecord = Array.isArray(t.bookings) ? t.bookings[0] : t.bookings;
-            const status = bookingRecord?.status;
-            if (!status) return false;
-            if (['PAID', 'CONFIRMED', 'PAYMENT_PENDING'].includes(status)) return true;
-            if (status === 'UNPAID' && new Date(bookingRecord.expires_at) > new Date()) return true;
-            return false;
-          });
-
-          if (isTaken) return NextResponse.json({ success: false, error: `Spot ${spotNumber} is already taken on this date.` }, { status: 409 });
-
-          await supabase.from('booking_spots').delete().eq('booking_id', booking.id);
-          const { error: insertError } = await supabase.from('booking_spots').insert({
-            booking_id: booking.id,
-            spot_id: newSpot.id,
-            visit_date: visitDate,
-          });
-          if (insertError) throw insertError;
-          spotChanged = true;
-        } else {
-          const { error: deleteSpotError } = await supabase.from('booking_spots').delete().eq('booking_id', booking.id);
-          if (deleteSpotError) throw deleteSpotError;
-          spotChanged = true;
-        }
-      }
-
-      if (newCustomerId) await supabase.from('tickets').update({ customer_id: newCustomerId }).eq('booking_id', booking.id);
-      if (edit.visit_date !== undefined && visitDate !== booking.visit_date) {
+      if (updates.customer_id) await supabase.from('tickets').update({ customer_id: updates.customer_id }).eq('booking_id', booking.id);
+      if (dateChanged) {
         const { error: ticketDateError } = await supabase.from('tickets').update({ visit_date: visitDate }).eq('booking_id', booking.id);
         if (ticketDateError) throw ticketDateError;
-        const { error: spotDateError } = await supabase.from('booking_spots').update({ visit_date: visitDate }).eq('booking_id', booking.id);
-        if (spotDateError) throw spotDateError;
         const { error: mealDateError } = await supabase.from('meal_vouchers').update({ visit_date: visitDate }).eq('booking_id', booking.id);
         if (mealDateError) throw mealDateError;
         // QR codes are only valid up to the date they were signed for: re-sign them for the new date.
@@ -290,53 +285,26 @@ export async function POST(request: Request) {
         else {
           const { error: clearError } = await supabase.from('tickets').delete().eq('booking_id', booking.id);
           if (clearError) throw clearError;
-          const finalCustomer = newCustomerId ? edit.customer : customer;
+          const finalCustomer = newCustomer || customer;
           const name = [finalCustomer?.first_name, finalCustomer?.last_name].filter(Boolean).join(' ') || 'Customer';
           try { await generateTicketsAndSendEmail(booking.id, finalCustomer?.email || '', name, { sendEmail: false }); }
-          catch (ticketError) { console.error('Could not rebuild tickets after editing', booking.reference, ticketError); ticketNote = ' The tickets could not be rebuilt: make sure at least one item is marked as a person.'; }
+          catch (ticketError) { console.error('Could not rebuild tickets after editing', booking.reference, ticketError); ticketNote = ' The tickets could not be rebuilt. Try saving again.'; }
         }
       }
-      await writeAudit(user.id, 'EDIT_IMPORTED_BOOKING', 'booking', booking.id, { reference: booking.reference, fields: Object.keys(updates), items_changed: itemsChanged, spot_changed: spotChanged });
-      return NextResponse.json({ success: true, message: `Booking updated.${ticketNote}` });
-    }
 
-    if (action === 'update_spot') {
-      const spotNumber = String(body.spotNumber || '').trim();
-      const visitDate = booking.visit_date as string;
-      if (!spotNumber) return NextResponse.json({ success: false, error: 'Provide a spot number.' }, { status: 400 });
-      
-      const { data: newSpot } = await supabase.from('venue_spots').select('id,type,number').eq('number', spotNumber).maybeSingle();
-      if (!newSpot) return NextResponse.json({ success: false, error: `Spot number "${spotNumber}" does not exist.` }, { status: 400 });
-
-      // Check if spot is already taken
-      const { data: takenBy } = await supabase.from('booking_spots')
-        .select('booking_id,bookings!inner(status,expires_at)')
-        .eq('visit_date', visitDate)
-        .eq('spot_id', newSpot.id)
-        .neq('booking_id', booking.id);
-      
-      const isTaken = (takenBy || []).some(t => {
-        const bookingRecord = Array.isArray(t.bookings) ? t.bookings[0] : t.bookings;
-        const status = bookingRecord?.status;
-        if (!status) return false;
-        if (['PAID', 'CONFIRMED', 'PAYMENT_PENDING'].includes(status)) return true;
-        if (status === 'UNPAID' && new Date(bookingRecord.expires_at) > new Date()) return true;
-        return false;
+      const seatNames = (spots: Array<{ type: string; number: string } | null | undefined>) => spots.filter(Boolean).map(spot => spotLabel(spot!.type, spot!.number)).join(', ') || 'none';
+      const describeLines = (rows: Array<{ quantity: number; price: number; name: string }>) => rows.map(row => `${row.quantity}× ${row.name} @ R${row.price}`);
+      await writeAudit(user.id, 'EDIT_IMPORTED_BOOKING', 'booking', booking.id, {
+        reference: booking.reference,
+        fields: Object.keys(updates),
+        ...(itemsChanged && lines ? { items: { from: describeLines(existingLines.map(line => ({ quantity: line.quantity, price: Number(line.price_per_unit), name: String(line.metadata?.name || 'Item') }))), to: describeLines(lines) } } : {}),
+        ...(seatsMoved ? { seating: { from: seatNames((booking.booking_spots || []).map(row => (Array.isArray(row.venue_spots) ? row.venue_spots[0] : row.venue_spots) as { type: string; number: string } | null)), to: seatNames(chosenSpots) } } : {}),
+        ...(dateChanged ? { visit_date: { from: booking.visit_date, to: visitDate } } : {}),
+        ...(updates.total_amount !== undefined ? { total_amount: { from: booking.total_amount, to: updates.total_amount } } : {}),
+        ...(updates.people_count !== undefined ? { people_count: { from: booking.people_count, to: updates.people_count } } : {}),
       });
-
-      if (isTaken) return NextResponse.json({ success: false, error: `Spot ${spotNumber} is already taken on this date.` }, { status: 409 });
-
-      // Delete old spot and insert new one
-      await supabase.from('booking_spots').delete().eq('booking_id', booking.id);
-      const { error: insertError } = await supabase.from('booking_spots').insert({
-        booking_id: booking.id,
-        spot_id: newSpot.id,
-        visit_date: visitDate,
-      });
-      if (insertError) throw insertError;
-      
-      await writeAudit(user.id, 'UPDATE_BOOKING_SPOT', 'booking', booking.id, { reference: booking.reference, new_spot: spotNumber });
-      return NextResponse.json({ success: true, message: `Seating updated to ${newSpot.type} ${spotNumber}.` });
+      const changed = itemsChanged || seatsMoved || Object.keys(updates).length > 0;
+      return NextResponse.json({ success: true, message: changed ? `Booking updated.${ticketNote}` : 'Nothing was changed.' });
     }
 
     if (action === 'purge') {

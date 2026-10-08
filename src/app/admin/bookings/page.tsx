@@ -7,12 +7,15 @@ import { PageHeader } from '@/components/admin/AdminShell';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { DownloadIcon } from '@/components/icons';
+import { DEFAULT_PRICES, EDITABLE_ITEMS, editableItemPrice, findEditableItem, matchEditableItem, type PriceList } from '@/lib/pricing';
+import { seatsNeeded } from '@/lib/booking-edit';
+import { spotLabel } from '@/lib/seating';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
-type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
+type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
-type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention' | 'update_spot';
+type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
 const isImported = (booking: Booking) => booking.reference.toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 /** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
 const staffNotes = (notes?: string | null) => (notes || '').split('\n').filter(line => !/^[A-Z_]+$/.test(line.trim())).join(' ').trim();
@@ -99,10 +102,6 @@ function BookingsPage() {
       const result = await confirm({ title: 'Resolve alert', message: 'Mark this alert as resolved? Describe what was done so it is recorded in the audit log.', confirmLabel: 'Mark resolved', tone: 'primary', promptLabel: 'What was done?', promptPlaceholder: 'e.g. Refunded R 450 in PayFast on 3 Oct', promptRequired: true });
       if (!result.confirmed) return;
       reason = result.value;
-    } else if (type === 'update_spot') {
-      const result = await confirm({ title: 'Edit seating', message: 'Enter the new table or hut number.', confirmLabel: 'Save spot', tone: 'primary', promptLabel: 'Spot number', promptPlaceholder: 'e.g. 12', promptRequired: true });
-      if (!result.confirmed) return;
-      reason = result.value;
     } else if (type === 'resend_tickets') {
       const result = await confirm({ title: 'Resend tickets', message: `Resend tickets for ${selected.reference} to the customer's email?`, confirmLabel: 'Resend tickets', tone: 'primary' });
       if (!result.confirmed) return;
@@ -123,7 +122,7 @@ function BookingsPage() {
         body = JSON.stringify({ deductionPercentage: deductionPercentage || 0 });
       } else {
         endpoint = '/api/admin/bookings';
-        body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason, spotNumber: type === 'update_spot' ? reason : undefined });
+        body = JSON.stringify({ bookingId: selected.id, action: type, ticketId, reason });
       }
       let response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body });
       let data = await response.json();
@@ -242,29 +241,69 @@ function BookingsPage() {
   </main>;
 }
 
-type EditItem = { id?: string; name: string; quantity: string; price: string; isPerson: boolean };
+/** An item line in the edit form: a price-list item, or (itemId null) an old hand-typed line kept as it was. */
+type EditItem = { id?: string; itemId: string | null; legacyName?: string; legacyPerson?: boolean; quantity: string; price: string };
+type SeatOption = { id: string; number: string; type: string; capacity: number; takenBy: string | null };
+
+/** The price list grouped for the item dropdowns. */
+const ITEM_GROUPS = [...new Set(EDITABLE_ITEMS.map(item => item.group))].map(group => ({ group, items: EDITABLE_ITEMS.filter(item => item.group === group) }));
 
 function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; onAction: (action: Action, ticketId?: string, deductionPercentage?: number) => void; onSaveEdit: (edit: Record<string, unknown>) => Promise<string> }) {
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', visit_date: '', notes: '', total: '', people: '', spot: '' });
+  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', visit_date: '', notes: '', total: '', people: '' });
   const [editItems, setEditItems] = useState<EditItem[]>([]);
+  const [prices, setPrices] = useState<PriceList>(DEFAULT_PRICES);
+  const [seatIds, setSeatIds] = useState<string[]>([]);
+  const [seatOptions, setSeatOptions] = useState<SeatOption[]>([]);
+  const [seatError, setSeatError] = useState('');
+  const isPersonLine = (item: EditItem) => (item.itemId ? findEditableItem(item.itemId)?.isPerson === true : item.legacyPerson === true);
   const itemsTotal = editItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.price) || 0), 0);
-  const itemsPeople = editItems.reduce((sum, item) => sum + (item.isPerson ? Number(item.quantity) || 0 : 0), 0);
+  const itemsPeople = editItems.reduce((sum, item) => sum + (isPersonLine(item) ? Number(item.quantity) || 0 : 0), 0);
+  const need = seatsNeeded(editItems.map(item => ({ item: findEditableItem(item.itemId), quantity: Number(item.quantity) || 0 })));
+  const currentSeats = (booking.booking_spots || []).filter(bs => bs.spot_id && bs.venue_spots).map(bs => ({ id: bs.spot_id as string, label: spotLabel(bs.venue_spots!.type, bs.venue_spots!.number), type: bs.venue_spots!.type }));
+  const seatType = (id: string) => seatOptions.find(option => option.id === id)?.type || currentSeats.find(seat => seat.id === id)?.type;
+  const chosenHuts = seatIds.filter(id => seatType(id) === 'hut').length;
+  const chosenTables = seatIds.filter(id => seatType(id) === 'table').length;
+  const seatsMatch = chosenHuts === need.huts && chosenTables === need.tables;
+
+  /** Huts and tables on the map for a date, marking those another booking holds. */
+  const loadSeats = async (date: string) => {
+    setSeatError('');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    try {
+      const accessToken = (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
+      const response = await fetch(`/api/admin/bookings/${booking.id}/seating?date=${date}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load the seating.');
+      setSeatOptions(data.spots);
+    } catch (loadError) { setSeatError(loadError instanceof Error ? loadError.message : 'Could not load the seating.'); }
+  };
   const startEditing = () => {
     const current = customerOf(booking);
-    const spot = (booking.booking_spots || []).map(bs => bs.venue_spots).filter(Boolean)[0]?.number || '';
-    setForm({ first_name: current?.first_name || '', last_name: current?.last_name || '', email: current?.email || '', phone: current?.phone || '', visit_date: booking.visit_date, notes: staffNotes(booking.notes), total: String(Number(booking.total_amount)), people: String(booking.people_count), spot });
-    setEditItems((booking.booking_items || []).map(item => ({ id: item.id, name: item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item', quantity: String(item.quantity), price: String(Number(item.price_per_unit ?? 0)), isPerson: item.metadata?.isPerson === true })));
+    setForm({ first_name: current?.first_name || '', last_name: current?.last_name || '', email: current?.email || '', phone: current?.phone || '', visit_date: booking.visit_date, notes: staffNotes(booking.notes), total: String(Number(booking.total_amount)), people: String(booking.people_count) });
+    setEditItems((booking.booking_items || []).map(item => {
+      const match = matchEditableItem(item.metadata);
+      return { id: item.id, itemId: match?.id || null, legacyName: match ? undefined : item.metadata?.name || 'Booking item', legacyPerson: item.metadata?.isPerson === true, quantity: String(item.quantity), price: String(Number(item.price_per_unit ?? 0)) };
+    }));
+    setSeatIds(currentSeats.map(seat => seat.id));
     setEditError(''); setEditing(true);
+    loadSeats(booking.visit_date);
+    fetch('/api/prices', { cache: 'no-store' }).then(response => (response.ok ? response.json() : null)).then(data => { if (data?.prices) setPrices(data.prices); }).catch(() => { /* default prices stay */ });
+  };
+  const chooseItem = (index: number, itemId: string) => {
+    const item = findEditableItem(itemId);
+    setEditItems(editItems.map((row, i) => (i === index ? { ...row, itemId: item ? item.id : null, price: item ? String(editableItemPrice(item, prices)) : row.price } : row)));
   };
   const saveEditForm = async () => {
+    if (editItems.some(item => !item.itemId && !item.id)) { setEditError('Choose an item from the list for every line.'); return; }
     setSaving(true); setEditError('');
     const error = await onSaveEdit({
       customer: { first_name: form.first_name, last_name: form.last_name, email: form.email, phone: form.phone },
-      visit_date: form.visit_date, notes: form.notes, total_amount: form.total, people_count: form.people, spot: form.spot,
-      items: editItems.map(item => ({ id: item.id, name: item.name, quantity: Number(item.quantity), price_per_unit: Number(item.price), isPerson: item.isPerson })),
+      visit_date: form.visit_date, notes: form.notes, total_amount: form.total, people_count: form.people,
+      spot_ids: seatIds.filter(Boolean),
+      items: editItems.map(item => ({ id: item.id, itemId: item.itemId, quantity: Number(item.quantity), price_per_unit: Number(item.price) })),
     });
     setSaving(false);
     if (error) setEditError(error); else setEditing(false);
@@ -346,24 +385,53 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
             <label style={labelStyle}>Surname<input style={inputStyle} value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} /></label>
             <label style={labelStyle}>Email<input style={inputStyle} type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
             <label style={labelStyle}>Phone<input style={inputStyle} value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
-            <label style={labelStyle}>Visit date<input style={inputStyle} type="date" value={form.visit_date} onChange={e => setForm({ ...form, visit_date: e.target.value })} /></label>
+            <label style={labelStyle}>Visit date<input style={inputStyle} type="date" value={form.visit_date} onChange={e => { setForm({ ...form, visit_date: e.target.value }); loadSeats(e.target.value); }} /></label>
             <label style={labelStyle}>People (headcount)<input style={inputStyle} type="number" min={1} value={form.people} onChange={e => setForm({ ...form, people: e.target.value })} /></label>
-            <label style={labelStyle}>Table/Hut number<input style={inputStyle} value={form.spot} onChange={e => setForm({ ...form, spot: e.target.value })} placeholder="e.g. 12" /></label>
           </div>
           <h3 style={{ margin: '1rem 0 0.5rem' }}>Items</h3>
           <div style={{ display: 'grid', gap: 8 }}>
             {editItems.map((item, index) => (
-              <div key={index} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 90px auto auto', gap: 6, alignItems: 'end' }}>
-                <label style={labelStyle}>Name<input style={inputStyle} value={item.name} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, name: e.target.value } : row))} /></label>
+              <div key={index} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 64px 92px auto', gap: 6, alignItems: 'end' }}>
+                <label style={labelStyle}>Item
+                  <select style={{ ...inputStyle, borderColor: item.itemId ? 'var(--border-color)' : 'var(--warning)' }} value={item.itemId || ''} onChange={e => chooseItem(index, e.target.value)}>
+                    {!item.itemId && <option value="">{item.legacyName ? `⚠ Not on the price list: ${item.legacyName}` : 'Choose an item…'}</option>}
+                    {ITEM_GROUPS.map(({ group, items }) => <optgroup key={group} label={group}>{items.map(option => <option key={option.id} value={option.id}>{option.name}{option.isPerson ? '' : ' (no gate ticket)'}</option>)}</optgroup>)}
+                  </select>
+                </label>
                 <label style={labelStyle}>Qty<input style={inputStyle} type="number" min={1} value={item.quantity} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, quantity: e.target.value } : row))} /></label>
                 <label style={labelStyle}>Price each<input style={inputStyle} type="number" min={0} step="0.01" value={item.price} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, price: e.target.value } : row))} /></label>
-                <label style={{ ...labelStyle, alignItems: 'center', justifyItems: 'center' }}>Person<input type="checkbox" checked={item.isPerson} onChange={e => setEditItems(editItems.map((row, i) => i === index ? { ...row, isPerson: e.target.checked } : row))} /></label>
                 <button type="button" className="btn" aria-label="Remove item" disabled={editItems.length <= 1} onClick={() => setEditItems(editItems.filter((_, i) => i !== index))} style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.5rem 0.6rem' }}>✕</button>
               </div>
             ))}
           </div>
-          <button type="button" className="btn" onClick={() => setEditItems([...editItems, { name: '', quantity: '1', price: '0', isPerson: true }])} style={{ marginTop: 8, border: '1px solid var(--border-color)' }}>+ Add item</button>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 8 }}>Items marked <strong>Person</strong> get a gate ticket each. Saving rebuilds unscanned tickets to match.</p>
+          <button type="button" className="btn" onClick={() => setEditItems([...editItems, { itemId: null, quantity: '1', price: '0' }])} style={{ marginTop: 8, border: '1px solid var(--border-color)' }}>+ Add item</button>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 8 }}>Choosing an item fills in today&apos;s price; change it if the booking book shows a different price. Every entrance ticket gets a gate ticket; saving rebuilds unscanned tickets to match.</p>
+          {editItems.some(item => !item.itemId && item.legacyName) && <p style={{ color: 'var(--warning-text)', fontSize: '0.8rem', marginTop: 4 }}>Lines marked ⚠ were typed in by hand and are not counted in reports or the daily summary. Choose the matching item from the list.</p>}
+
+          <h3 style={{ margin: '1rem 0 0.25rem' }}>Seating</h3>
+          <p style={{ color: seatsMatch ? 'var(--text-muted)' : 'var(--warning-text)', fontSize: '0.8rem', marginBottom: 6 }}>
+            The items need {need.huts} hut{need.huts === 1 ? '' : 's'} and {need.tables} table{need.tables === 1 ? '' : 's'}{editItems.some(item => item.itemId?.startsWith('party-children-')) ? ' (a party includes one hut)' : ''}; {chosenHuts} hut{chosenHuts === 1 ? '' : 's'} and {chosenTables} table{chosenTables === 1 ? '' : 's'} chosen.
+          </p>
+          {seatError && <p role="alert" style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>{seatError}</p>}
+          <div style={{ display: 'grid', gap: 6 }}>
+            {seatIds.map((seatId, index) => {
+              const offMap = seatId && !seatOptions.some(option => option.id === seatId) ? currentSeats.find(seat => seat.id === seatId) : null;
+              return <div key={index} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 6 }}>
+                <select aria-label={`Seat ${index + 1}`} style={inputStyle} value={seatId} onChange={e => setSeatIds(seatIds.map((id, i) => (i === index ? e.target.value : id)))}>
+                  <option value="">Choose a hut or table…</option>
+                  {offMap && <option value={offMap.id}>{offMap.label} (previous map)</option>}
+                  {(['hut', 'table'] as const).map(type => <optgroup key={type} label={type === 'hut' ? 'Covered huts' : 'Shaded tables'}>
+                    {seatOptions.filter(option => option.type === type).map(option => {
+                      const chosenElsewhere = seatIds.some((id, i) => id === option.id && i !== index);
+                      return <option key={option.id} value={option.id} disabled={Boolean(option.takenBy) || chosenElsewhere}>{spotLabel(option.type, option.number)} · seats {option.capacity}{option.takenBy ? ` · taken (${option.takenBy})` : chosenElsewhere ? ' · already chosen' : ''}</option>;
+                    })}
+                  </optgroup>)}
+                </select>
+                <button type="button" className="btn" aria-label="Remove seat" onClick={() => setSeatIds(seatIds.filter((_, i) => i !== index))} style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.5rem 0.6rem' }}>✕</button>
+              </div>;
+            })}
+          </div>
+          <button type="button" className="btn" onClick={() => setSeatIds([...seatIds, ''])} style={{ marginTop: 8, border: '1px solid var(--border-color)' }}>+ Add hut or table</button>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'end', marginTop: 10 }}>
             <label style={labelStyle}>Total (R)<input style={inputStyle} type="number" min={0} step="0.01" value={form.total} onChange={e => setForm({ ...form, total: e.target.value })} /></label>
             <button type="button" className="btn" onClick={() => setForm({ ...form, total: itemsTotal.toFixed(2), people: String(itemsPeople || form.people) })} style={{ border: '1px solid var(--border-color)' }}>Use items: R {itemsTotal.toFixed(2)} · {itemsPeople} people</button>

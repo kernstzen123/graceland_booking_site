@@ -130,6 +130,74 @@ export function buildPackageGroups(prices: PriceList = DEFAULT_PRICES): PackageG
 export const PACKAGE_GROUPS = buildPackageGroups(DEFAULT_PRICES);
 
 // ---------------------------------------------------------------------------
+// Items staff can put on a booking when editing it
+// ---------------------------------------------------------------------------
+
+/**
+ * Every ticket, hut, table and party line Graceland sells, as stored on a
+ * booking line. Names, ticket codes and party flags match what online bookings
+ * store, so edited bookings are counted the same in the daily summary,
+ * reports, tickets and seating.
+ */
+export type EditableItem = {
+  id: string;
+  name: string;
+  group: string;
+  /** Price list key for the current price; null for free lines. */
+  priceKey: string | null;
+  /** Gets its own gate ticket and counts in the headcount. */
+  isPerson: boolean;
+  /** A birthday party line (stored with party: true and the party slot). */
+  party: boolean;
+  /** Needs a seat on the map of this type. */
+  seat?: 'hut' | 'table';
+};
+
+export const EDITABLE_ITEMS: EditableItem[] = [
+  ...Object.entries(BOOKABLE_ITEMS).map(([id, item]) => ({
+    id,
+    name: item.name,
+    group: id.startsWith('day-water') ? 'Day visitor — including water activities' : id.startsWith('day-no-water') ? 'Day visitor — excluding water activities' : 'Huts and tables',
+    priceKey: id,
+    isPerson: item.isPerson,
+    party: false,
+    ...(id === 'hut-covered' ? { seat: 'hut' as const } : id === 'hut-shaded' ? { seat: 'table' as const } : {}),
+  })),
+  // Party lines, named exactly as online party bookings store them.
+  { id: 'party-children-option-1', name: 'Kiddy Party Option 1', group: 'Birthday parties', priceKey: 'party-child-option-1', isPerson: false, party: true },
+  { id: 'party-children-option-2', name: 'Kiddy Party Option 2 (hotdog included)', group: 'Birthday parties', priceKey: 'party-child-option-2', isPerson: false, party: true },
+  { id: 'party-child-entrance', name: 'Birthday party child entrance', group: 'Birthday parties', priceKey: null, isPerson: true, party: true },
+  { id: 'party-adult-swimming', name: 'Birthday party adult entrance (swimming)', group: 'Birthday parties', priceKey: 'party-adult-swimming', isPerson: true, party: true },
+  { id: 'party-adult-non-swimming', name: 'Birthday party adult entrance (non-swimming)', group: 'Birthday parties', priceKey: 'party-adult-non-swimming', isPerson: true, party: true },
+  { id: 'party-child-swimming', name: 'Additional birthday party child entrance (swimming)', group: 'Birthday parties', priceKey: 'party-child-swimming', isPerson: true, party: true },
+  { id: 'party-child-non-swimming', name: 'Additional birthday party child entrance (non-swimming)', group: 'Birthday parties', priceKey: 'party-child-non-swimming', isPerson: true, party: true },
+  { id: 'party-pack', name: 'Optional party pack', group: 'Birthday parties', priceKey: 'party-pack', isPerson: false, party: true },
+];
+
+const EDITABLE_BY_ID = new Map(EDITABLE_ITEMS.map(item => [item.id, item]));
+const EDITABLE_BY_NAME = new Map(EDITABLE_ITEMS.map(item => [item.name.toLowerCase(), item]));
+
+export const findEditableItem = (id: string | null | undefined) => (id ? EDITABLE_BY_ID.get(id) || null : null);
+
+/**
+ * The catalogue item a stored booking line is, from its ticket code or (for
+ * party lines, which online bookings store without one) its exact name.
+ * Null for lines typed in by hand that are not on the price list.
+ */
+export function matchEditableItem(metadata: { itemId?: string | null; name?: string | null } | null | undefined): EditableItem | null {
+  if (!metadata) return null;
+  // Online party bookings store 'party-children' for both party options; tell them apart by name.
+  if (metadata.itemId && metadata.itemId !== 'party-children') {
+    const byId = EDITABLE_BY_ID.get(metadata.itemId);
+    if (byId) return byId;
+  }
+  return EDITABLE_BY_NAME.get(String(metadata.name || '').trim().toLowerCase()) || null;
+}
+
+/** Current price of a catalogue item (free lines are R0). */
+export const editableItemPrice = (item: EditableItem, prices: PriceList = DEFAULT_PRICES) => (item.priceKey ? priceOf(prices, item.priceKey) : 0);
+
+// ---------------------------------------------------------------------------
 // Party pricing
 // ---------------------------------------------------------------------------
 
