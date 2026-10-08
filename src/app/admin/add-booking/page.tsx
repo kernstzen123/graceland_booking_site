@@ -312,7 +312,7 @@ function ImportBookings() {
       <li>Upload it and click <strong>Check file</strong>. Nothing is saved yet.</li>
       <li>Fix any rows with problems in the spreadsheet (and upload again), then click <strong>Import</strong>.</li>
     </ol>
-    <div className="callout callout-info" style={{ marginBottom: '1rem' }}><p>Imported bookings are <strong>not emailed QR tickets</strong>. They are marked <strong>Imported</strong> and checked in at the gate by name, phone or email in the scanner search. Payments and deposits are not recorded.</p></div>
+    <div className="callout callout-info" style={{ marginBottom: '1rem' }}><p>Imported bookings are <strong>not emailed QR tickets</strong>. They are marked <strong>Imported</strong> and checked in at the gate by name, phone or email in the scanner search. They start as not paid: record any deposit or payment on each booking under <strong>All bookings</strong>.</p></div>
 
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
       <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => { setFile(event.target.files?.[0] || null); setResults(null); setImported(false); }} />

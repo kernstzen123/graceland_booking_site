@@ -291,11 +291,13 @@ export default function Scanner() {
         });
         const data = await response.json();
         const errorMessage = data.error || data.message;
+        // A meal already handed out comes back as ok=false with status REDEEMED.
+        const alreadyRedeemed = !data.success && data.status === 'REDEEMED';
 
         if (data.success) {
           playSuccess();
           setCount(c => c + 1);
-        } else if (errorMessage?.includes('already been redeemed')) {
+        } else if (alreadyRedeemed) {
           playDuplicate();
         } else {
           playError();
@@ -303,7 +305,7 @@ export default function Scanner() {
 
         setResult({
           success: data.success,
-          status: data.success ? 'APPROVED' : (errorMessage?.includes('already been redeemed') ? 'USED' : 'INVALID'),
+          status: data.success ? 'APPROVED' : alreadyRedeemed ? 'USED' : 'INVALID',
           ticketUid: code.includes('.') ? undefined : code,
           packageName: data.details?.meal_name || 'Meal Voucher',
           error: data.success ? undefined : errorMessage,
