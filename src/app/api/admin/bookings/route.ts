@@ -6,10 +6,12 @@ import { recordNotificationFailure } from '@/lib/voucher-email';
 import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
 import { BookingEditError, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
+import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
+import { johannesburgToday } from '@/lib/opening-rules';
 
 const DETAIL_FIELDS = 'id,reference,visit_date,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),booking_spots(spot_id,venue_spots(number,type)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
 const STATUS_FILTERS = ['PAID', 'PENDING', 'CANCELLED', 'FAILED', 'ATTENTION', 'DELETED'];
-const ACTIONS = ['resend_tickets', 'delete', 'purge', 'update', 'mark_paid', 'cancel_ticket', 'resolve_attention'];
+const ACTIONS = ['resend_tickets', 'delete', 'purge', 'update', 'mark_paid', 'cancel_ticket', 'resolve_attention', 'add_payment', 'void_payment'];
 const isImportedBooking = (booking: { reference?: string | null; payment_method?: string | null }) => String(booking.reference || '').toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 const PAGE_SIZE = 50;
 
@@ -85,7 +87,7 @@ export async function POST(request: Request) {
     if (action === 'refund') return NextResponse.json({ success: false, error: 'Use "Voucher refund" on the booking. Only admins can issue refunds.' }, { status: 400 });
     if (typeof bookingId !== 'string' || !bookingId || !ACTIONS.includes(action)) return NextResponse.json({ success: false, error: 'Invalid booking action' }, { status: 400 });
     const { data: booking, error } = await supabase.from('bookings')
-      .select('id,reference,status,total_amount,amount_due,payment_method,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,party_slot,customers(first_name,last_name,email,phone),tickets(id,ticket_uid,status),payments(method,status),booking_spots(spot_id,venue_spots(number,type))')
+      .select('id,reference,status,total_amount,amount_due,payment_method,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,voucher_issued,deleted_at,party_slot,customers(first_name,last_name,email,phone),tickets(id,ticket_uid,status),payments(id,amount,method,status,provider_reference),booking_spots(spot_id,venue_spots(number,type))')
       .eq('id', bookingId).maybeSingle();
     if (error) throw error;
     if (!booking) return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
@@ -99,6 +101,48 @@ export async function POST(request: Request) {
       await generateTicketsAndSendEmail(booking.id, customerEmail, customerName);
       await writeAudit(user.id, 'RESEND_TICKETS', 'booking', booking.id, { reference: booking.reference });
       return NextResponse.json({ success: true, message: 'Ticket email sent' });
+    }
+
+    // Recording what was paid on a booking imported from the booking book. The
+    // booking stays PAID (its seats and capacity stay held); the payments only
+    // change what it shows as paid and outstanding.
+    if (action === 'add_payment' || action === 'void_payment') {
+      if (!isImportedBooking(booking)) return NextResponse.json({ success: false, error: 'Payments can only be recorded by hand on bookings imported from the booking book.' }, { status: 400 });
+      if (booking.deleted_at || !['PAID', 'CONFIRMED'].includes(booking.status) || booking.voucher_issued) return NextResponse.json({ success: false, error: 'This booking is cancelled or refunded, so its payments can no longer be changed.' }, { status: 400 });
+      const payments = (booking.payments || []) as Array<{ id: string; amount: number; method: string; status: string; provider_reference: string | null }>;
+      const amountToPay = Number(booking.total_amount) - Number(booking.voucher_amount_used || 0);
+      const before = paymentSummary(amountToPay, payments);
+
+      if (action === 'add_payment') {
+        let payment;
+        try { payment = parseImportedPayment(body.payment, johannesburgToday()); } catch (inputError) {
+          if (inputError instanceof ImportedPaymentError) return NextResponse.json({ success: false, error: inputError.message }, { status: 400 });
+          throw inputError;
+        }
+        if (payment.amount > before.outstanding + 0.001 && body.allowOverpayment !== true) {
+          return NextResponse.json({ success: false, overpayment: true, error: before.outstanding > 0 ? `That is more than the R${before.outstanding.toFixed(2)} still owed.` : 'This booking is already paid in full.' }, { status: 409 });
+        }
+        const { data: inserted, error: insertError } = await supabase.from('payments').insert({
+          booking_id: booking.id, amount: payment.amount, method: payment.method, status: 'COMPLETE',
+          provider_reference: importedPaymentReference(payment.note), created_at: paymentTimestamp(payment.paidOn),
+        }).select('id').single();
+        if (insertError) throw insertError;
+        const after = paymentSummary(amountToPay, [...payments, { amount: payment.amount, status: 'COMPLETE' }]);
+        await writeAudit(user.id, 'RECORD_IMPORTED_PAYMENT', 'booking', booking.id, { reference: booking.reference, payment_id: inserted.id, amount: payment.amount, method: payment.method, paid_on: payment.paidOn, note: payment.note || null, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
+        return NextResponse.json({ success: true, message: `R${payment.amount.toFixed(2)} ${IMPORTED_PAYMENT_METHODS[payment.method].toLowerCase()} payment recorded. ${after.outstanding > 0 ? `R${after.outstanding.toFixed(2)} still owed.` : 'Paid in full.'}` });
+      }
+
+      const target = payments.find(payment => payment.id === body.paymentId);
+      if (!target) return NextResponse.json({ success: false, error: 'Payment not found on this booking.' }, { status: 404 });
+      if (!isImportedPaymentRow(target) || target.status !== 'COMPLETE') return NextResponse.json({ success: false, error: 'Only payments recorded by hand can be removed.' }, { status: 400 });
+      if (reason.length < 3) return NextResponse.json({ success: false, error: 'Enter a reason for removing this payment.' }, { status: 400 });
+      const { data: voided, error: voidError } = await supabase.from('payments').update({ status: VOID_PAYMENT_STATUS })
+        .eq('id', target.id).eq('booking_id', booking.id).eq('status', 'COMPLETE').select('id');
+      if (voidError) throw voidError;
+      if (!voided?.length) return NextResponse.json({ success: false, error: 'This payment was already removed. Refresh the booking.' }, { status: 409 });
+      const after = paymentSummary(amountToPay, payments.filter(payment => payment.id !== target.id));
+      await writeAudit(user.id, 'VOID_IMPORTED_PAYMENT', 'booking', booking.id, { reference: booking.reference, payment_id: target.id, amount: Number(target.amount), method: target.method, reason, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
+      return NextResponse.json({ success: true, message: `Payment removed. R${after.outstanding.toFixed(2)} now owed.` });
     }
 
     if (action === 'mark_paid') {

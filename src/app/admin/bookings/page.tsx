@@ -10,10 +10,11 @@ import { DownloadIcon } from '@/components/icons';
 import { DEFAULT_PRICES, EDITABLE_ITEMS, editableItemPrice, findEditableItem, matchEditableItem, type PriceList } from '@/lib/pricing';
 import { seatsNeeded } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
+import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, paymentSummary } from '@/lib/imported-payments';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
-type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
+type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; voucher_amount_used?: number | null; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
 type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
 const isImported = (booking: Booking) => booking.reference.toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
@@ -22,11 +23,22 @@ const staffNotes = (notes?: string | null) => (notes || '').split('\n').filter(l
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }, { value: 'ATTENTION', label: 'Needs attention' }, { value: 'DELETED', label: 'Deleted' }];
 const PAID_STATUSES = ['PAID', 'CONFIRMED'];
-/** What a voucher refund is based on: the payments actually received (as the database calculates it). */
+/**
+ * What a voucher refund is based on: the payments actually received (as the
+ * database calculates it). An imported booking only counts the payments
+ * recorded on it.
+ */
 const paidAmountOf = (booking: Booking) => {
   const completed = (booking.payments || []).filter(payment => payment.status === 'COMPLETE');
-  return completed.length ? completed.reduce((sum, payment) => sum + Number(payment.amount), 0) : Number(booking.total_amount);
+  if (completed.length) return completed.reduce((sum, payment) => sum + Number(payment.amount), 0);
+  return booking.payment_method === 'IMPORTED' ? 0 : Number(booking.total_amount);
 };
+/** The money the customer pays: the total less any voucher used. */
+const amountToPayOf = (booking: Booking) => Math.max(0, Number(booking.total_amount) - Number(booking.voucher_amount_used || 0));
+const PAYMENT_STATE_COLOURS = { UNPAID: '#fee2e2', PARTIAL: '#fef3c7', PAID: '#dcfce7', OVERPAID: '#dbeafe' } as const;
+/** "12 Oct 2026" for a payment. */
+const paymentDate = (value: string) => new Date(value).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric' });
+type PaymentEntry = { amount: string; method: string; paidOn: string; note: string };
 
 export default function BookingsAdmin() {
   // useSearchParams needs a Suspense boundary so the page can still be prerendered.
@@ -141,6 +153,38 @@ function BookingsPage() {
       if (type === 'refund') showToast(data.emailSent ? 'Voucher issued and email sent' : 'Voucher issued; email queued for retry');
     } finally { setBusy(''); }
   };
+  /** Record a payment on an imported booking. Returns an error message, or '' when saved. */
+  const recordPayment = async (entry: PaymentEntry) => {
+    if (!selected || busy) return 'Please wait…';
+    setBusy('add_payment');
+    try {
+      const send = async (allowOverpayment: boolean) => fetch('/api/admin/bookings', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: selected.id, action: 'add_payment', payment: { ...entry, amount: Number(entry.amount) }, allowOverpayment }) });
+      let response = await send(false);
+      let data = await response.json();
+      if (response.status === 409 && data.overpayment) {
+        const result = await confirm({ title: 'More than is owed', message: `${data.error} Record R ${Number(entry.amount).toFixed(2)} anyway? The booking will show as overpaid.`, confirmLabel: 'Record anyway', tone: 'danger' });
+        if (!result.confirmed) return data.error;
+        response = await send(true);
+        data = await response.json();
+      }
+      if (!response.ok) return data.error || 'The payment could not be recorded.';
+      setMessage(data.message || ''); showToast('Payment recorded');
+      await openBooking(selected.id);
+      return '';
+    } finally { setBusy(''); }
+  };
+  const removePayment = async (paymentId: string, label: string) => {
+    if (!selected || busy) return;
+    const result = await confirm({ title: 'Remove payment', message: `Remove the ${label} payment? The booking's outstanding balance goes up by that amount. The payment stays in the history marked VOID.`, confirmLabel: 'Remove payment', tone: 'danger', promptLabel: 'Reason', promptPlaceholder: 'e.g. Entered twice, wrong amount…', promptRequired: true });
+    if (!result.confirmed) return;
+    setBusy('void_payment');
+    try {
+      const response = await fetch('/api/admin/bookings', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: selected.id, action: 'void_payment', paymentId, reason: result.value }) });
+      const data = await response.json();
+      setMessage(data.message || data.error);
+      if (response.ok) { showToast('Payment removed'); await openBooking(selected.id); }
+    } finally { setBusy(''); }
+  };
   /** Save edits to an imported booking. Returns an error message, or '' when saved. */
   const saveEdit = async (edit: Record<string, unknown>) => {
     if (!selected || busy) return 'Please wait…';
@@ -235,7 +279,7 @@ function BookingsPage() {
           <button className="btn" disabled={page * pageSize >= total} onClick={() => reload(page + 1)} style={{ border: '1px solid var(--border-color)' }}>Older →</button>
         </div>}
       </div>
-      {selected && <BookingDetail booking={selected} onAction={action} onSaveEdit={saveEdit} />}
+      {selected && <BookingDetail booking={selected} onAction={action} onSaveEdit={saveEdit} onRecordPayment={recordPayment} onRemovePayment={removePayment} />}
     </div>
     {dialog}
   </main>;
@@ -248,7 +292,7 @@ type SeatOption = { id: string; number: string; type: string; capacity: number; 
 /** The price list grouped for the item dropdowns. */
 const ITEM_GROUPS = [...new Set(EDITABLE_ITEMS.map(item => item.group))].map(group => ({ group, items: EDITABLE_ITEMS.filter(item => item.group === group) }));
 
-function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; onAction: (action: Action, ticketId?: string, deductionPercentage?: number) => void; onSaveEdit: (edit: Record<string, unknown>) => Promise<string> }) {
+function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemovePayment }: { booking: Booking; onAction: (action: Action, ticketId?: string, deductionPercentage?: number) => void; onSaveEdit: (edit: Record<string, unknown>) => Promise<string>; onRecordPayment: (entry: PaymentEntry) => Promise<string>; onRemovePayment: (paymentId: string, label: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -344,7 +388,7 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
     </div>}
     {booking.payment_method === 'IMPORTED' && <div className="callout callout-info">
       <p><strong>Imported from the booking book</strong></p>
-      <p>No QR tickets were sent. At the gate, find the guests by name, phone or email in the scanner search and check them in. Payments and deposits for this booking are in the book.</p>
+      <p>No QR tickets were sent. At the gate, find the guests by name, phone or email in the scanner search and check them in. Record each payment or deposit under Balance below so the amount owed stays correct.</p>
     </div>}
     {staffNotes(booking.notes) && <p style={{ marginTop: '0.75rem' }}><strong>Notes:</strong> {staffNotes(booking.notes)}</p>}
     {isDeleted && <div className="callout callout-warning">
@@ -364,8 +408,17 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
     </div>
     <h3 style={{ marginTop: '1.5rem' }}>Items</h3>
     {booking.booking_items?.map((item, index) => <p key={index} style={{ borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>{item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item'} × {item.quantity} · R {Number(item.subtotal).toFixed(2)}</p>)}
+    <BalanceSection booking={booking} canRecord={isImported(booking) && isPaid && !isDeleted && !booking.voucher_issued} onRecordPayment={onRecordPayment} />
     <h3 style={{ marginTop: '1.5rem' }}>Payments</h3>
-    {booking.payments?.length ? booking.payments.map(payment => <p key={payment.id} style={{ borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>R {Number(payment.amount).toFixed(2)} · {payment.method} · <strong>{payment.status}</strong>{payment.provider_reference ? <> · <span style={{ wordBreak: 'break-all' }}>{payment.provider_reference}</span></> : null}<br /><small style={{ color: 'var(--text-muted)' }}>{new Date(payment.created_at).toLocaleString()}</small></p>) : <p style={{ color: 'var(--text-muted)' }}>No payments recorded.</p>}
+    {booking.payments?.length ? booking.payments.map(payment => {
+      const recordedByHand = isImportedPaymentRow(payment);
+      const method = recordedByHand ? IMPORTED_PAYMENT_METHODS[payment.method] || payment.method : payment.method;
+      const note = recordedByHand ? (payment.provider_reference || '').replace(/^IMPORTED( · )?/, '') : payment.provider_reference;
+      return <div key={payment.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>
+        <p style={{ textDecoration: payment.status === 'VOID' ? 'line-through' : undefined }}>R {Number(payment.amount).toFixed(2)} · {method} · <strong>{payment.status === 'VOID' ? 'REMOVED' : payment.status}</strong>{note ? <> · <span style={{ wordBreak: 'break-all' }}>{note}</span></> : null}<br /><small style={{ color: 'var(--text-muted)' }}>{recordedByHand ? `Paid ${paymentDate(payment.created_at)}` : new Date(payment.created_at).toLocaleString()}</small></p>
+        {recordedByHand && payment.status === 'COMPLETE' && isPaid && !isDeleted && !booking.voucher_issued && <button type="button" className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onRemovePayment(payment.id, `R ${Number(payment.amount).toFixed(2)} ${method.toLowerCase()}`)}>Remove</button>}
+      </div>;
+    }) : <p style={{ color: 'var(--text-muted)' }}>No payments recorded.</p>}
     <h3 style={{ marginTop: '1.5rem' }}>Tickets</h3>
     {booking.tickets?.length ? booking.tickets.map(ticket => <div key={ticket.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', flexWrap: 'wrap' }}><span style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>{ticket.ticket_uid} · <strong>{ticket.status}</strong></span>{ticket.status === 'VALID' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onAction('cancel_ticket', ticket.id)}>Invalidate</button>}</div>) : <p style={{ color: 'var(--text-muted)' }}>No tickets issued.</p>}
     {!isDeleted && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: '1.5rem' }}>
@@ -464,4 +517,55 @@ function BookingDetail({ booking, onAction, onSaveEdit }: { booking: Booking; on
     )}
     {dialog}
   </section>;
+}
+
+/** Total, paid and outstanding for a booking; on an imported booking, a form to record a payment. */
+function BalanceSection({ booking, canRecord, onRecordPayment }: { booking: Booking; canRecord: boolean; onRecordPayment: (entry: PaymentEntry) => Promise<string> }) {
+  const [adding, setAdding] = useState(false);
+  const [entry, setEntry] = useState<PaymentEntry>({ amount: '', method: 'CASH', paidOn: johannesburgToday(), note: '' });
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const cancelled = ['CANCELLED', 'REFUNDED'].includes(booking.status) || Boolean(booking.voucher_issued) || Boolean(booking.deleted_at);
+  const summary = paymentSummary(amountToPayOf(booking), booking.payments || []);
+  const voucher = Number(booking.voucher_amount_used || 0);
+  const inputStyle = { width: '100%', padding: '0.55rem', border: '1px solid var(--border-color)', borderRadius: 8, font: 'inherit' };
+  const save = async () => {
+    setSaving(true); setError('');
+    const problem = await onRecordPayment(entry);
+    setSaving(false);
+    if (problem) { setError(problem); return; }
+    setAdding(false); setEntry({ amount: '', method: 'CASH', paidOn: johannesburgToday(), note: '' });
+  };
+  // Online bookings that were never paid simply show what they cost.
+  if (!PAID_STATUSES.includes(booking.status) && !cancelled) return null;
+
+  return <div style={{ marginTop: '1.5rem' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <h3>Balance</h3>
+      {!cancelled && <span style={{ padding: '0.25rem 0.6rem', borderRadius: 20, fontSize: '0.85rem', fontWeight: 600, background: PAYMENT_STATE_COLOURS[summary.state] }}>{PAYMENT_STATE_LABELS[summary.state]}</span>}
+    </div>
+    {cancelled ? <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>This booking is cancelled, so nothing is owed.</p> : <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.5rem', marginTop: '0.75rem' }}>
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.6rem 0.75rem' }}><small style={{ color: 'var(--text-muted)' }}>{voucher > 0 ? 'To pay (after voucher)' : 'Booking total'}</small><p style={{ fontWeight: 700 }}>R {summary.total.toFixed(2)}</p></div>
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.6rem 0.75rem' }}><small style={{ color: 'var(--text-muted)' }}>Paid</small><p style={{ fontWeight: 700 }}>R {summary.paid.toFixed(2)}</p></div>
+        <div style={{ border: `1px solid ${summary.outstanding > 0 ? 'var(--danger)' : 'var(--border-color)'}`, borderRadius: 8, padding: '0.6rem 0.75rem' }}><small style={{ color: 'var(--text-muted)' }}>{summary.overpaid > 0 ? 'Overpaid' : 'Outstanding'}</small><p style={{ fontWeight: 700, color: summary.outstanding > 0 ? 'var(--danger)' : undefined }}>R {(summary.overpaid > 0 ? summary.overpaid : summary.outstanding).toFixed(2)}</p></div>
+      </div>
+      {voucher > 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>R {voucher.toFixed(2)} of the R {Number(booking.total_amount).toFixed(2)} total was paid with a voucher.</p>}
+      {canRecord && !adding && <button type="button" className="btn btn-secondary" style={{ marginTop: '0.75rem' }} onClick={() => { setAdding(true); setError(''); }}>Record a payment</button>}
+      {canRecord && adding && <div style={{ marginTop: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.75rem', display: 'grid', gap: '0.6rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem' }}>
+          <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Amount (R)<input style={inputStyle} type="number" min={0.01} step="0.01" inputMode="decimal" value={entry.amount} onChange={e => setEntry({ ...entry, amount: e.target.value })} autoFocus /></label>
+          <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Paid by<select style={inputStyle} value={entry.method} onChange={e => setEntry({ ...entry, method: e.target.value })}>{Object.entries(IMPORTED_PAYMENT_METHODS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Date paid<input style={inputStyle} type="date" max={johannesburgToday()} value={entry.paidOn} onChange={e => setEntry({ ...entry, paidOn: e.target.value })} /></label>
+        </div>
+        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Note (optional)<input style={inputStyle} maxLength={120} placeholder="e.g. Deposit, receipt 1042" value={entry.note} onChange={e => setEntry({ ...entry, note: e.target.value })} /></label>
+        {summary.outstanding > 0 && <button type="button" className="btn" style={{ border: '1px solid var(--border-color)', justifySelf: 'start' }} onClick={() => setEntry({ ...entry, amount: summary.outstanding.toFixed(2) })}>Pays the rest: R {summary.outstanding.toFixed(2)}</button>}
+        {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-primary" disabled={saving || !(Number(entry.amount) > 0)} onClick={save}>{saving ? 'Saving…' : 'Save payment'}</button>
+          <button type="button" className="btn" style={{ border: '1px solid var(--border-color)' }} disabled={saving} onClick={() => setAdding(false)}>Cancel</button>
+        </div>
+      </div>}
+    </>}
+  </div>;
 }

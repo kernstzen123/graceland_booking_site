@@ -28,6 +28,8 @@ type BookingRow = {
   tickets_issued: number; tickets_used: number;
   items_summary: string | null; party_children: number; party_option: string | null; party_packs: number;
   specials?: Array<{ title: string; quantity: number }> | null;
+  /** Completed payments on the booking. Missing until 20261010_imported_booking_payments.sql has been applied. */
+  amount_paid?: number | null;
 };
 
 /** One special's sales in the period, as returned by admin_report_data (paid bookings only). */
@@ -137,10 +139,16 @@ function outcome(booking: Pick<BookingRow, 'status' | 'expires_at'>) {
 }
 
 const isPaid = (booking: Pick<BookingRow, 'status'>) => PAID.includes(booking.status);
-/** Copied from the paper booking book: paid before the system, and created on the day they were imported. */
+/** Copied from the paper booking book, and created on the day they were imported. */
 const isImported = (booking: Pick<BookingRow, 'payment_method'>) => booking.payment_method === IMPORTED_PAYMENT_METHOD;
-/** Money taken through the system. Imported bookings were paid before it, and vouchers are not cash. */
-const cashCollected = (booking: BookingRow) => (isImported(booking) ? 0 : money(booking.amount_due ?? Number(booking.total_amount) - Number(booking.voucher_amount_used || 0)));
+/**
+ * Money received for a booking (vouchers are not cash). An imported booking
+ * counts the payments staff recorded on it; any other paid booking was paid in
+ * full before it was confirmed.
+ */
+const cashCollected = (booking: BookingRow) => (isImported(booking) ? money(booking.amount_paid) : money(booking.amount_due ?? Number(booking.total_amount) - Number(booking.voucher_amount_used || 0)));
+/** What is still owed on a paid booking (only imported bookings can be part paid). */
+const outstandingOf = (booking: BookingRow) => (isImported(booking) ? money(Math.max(0, Number(booking.total_amount) - Number(booking.voucher_amount_used || 0) - cashCollected(booking))) : 0);
 
 const PAYMENT_LABELS: Record<string, string> = {
   PAYFAST: 'PayFast (card / instant EFT)', MANUAL_EFT: 'Manual EFT', VOUCHER: 'Voucher only', ADMIN_OVERRIDE: 'Marked paid by staff',
@@ -234,11 +242,13 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
   const leadTimes = timedPaid.map(b => Math.max(0, daysBetween(saDateTime(b.created_at).date, b.visit_date) - 1));
   const imported = paid.filter(isImported);
   const importedRevenue = money(imported.reduce((sum, b) => sum + Number(b.total_amount), 0));
+  const owing = imported.filter(b => outstandingOf(b) > 0);
+  const outstanding = money(owing.reduce((sum, b) => sum + outstandingOf(b), 0));
   const openDays = basis === 'visit' ? eachDate(from, to).filter(date => applyClosure(date, closed).open).length : days;
 
   const kpis: Kpi[] = [
     { label: 'Revenue (paid bookings)', value: revenue, format: 'currency', previous: previousRevenue, hint: 'Total value of paid bookings, including the part paid with vouchers.' },
-    { label: 'Cash collected', value: collected, format: 'currency', previous: money(previous.collected), hint: 'Paid by PayFast, EFT, at the gate or at the office. Excludes vouchers and bookings imported from the booking book (paid before the system).' },
+    { label: 'Cash collected', value: collected, format: 'currency', previous: money(previous.collected), hint: 'Paid by PayFast, EFT, at the gate or at the office, plus the payments recorded on bookings imported from the booking book. Excludes vouchers.' },
     { label: 'Paid bookings', value: paid.length, format: 'number', previous: previousPaid },
     { label: 'Visitors', value: visitors, format: 'number', previous: previousVisitors },
     { label: 'Average booking value', value: avg(revenue, paid.length), format: 'currency', previous: avg(previousRevenue, previousPaid) },
@@ -251,6 +261,7 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
     { label: 'Party bookings', value: partyBookings.length, format: 'number' },
     { label: 'Walk-in sales', value: walkInRevenue, format: 'currency', hint: `${walkIns.length} sale${walkIns.length === 1 ? '' : 's'} at the gate, ${ratio(walkInRevenue, revenue)}% of revenue.` },
     { label: 'Imported from booking book', value: importedRevenue, format: 'currency', hint: basis === 'visit' ? `${imported.length} booking${imported.length === 1 ? '' : 's'} copied from the paper booking book, ${ratio(importedRevenue, revenue)}% of revenue.` : 'Imported bookings are only counted by visit date: their original booking dates are not known.' },
+    { label: 'Still owed (booking book)', value: outstanding, format: 'currency', hint: `${owing.length} imported booking${owing.length === 1 ? '' : 's'} not yet paid in full.` },
     { label: 'Vouchers redeemed', value: voucherRedeemed, format: 'currency' },
     { label: 'Cancelled / refunded', value: cancelled.length, format: 'number', hint: `R ${money(cancelled.reduce((sum, b) => sum + Number(b.total_amount), 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in value.` },
     { label: 'Average days booked ahead', value: avg(leadTimes.reduce((a, b) => a + b, 0), leadTimes.length), format: 'days' },
@@ -561,6 +572,7 @@ export function assembleReport(data: ReportData, from: string, to: string, basis
       'Total (R)': money(booking.total_amount),
       'Voucher used (R)': money(booking.voucher_amount_used),
       'Cash collected (R)': isPaid(booking) ? cashCollected(booking) : 0,
+      'Outstanding (R)': isPaid(booking) ? outstandingOf(booking) : 0,
       Party: booking.party_slot ? `Yes (${booking.party_slot})` : 'No',
       Specials: (booking.specials || []).map(special => `${special.quantity}× ${special.title}`).join('; '),
       Items: booking.items_summary || '',

@@ -11,13 +11,15 @@ export type SummaryBooking = {
   total_amount: number;
   /** 'IMPORTED' for bookings copied from the booking book (paid outside the system). */
   payment_method?: string | null;
+  /** Payments on the booking; for an imported booking, the payments staff recorded on it. */
+  payments?: Array<{ amount: number | string; status: string }> | null;
   customers?: { first_name?: string | null; last_name?: string | null } | Array<{ first_name?: string | null; last_name?: string | null }> | null;
   booking_items?: SummaryItem[] | null;
   booking_spots?: Array<{ venue_spots?: { number: string; type: string } | Array<{ number: string; type: string }> | null }> | null;
 };
 
 export type SummaryCounts = { children: number; toddlers: number; infants: number; adults: number; pensioners: number };
-export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number; imported: boolean };
+export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number; imported: boolean; owing: number };
 export type SummarySection = { slot: string; rows: SummaryRow[] };
 export type DailySummary = { parties: SummarySection[]; dayVisitors: SummaryRow[] };
 
@@ -54,6 +56,11 @@ function countItems(items: SummaryItem[]) {
 function toRow(booking: SummaryBooking): SummaryRow {
   const customer = first(booking.customers);
   const { counts, meals } = countItems(booking.booking_items || []);
+  // Imported bookings were paid (or part-paid) outside the system: only the payments recorded on them count.
+  const imported = booking.payment_method === 'IMPORTED';
+  const paid = imported
+    ? Math.round((booking.payments || []).filter(payment => payment.status === 'COMPLETE').reduce((sum, payment) => sum + Number(payment.amount), 0) * 100) / 100
+    : Number(booking.total_amount) || 0;
   const spots = (booking.booking_spots || []).map(row => first(row.venue_spots)).filter((spot): spot is { number: string; type: string } => Boolean(spot?.number));
   return {
     time: booking.party_slot ? slotStart(booking.party_slot) : 'DV',
@@ -62,9 +69,9 @@ function toRow(booking: SummaryBooking): SummaryRow {
     ...counts,
     meals,
     seating: spots.sort(compareSpots).map(spot => spot.number).join(', '),
-    // Imported bookings were paid (or part-paid) outside the system: no amount is shown.
-    paid: booking.payment_method === 'IMPORTED' ? 0 : Number(booking.total_amount) || 0,
-    imported: booking.payment_method === 'IMPORTED',
+    paid,
+    imported,
+    owing: imported ? Math.max(0, Math.round(((Number(booking.total_amount) || 0) - paid) * 100) / 100) : 0,
   };
 }
 

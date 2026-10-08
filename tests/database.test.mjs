@@ -390,6 +390,19 @@ it('database migrations and functions behave correctly', async () => {
   const noSales = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [(await one(`select ($1::date - 3)::text as d`, [weekend.sat])).d])).r.specials;
   check('a period with no sales shows no special statistics', noSales.length === 0, JSON.stringify(noSales));
 
+  // ── Payments recorded on imported bookings ──────────────────────────────
+  await db.query(`insert into public.payments (booking_id, amount, method, status, provider_reference) values ($1, 300, 'CASH', 'COMPLETE', 'IMPORTED · deposit'), ($1, 100, 'EFT', 'VOID', 'IMPORTED')`, [importedBooking]);
+  const paidVisit = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [weekend.sat])).r;
+  check('reports carry the payments recorded on an imported booking (voided ones left out)', Number(paidVisit.bookings.find(b => b.reference === 'IM-REPORT-1')?.amount_paid) === 300, JSON.stringify(paidVisit.bookings.find(b => b.reference === 'IM-REPORT-1')));
+  const sunReport = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [weekend.sun])).r;
+  const expectedCollected = paidVisit.bookings.filter(b => ['PAID', 'CONFIRMED'].includes(b.status)).reduce((sum, b) => sum + (b.payment_method === 'IMPORTED' ? Number(b.amount_paid) : Number(b.amount_due ?? Number(b.total_amount) - Number(b.voucher_amount_used || 0))), 0);
+  check('previous-period cash collected counts what was paid on imported bookings', Number(sunReport.previous.collected) === expectedCollected && paidVisit.bookings.some(b => b.payment_method === 'IMPORTED'), `${sunReport.previous.collected} vs ${expectedCollected}`);
+  const unpaidImported = (await one(`select * from public.create_booking($1::date, 4, ${customer}, 'IM-UNPAID-1', 900, null, null, null, $2::jsonb)`, [weekend.sat, specialItems])).booking_id;
+  await db.query(`update public.bookings set status = 'PAID', payment_method = 'IMPORTED', notes = 'IMPORTED_FROM_BOOK', expires_at = null where id = $1`, [unpaidImported]);
+  await expectError('an imported booking with nothing paid cannot be refunded its total', `select * from public.issue_booking_voucher('${unpaidImported}', null, 0, 'cancellation')`, /no paid amount/);
+  const partRefund = await one(`select * from public.issue_booking_voucher($1, null, 0, 'cancellation')`, [importedBooking]);
+  check('a part-paid imported booking is refunded only what was paid', Number(partRefund.original_amount) === 300 && Number(partRefund.paid_amount) === 300, JSON.stringify(partRefund));
+
   await db.query(`update public.specials set archived_at = now() where id = $1`, [special]);
   await expectError('an archived special is refused', `select * from public.create_booking('${weekend.sat}', 4, ${customer}, 'BK-SP-ARCH', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 1 }])}'::jsonb)`, /no longer available/);
 
