@@ -5,8 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
-import { buildPackageGroups, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
+import { BOOKABLE_ITEMS, buildPackageGroups, calculateServerTotal, calculateSpecialPrice, DEFAULT_PRICES, type PriceList } from '@/lib/pricing';
 import { GATE_PAYMENT_METHODS, type GatePaymentKey, type WalkInReceipt } from '@/lib/walk-ins';
+import type { BookingSpecialSelection, Special, SpecialItemDef } from '@/lib/specials';
 import { spotLabel } from '@/lib/seating';
 
 type Spot = { id: string; number: string; type: 'hut' | 'table'; capacity: number; available: boolean; unavailableReason?: string };
@@ -19,14 +20,37 @@ const rand = (value: number) => `R ${value.toLocaleString('en-ZA', { minimumFrac
 const time = (iso: string) => new Date(iso).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Johannesburg' });
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
 const fieldStyle = { padding: '0.65rem', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: '1rem', width: '100%' } as const;
+/** The special as it is priced (the server prices it again from the database when the sale is saved). */
+const specialSelection = (special: Special, quantity: number): BookingSpecialSelection => ({
+  id: special.id,
+  quantity,
+  snapshot: { title: special.title, type: special.type, paid_tickets: special.paid_tickets || [], free_tickets: special.free_tickets || [], pricing: special.pricing, free_meals: Number(special.free_meals) || 0, included_meals: special.included_meals || [] },
+});
+/** "2× Adult, 1× Children 3-17" for a special's ticket lines. */
+const describeTickets = (lines: SpecialItemDef[] = []) => lines.filter(line => BOOKABLE_ITEMS[line.itemId]).map(line => `${line.quantity}× ${BOOKABLE_ITEMS[line.itemId].name}`).join(', ');
+/** What one of a special includes, for the sale screen. */
+function specialContents(special: Special) {
+  const meals = special.included_meals?.length ? special.included_meals : (Number(special.free_meals) > 0 ? [{ name: 'Free meal', quantity: Number(special.free_meals) }] : []);
+  return [
+    describeTickets(special.paid_tickets),
+    special.free_tickets?.length ? `free: ${describeTickets(special.free_tickets)}` : '',
+    meals.length ? meals.map(meal => `${meal.quantity}× ${meal.name}`).join(', ') : '',
+  ].filter(Boolean).join(' · ');
+}
 
 function Receipt({ receipt, onNewSale }: { receipt: WalkInReceipt; onNewSale?: () => void }) {
   const [qrCodes, setQrCodes] = useState<Record<string, string>>({});
   const needsTickets = !receipt.checkedIn;
+  // Meal vouchers from a special are redeemed later by scanning, so they are printed even when the guests are checked in.
+  const meals = (receipt.meals || []).filter(meal => meal.status === 'VALID');
   useEffect(() => {
-    if (!needsTickets) return;
+    const codes = [
+      ...(needsTickets ? receipt.tickets.filter(t => t.status === 'VALID').map(ticket => ({ uid: ticket.ticketUid, token: ticket.qrToken })) : []),
+      ...(receipt.meals || []).filter(meal => meal.status === 'VALID').map(meal => ({ uid: meal.mealUid, token: meal.qrToken })),
+    ];
+    if (!codes.length) return;
     let cancelled = false;
-    Promise.all(receipt.tickets.filter(t => t.status === 'VALID').map(async ticket => [ticket.ticketUid, await QRCode.toDataURL(`${window.location.origin}/admin/scanner?token=${encodeURIComponent(ticket.qrToken)}`, { margin: 1, width: 180 })] as const))
+    Promise.all(codes.map(async code => [code.uid, await QRCode.toDataURL(`${window.location.origin}/admin/scanner?token=${encodeURIComponent(code.token)}`, { margin: 1, width: 180 })] as const))
       .then(entries => { if (!cancelled) setQrCodes(Object.fromEntries(entries)); });
     return () => { cancelled = true; };
   }, [receipt, needsTickets]);
@@ -70,6 +94,18 @@ function Receipt({ receipt, onNewSale }: { receipt: WalkInReceipt; onNewSale?: (
         <span>{receipt.visitDate}</span>
       </div>)}
     </div>}
+    {meals.length > 0 && <>
+      <p style={{ fontSize: '0.9rem', fontWeight: 600, marginTop: '1rem' }}>Meal vouchers: scan each one when the meal is collected.</p>
+      <div className="walkin-tickets">
+        {meals.map(meal => <div key={meal.mealUid} className="walkin-ticket">
+          {/* eslint-disable-next-line @next/next/no-img-element -- QR codes are generated data URLs; next/image cannot optimise them */}
+          {qrCodes[meal.mealUid] ? <img src={qrCodes[meal.mealUid]} alt={`QR code for ${meal.mealUid}`} width={140} height={140} /> : <div style={{ width: 140, height: 140 }} />}
+          <strong>{meal.mealUid}</strong>
+          <span>{meal.name}</span>
+          <span>{receipt.visitDate}</span>
+        </div>)}
+      </div>
+    </>}
   </div>;
 }
 
@@ -79,6 +115,8 @@ export default function WalkInsPage() {
   const [pricesLoaded, setPricesLoaded] = useState(false);
   const [openingNote, setOpeningNote] = useState('');
   const [selections, setSelections] = useState<Record<string, number>>({});
+  const [specials, setSpecials] = useState<Special[]>([]);
+  const [specialQty, setSpecialQty] = useState<Record<string, number>>({});
   const [spots, setSpots] = useState<Spot[]>([]);
   const [spotError, setSpotError] = useState('');
   const [spotIds, setSpotIds] = useState<string[]>([]);
@@ -97,11 +135,21 @@ export default function WalkInsPage() {
   const saleKey = useRef(newKey());
 
   const groups = useMemo(() => buildPackageGroups(prices), [prices]);
-  const lines = groups.flatMap(group => group.items).filter(item => (selections[item.id] || 0) > 0).map(item => ({ ...item, qty: selections[item.id] }));
-  const total = lines.reduce((sum, line) => sum + line.qty * line.price, 0);
-  const people = lines.filter(line => !line.id.startsWith('hut-')).reduce((sum, line) => sum + line.qty, 0);
-  const huts = selections['hut-covered'] || 0;
-  const tables = selections['hut-shaded'] || 0;
+  // Priced the same way the server prices the sale (tickets, huts and specials).
+  const priceSale = (items: Record<string, number>, chosenSpecials: Record<string, number>) => calculateServerTotal(items, undefined, prices, specials.filter(special => (chosenSpecials[special.id] || 0) > 0).map(special => specialSelection(special, chosenSpecials[special.id])));
+  const seatsFor = (items: Record<string, number>, chosenSpecials: Record<string, number>) => {
+    const { lineItems } = priceSale(items, chosenSpecials);
+    const count = (itemId: string) => lineItems.reduce((sum, line) => sum + (line.itemId === itemId ? line.quantity : 0), 0);
+    return { hut: count('hut-covered'), table: count('hut-shaded') };
+  };
+  const { lineItems, total } = priceSale(selections, specialQty);
+  // One row per ticket type, and one per special (its tickets, free tickets and meals together).
+  const lines = [
+    ...groups.flatMap(group => group.items).filter(item => (selections[item.id] || 0) > 0).map(item => ({ key: item.id, label: `${selections[item.id]}× ${item.name}`, amount: selections[item.id] * item.price })),
+    ...specials.filter(special => (specialQty[special.id] || 0) > 0).map(special => ({ key: special.id, label: `${specialQty[special.id]}× ${special.title} (special)`, amount: lineItems.filter(line => line.specialId === special.id).reduce((sum, line) => sum + line.subtotal, 0) })),
+  ];
+  const people = lineItems.reduce((sum, line) => sum + (line.isPerson ? line.quantity : 0), 0);
+  const { hut: huts, table: tables } = seatsFor(selections, specialQty);
   const chosenHuts = spots.filter(spot => spotIds.includes(spot.id) && spot.type === 'hut').length;
   const chosenTables = spots.filter(spot => spotIds.includes(spot.id) && spot.type === 'table').length;
   const tenderedValue = Number(tendered);
@@ -117,6 +165,15 @@ export default function WalkInsPage() {
       if (!response.ok) throw new Error(data.error || 'Seating could not be loaded');
       setSpots([...data.spots].sort((a: Spot, b: Spot) => Number(a.number) - Number(b.number)));
     } catch (loadError) { setSpotError(loadError instanceof Error ? loadError.message : 'Seating could not be loaded'); }
+  }, []);
+
+  // Specials on sale today that are not sold out (same rules as the booking site).
+  const loadSpecials = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/specials?date=${today()}`, { cache: 'no-store' });
+      const data = await response.json();
+      if (response.ok && Array.isArray(data)) setSpecials(data);
+    } catch { /* the sale can go ahead without specials */ }
   }, []);
 
   const loadCashUp = useCallback(async (date: string) => {
@@ -143,24 +200,38 @@ export default function WalkInsPage() {
       .catch(() => {});
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- Load today's specials; setState happens after the request
+  useEffect(() => { loadSpecials(); }, [loadSpecials]);
+
   // eslint-disable-next-line react-hooks/set-state-in-effect -- Load the cash-up for the chosen date; setState happens after the request
   useEffect(() => { loadCashUp(cashUpDate); }, [cashUpDate, loadCashUp]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- Fetch seating only once a hut or table is added; setState happens after the request
   useEffect(() => { if (huts + tables > 0 && !spots.length) loadSpots(); }, [huts, tables, spots.length, loadSpots]);
 
+  /** Drop seating choices that no longer fit the number of huts and tables in the sale. */
+  const fitSeating = (seats: { hut: number; table: number }) => setSpotIds(current => {
+    const keep = { hut: 0, table: 0 };
+    return current.filter(spotId => {
+      const type = spots.find(spot => spot.id === spotId)?.type;
+      if (!type) return false;
+      keep[type] += 1;
+      return keep[type] <= seats[type];
+    });
+  });
+
   const setQty = (id: string, qty: number) => {
-    const next = Math.max(0, Math.min(500, qty));
-    setSelections(current => ({ ...current, [id]: next }));
-    // Drop seating choices that no longer fit the number of huts/tables.
-    if (id === 'hut-covered' || id === 'hut-shaded') {
-      const type = id === 'hut-covered' ? 'hut' : 'table';
-      setSpotIds(current => {
-        const ofType = current.filter(spotId => spots.find(spot => spot.id === spotId)?.type === type);
-        const others = current.filter(spotId => !ofType.includes(spotId));
-        return [...others, ...ofType.slice(0, next)];
-      });
-    }
+    const next = { ...selections, [id]: Math.max(0, Math.min(500, qty)) };
+    setSelections(next);
+    fitSeating(seatsFor(next, specialQty));
+  };
+
+  /** How many of a special can be sold: its per-booking limit and what is left today. */
+  const specialLimit = (special: Special) => Math.min(100, special.max_per_booking ?? 100, special.remaining ?? 100);
+  const setSpecial = (special: Special, qty: number) => {
+    const next = { ...specialQty, [special.id]: Math.max(0, Math.min(specialLimit(special), qty)) };
+    setSpecialQty(next);
+    fitSeating(seatsFor(selections, next));
   };
 
   const toggleSpot = (spot: Spot) => {
@@ -174,15 +245,16 @@ export default function WalkInsPage() {
   };
 
   const resetSale = () => {
-    setSelections({}); setSpotIds([]); setTendered(''); setPaymentReference(''); setCheckIn(true);
+    setSelections({}); setSpecialQty({}); setSpotIds([]); setTendered(''); setPaymentReference(''); setCheckIn(true);
     setCustomer({ firstName: '', lastName: '', phone: '', email: '' }); setShowCustomer(false);
     setReceipt(null); setError(''); setSpots([]);
+    loadSpecials();
     saleKey.current = newKey();
   };
 
   const completeSale = async () => {
     if (!canSubmit) return;
-    const summary = `${lines.map(line => `${line.qty}× ${line.name}`).join('\n')}\n\nTotal: ${rand(total)} · ${GATE_PAYMENT_METHODS[method].label}${change !== null ? `\nCash received ${rand(tenderedValue)} → change ${rand(change)}` : ''}`;
+    const summary = `${lines.map(line => line.label).join('\n')}\n\nTotal: ${rand(total)} · ${GATE_PAYMENT_METHODS[method].label}${change !== null ? `\nCash received ${rand(tenderedValue)} → change ${rand(change)}` : ''}`;
     const result = await confirm({ title: 'Complete this sale?', message: `${summary}\n\n${checkIn ? 'Tickets will be checked in now.' : 'Tickets will be issued for scanning at the gate.'}`, confirmLabel: `Take ${rand(total)}` });
     if (!result.confirmed) return;
     setSubmitting(true); setError('');
@@ -190,7 +262,7 @@ export default function WalkInsPage() {
       const response = await fetch('/api/admin/walk-ins', {
         method: 'POST',
         headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selections, spotIds, paymentMethod: method, amountTendered: method === 'CASH' && tendered !== '' ? tenderedValue : null, paymentReference, checkIn, customer, expectedTotal: total, idempotencyKey: saleKey.current }),
+        body: JSON.stringify({ selections, specials: Object.entries(specialQty).filter(([, qty]) => qty > 0).map(([id, quantity]) => ({ id, quantity })), spotIds, paymentMethod: method, amountTendered: method === 'CASH' && tendered !== '' ? tenderedValue : null, paymentReference, checkIn, customer, expectedTotal: total, idempotencyKey: saleKey.current }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'The sale could not be recorded');
@@ -199,8 +271,9 @@ export default function WalkInsPage() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (saleError) {
       setError(saleError instanceof Error ? saleError.message : 'The sale could not be recorded');
-      // A seating clash means the map is stale.
+      // A seating clash means the map is stale; a special problem means the specials list is.
       if (saleError instanceof Error && /seating/i.test(saleError.message)) { setSpotIds([]); loadSpots(); }
+      if (saleError instanceof Error && /special/i.test(saleError.message)) loadSpecials();
     } finally { setSubmitting(false); }
   };
 
@@ -236,6 +309,26 @@ export default function WalkInsPage() {
           })}
         </div>)}
 
+        {specials.length > 0 && <div style={{ marginTop: '1rem' }}>
+          <h3 className="report-group-heading">Specials today</h3>
+          {specials.map(special => {
+            const qty = specialQty[special.id] || 0;
+            const limit = specialLimit(special);
+            return <div key={special.id} className={`walkin-item${qty ? ' active' : ''}`}>
+              <div>
+                <div style={{ fontWeight: 600 }}>{special.title}{special.badge_text && <span style={{ marginLeft: 6, fontSize: '0.75rem', fontWeight: 700, padding: '0.1rem 0.45rem', borderRadius: 999, background: 'var(--warning-bg)', color: 'var(--warning-text)' }}>{special.badge_text}</span>}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{rand(calculateSpecialPrice(specialSelection(special, 1).snapshot, prices))} · {specialContents(special)}</div>
+                {special.remaining !== null && special.remaining !== undefined && <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{special.remaining} left today</div>}
+              </div>
+              <div className="walkin-stepper">
+                <button type="button" aria-label={`Remove ${special.title}`} onClick={() => setSpecial(special, qty - 1)} disabled={!qty}>−</button>
+                <span aria-live="polite">{qty}</span>
+                <button type="button" aria-label={`Add ${special.title}`} onClick={() => setSpecial(special, qty + 1)} disabled={qty >= limit}>+</button>
+              </div>
+            </div>;
+          })}
+        </div>}
+
         {huts + tables > 0 && <div style={{ marginTop: '1.25rem' }}>
           <h3 className="report-group-heading">Choose seating ({chosenHuts}/{huts} huts · {chosenTables}/{tables} tables)</h3>
           {spotError && <p style={{ color: 'var(--danger)' }}>{spotError} <button className="btn" onClick={loadSpots} style={{ border: '1px solid var(--border-color)', padding: '0.25rem 0.6rem' }}>Retry</button></p>}
@@ -257,8 +350,8 @@ export default function WalkInsPage() {
 
       <aside className="card walkin-checkout" style={{ margin: 0 }}>
         <h2>Payment</h2>
-        {lines.length === 0 ? <p style={{ color: 'var(--text-muted)', margin: '0.75rem 0' }}>Add tickets to start a sale.</p> : <table className="report-table" style={{ margin: '0.75rem 0' }}><tbody>
-          {lines.map(line => <tr key={line.id}><td style={{ whiteSpace: 'normal' }}>{line.qty}× {line.name}</td><td style={{ textAlign: 'right' }}>{rand(line.qty * line.price)}</td></tr>)}
+        {lines.length === 0 ? <p style={{ color: 'var(--text-muted)', margin: '0.75rem 0' }}>Add tickets or a special to start a sale.</p> : <table className="report-table" style={{ margin: '0.75rem 0' }}><tbody>
+          {lines.map(line => <tr key={line.key}><td style={{ whiteSpace: 'normal' }}>{line.label}</td><td style={{ textAlign: 'right' }}>{rand(line.amount)}</td></tr>)}
         </tbody></table>}
         <div className="walkin-total"><span>Total</span><strong>{rand(total)}</strong></div>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{people} {people === 1 ? 'person' : 'people'}</p>

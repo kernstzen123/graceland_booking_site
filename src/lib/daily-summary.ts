@@ -11,6 +11,9 @@ export type SummaryBooking = {
   total_amount: number;
   /** 'IMPORTED' for bookings copied from the booking book (paid outside the system). */
   payment_method?: string | null;
+  /** What an online, office or gate booking was charged when it was paid (its total less any voucher). */
+  amount_due?: number | null;
+  voucher_amount_used?: number | null;
   /** Payments on the booking; for an imported booking, the payments staff recorded on it. */
   payments?: Array<{ amount: number | string; status: string }> | null;
   customers?: { first_name?: string | null; last_name?: string | null } | Array<{ first_name?: string | null; last_name?: string | null }> | null;
@@ -57,10 +60,15 @@ function toRow(booking: SummaryBooking): SummaryRow {
   const customer = first(booking.customers);
   const { counts, meals } = countItems(booking.booking_items || []);
   // Imported bookings were paid (or part-paid) outside the system: only the payments recorded on them count.
+  // Any other booking was paid its amount due, or more if staff recorded payments on it after it was edited;
+  // it only owes something when its total went up after it was paid.
   const imported = booking.payment_method === 'IMPORTED';
-  const paid = imported
-    ? Math.round((booking.payments || []).filter(payment => payment.status === 'COMPLETE').reduce((sum, payment) => sum + Number(payment.amount), 0) * 100) / 100
-    : Number(booking.total_amount) || 0;
+  const cents = (value: number) => Math.round(value * 100) / 100;
+  const total = Number(booking.total_amount) || 0;
+  const recorded = cents((booking.payments || []).filter(payment => payment.status === 'COMPLETE').reduce((sum, payment) => sum + Number(payment.amount), 0));
+  const toPay = Math.max(0, total - (Number(booking.voucher_amount_used) || 0));
+  const owing = imported ? Math.max(0, cents(total - recorded)) : Math.max(0, cents(toPay - Math.max(Number(booking.amount_due ?? toPay) || 0, recorded)));
+  const paid = imported ? recorded : cents(total - owing);
   const spots = (booking.booking_spots || []).map(row => first(row.venue_spots)).filter((spot): spot is { number: string; type: string } => Boolean(spot?.number));
   return {
     time: booking.party_slot ? slotStart(booking.party_slot) : 'DV',
@@ -71,7 +79,7 @@ function toRow(booking: SummaryBooking): SummaryRow {
     seating: spots.sort(compareSpots).map(spot => spot.number).join(', '),
     paid,
     imported,
-    owing: imported ? Math.max(0, Math.round(((Number(booking.total_amount) || 0) - paid) * 100) / 100) : 0,
+    owing,
   };
 }
 

@@ -1,5 +1,7 @@
 /**
- * Payments on bookings imported from the booking book.
+ * Payments staff record by hand (cash, card or EFT), first added for bookings
+ * imported from the booking book and now used on any paid booking, e.g. for
+ * the difference after a booking was edited.
  *
  * Imported bookings stay PAID so their seats and capacity are held, but many
  * were unpaid or only partly paid when they were copied in. Staff record each

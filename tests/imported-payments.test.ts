@@ -98,4 +98,24 @@ describe('payments on imported bookings in reports and the daily sheet', async (
     expect(byName('Part')).toMatchObject({ paid: 1080, owing: 880, imported: true });
     expect(byName('Online')).toMatchObject({ paid: 500, owing: 0, imported: false });
   });
+
+  it('count a payment recorded on an online booking after its total went up', () => {
+    const edited = { ...row('BK-EDITED', 'PAYFAST', 700, 600), amount_due: 500 };
+    const unpaid = { ...row('BK-OWES', 'PAYFAST', 700, 500), amount_due: 500 };
+    const editedReport = assembleReport({ ...data, bookings: [edited, unpaid] }, '2026-10-10', '2026-10-10', 'visit', new Map(), '2026-10-07');
+    expect(editedReport.bookings.find(r => r.Reference === 'BK-EDITED')).toMatchObject({ 'Cash collected (R)': 600, 'Outstanding (R)': 100 });
+    expect(editedReport.bookings.find(r => r.Reference === 'BK-OWES')).toMatchObject({ 'Cash collected (R)': 500, 'Outstanding (R)': 200 });
+  });
+
+  it('show what an edited online booking still owes on the daily sheet', () => {
+    const summary = buildDailySummary([
+      { party_slot: null, total_amount: 700, amount_due: 500, payment_method: 'PAYFAST', customers: { first_name: 'Edited' }, payments: [{ amount: 500, status: 'COMPLETE' }], booking_items: [{ quantity: 2, metadata: { itemId: 'day-water-adult', isPerson: true } }] },
+      { party_slot: null, total_amount: 700, amount_due: 500, payment_method: 'PAYFAST', customers: { first_name: 'Settled' }, payments: [{ amount: 500, status: 'COMPLETE' }, { amount: 200, status: 'COMPLETE' }], booking_items: [{ quantity: 2, metadata: { itemId: 'day-water-adult', isPerson: true } }] },
+      { party_slot: null, total_amount: 500, amount_due: 300, voucher_amount_used: 200, payment_method: 'PAYFAST', customers: { first_name: 'Voucher' }, payments: [{ amount: 300, status: 'COMPLETE' }], booking_items: [{ quantity: 2, metadata: { itemId: 'day-water-adult', isPerson: true } }] },
+    ], []);
+    const byName = (name: string) => summary.dayVisitors.find(r => r.client === name)!;
+    expect(byName('Edited')).toMatchObject({ paid: 500, owing: 200 });
+    expect(byName('Settled')).toMatchObject({ paid: 700, owing: 0 });
+    expect(byName('Voucher')).toMatchObject({ paid: 500, owing: 0 });
+  });
 });

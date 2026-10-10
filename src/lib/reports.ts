@@ -143,12 +143,15 @@ const isPaid = (booking: Pick<BookingRow, 'status'>) => PAID.includes(booking.st
 const isImported = (booking: Pick<BookingRow, 'payment_method'>) => booking.payment_method === IMPORTED_PAYMENT_METHOD;
 /**
  * Money received for a booking (vouchers are not cash). An imported booking
- * counts the payments staff recorded on it; any other paid booking was paid in
- * full before it was confirmed.
+ * counts the payments staff recorded on it; any other paid booking was paid its
+ * amount due before it was confirmed, plus any payment staff recorded on it
+ * later (e.g. after the booking was edited), whichever is more.
  */
-const cashCollected = (booking: BookingRow) => (isImported(booking) ? money(booking.amount_paid) : money(booking.amount_due ?? Number(booking.total_amount) - Number(booking.voucher_amount_used || 0)));
-/** What is still owed on a paid booking (only imported bookings can be part paid). */
-const outstandingOf = (booking: BookingRow) => (isImported(booking) ? money(Math.max(0, Number(booking.total_amount) - Number(booking.voucher_amount_used || 0) - cashCollected(booking))) : 0);
+const cashCollected = (booking: BookingRow) => (isImported(booking)
+  ? money(booking.amount_paid)
+  : Math.max(money(booking.amount_due ?? Number(booking.total_amount) - Number(booking.voucher_amount_used || 0)), money(booking.amount_paid)));
+/** What is still owed on a paid booking: imported bookings, and bookings whose total went up after they were paid. */
+const outstandingOf = (booking: BookingRow) => money(Math.max(0, Number(booking.total_amount) - Number(booking.voucher_amount_used || 0) - cashCollected(booking)));
 
 const PAYMENT_LABELS: Record<string, string> = {
   PAYFAST: 'PayFast (card / instant EFT)', MANUAL_EFT: 'Manual EFT', VOUCHER: 'Voucher only', ADMIN_OVERRIDE: 'Marked paid by staff',

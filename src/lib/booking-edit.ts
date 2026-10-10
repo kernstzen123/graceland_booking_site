@@ -2,7 +2,7 @@
  * Rules for editing the items on a booking (used by the admin bookings API).
  * Kept free of database calls so they can be tested on their own.
  */
-import { findEditableItem, matchEditableItem, type EditableItem } from '@/lib/pricing';
+import { findEditableItem, matchEditableItem, SWIMMING_UPGRADE_ID, type EditableItem } from '@/lib/pricing';
 
 /** A problem staff can fix in the edit form; the message is safe to show. */
 export class BookingEditError extends Error {}
@@ -22,6 +22,8 @@ export type EditedLine = {
 };
 
 const MAX_LINES = 60;
+/** Entrance tickets without water activities, which an "Upgrade to swimming" line can upgrade. */
+const NON_SWIMMING = /excluding water|non-swimming/i;
 
 /**
  * Check the edited lines. Each line is either a catalogue item (itemId), or an
@@ -66,6 +68,14 @@ export function parseEditedItems(raw: unknown, existing: StoredLine[], partySlot
   });
   if (!lines.length) throw new BookingEditError('A booking needs at least one item.');
   if (!lines.some(line => line.isPerson)) throw new BookingEditError('Add at least one entrance ticket (an item for a person).');
+  // Each "Upgrade to swimming" turns one non-swimming ticket on the booking into a swimming one.
+  const upgrades = lines.reduce((sum, line) => sum + (line.item?.id === SWIMMING_UPGRADE_ID ? line.quantity : 0), 0);
+  const nonSwimming = lines.reduce((sum, line) => sum + (line.isPerson && NON_SWIMMING.test(line.name) ? line.quantity : 0), 0);
+  if (upgrades > nonSwimming) {
+    throw new BookingEditError(nonSwimming
+      ? `There ${nonSwimming === 1 ? 'is only 1 non-swimming ticket' : `are only ${nonSwimming} non-swimming tickets`} to upgrade, but ${upgrades} swimming upgrades were added.`
+      : 'There are no non-swimming tickets on this booking to upgrade to swimming.');
+  }
   return lines;
 }
 
@@ -93,4 +103,19 @@ export function linesChanged(lines: EditedLine[], existing: StoredLine[]) {
       || stored.metadata?.name !== line.metadata.name
       || (stored.metadata?.isPerson === true) !== line.isPerson;
   });
+}
+
+/** A line of booking notes the system writes (IMPORTED_FROM_BOOK, WALK_IN, PAID_BY_VOUCHER, …) rather than staff. */
+const isMarkerLine = (line: string) => /^[A-Z_]+$/.test(line.trim());
+
+/**
+ * The notes to save after an edit: the system's marker lines are kept as they
+ * were (so an imported booking stays recognisable as imported, and so on) and
+ * the staff note replaces everything else.
+ */
+export function editedNotes(existing: string | null | undefined, staffNote: string, markerIfMissing?: string): string | null {
+  const markers = (existing || '').split('\n').filter(isMarkerLine).map(line => line.trim());
+  if (markerIfMissing && !markers.includes(markerIfMissing)) markers.unshift(markerIfMissing);
+  const notes = [...markers, ...(staffNote ? [staffNote] : [])].join('\n');
+  return notes || null;
 }

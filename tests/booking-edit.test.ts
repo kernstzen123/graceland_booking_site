@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BookingEditError, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
+import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { calculateServerTotal, DEFAULT_PRICES, EDITABLE_ITEMS, matchEditableItem } from '@/lib/pricing';
 import { buildDailySummary } from '@/lib/daily-summary';
 
@@ -78,5 +78,39 @@ describe('editing booking items', () => {
     expect(row.children).toBe(10);
     expect(row.adults).toBe(3);
     expect(row.total).toBe(13); // the old "hut 3" line no longer counts as a person
+  });
+});
+
+describe('notes after an edit', () => {
+  it('keeps the system markers and replaces the staff note', () => {
+    expect(editedNotes('IMPORTED_FROM_BOOK\nold note', 'new note', 'IMPORTED_FROM_BOOK')).toBe('IMPORTED_FROM_BOOK\nnew note');
+    expect(editedNotes('WALK_IN', 'birthday', undefined)).toBe('WALK_IN\nbirthday');
+    expect(editedNotes('PAID_BY_VOUCHER', '', undefined)).toBe('PAID_BY_VOUCHER');
+  });
+  it('adds the imported marker when it is missing', () => {
+    expect(editedNotes(null, '', 'IMPORTED_FROM_BOOK')).toBe('IMPORTED_FROM_BOOK');
+  });
+  it('clears notes that only held a staff note', () => {
+    expect(editedNotes('call before arrival', '', undefined)).toBeNull();
+    expect(editedNotes(null, 'late arrival', undefined)).toBe('late arrival');
+  });
+});
+
+describe('upgrade to swimming', () => {
+  const line = (itemId: string, quantity: number, price: number) => ({ itemId, quantity, price_per_unit: price });
+  it('is on the price list at R110 and has no gate ticket of its own', () => {
+    const upgrade = EDITABLE_ITEMS.find(item => item.id === 'upgrade-swimming')!;
+    expect(upgrade.name).toBe('Upgrade to swimming');
+    expect(upgrade.isPerson).toBe(false);
+    expect(DEFAULT_PRICES['upgrade-swimming']).toBe(110);
+  });
+  it('upgrades non-swimming tickets', () => {
+    const lines = parseEditedItems([line('day-no-water-adult', 2, 120), line('day-no-water-child', 1, 100), line('upgrade-swimming', 3, 110)], [], null);
+    expect(lines.reduce((sum, l) => sum + l.price * l.quantity, 0)).toBe(670);
+    expect(lines.filter(l => l.isPerson).reduce((sum, l) => sum + l.quantity, 0)).toBe(3);
+  });
+  it('cannot upgrade more people than have non-swimming tickets', () => {
+    expect(() => parseEditedItems([line('day-no-water-adult', 1, 120), line('upgrade-swimming', 2, 110)], [], null)).toThrow(/only 1 non-swimming ticket/);
+    expect(() => parseEditedItems([line('day-water-adult', 2, 230), line('upgrade-swimming', 1, 110)], [], null)).toThrow(/no non-swimming tickets/);
   });
 });

@@ -15,6 +15,8 @@ export const GATE_PAYMENT_LABELS: Record<string, string> = Object.fromEntries(
 export const isGateSale = (paymentMethod: string | null | undefined) => Boolean(paymentMethod?.startsWith('GATE_'));
 
 export type WalkInTicket = { ticketUid: string; qrToken: string; name: string; status: string };
+/** A meal voucher from a special in the sale, redeemed later by scanning its QR code. */
+export type WalkInMeal = { mealUid: string; qrToken: string; name: string; status: string };
 
 export type WalkInReceipt = {
   bookingId: string;
@@ -33,5 +35,6 @@ export type WalkInReceipt = {
   checkedIn: boolean;
   emailSent: boolean | null;
   tickets: WalkInTicket[];
+  meals: WalkInMeal[];
   soldBy: string;
 };

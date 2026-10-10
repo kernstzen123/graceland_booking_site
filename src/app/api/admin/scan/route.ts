@@ -5,6 +5,7 @@ import { checkRateLimit, cleanText } from '@/lib/request-security';
 import { verifyQrToken } from '@/lib/qr-token';
 import { johannesburgToday } from '@/lib/opening-rules';
 import { spotLabel } from '@/lib/seating';
+import { SWIMMING_UPGRADE_ID } from '@/lib/pricing';
 
 /** Redeem a meal voucher and shape the result like a ticket scan, including the meal's name. */
 async function redeemMeal(mealUid: string, userId: string) {
@@ -75,7 +76,12 @@ export async function POST(request: Request) {
     });
     const { data: issuedTickets } = await supabase.from('tickets').select('id').eq('booking_id', ticket.booking_id).order('issued_at', { ascending: true });
     const ticketIndex = issuedTickets?.findIndex(item => item.id === ticket.id) ?? -1;
-    const resolvedPackageName = packageName || (ticketIndex >= 0 ? passNames[ticketIndex] : undefined);
+    // "Upgrade to swimming" lines added by staff: the person keeps their non-swimming ticket, so say so at the gate.
+    const swimmingUpgrades = (bookingItems || []).reduce((sum, item) => sum + (item.metadata?.itemId === SWIMMING_UPGRADE_ID ? Number(item.quantity || 0) : 0), 0);
+    const ticketName = packageName || (ticketIndex >= 0 ? passNames[ticketIndex] : undefined);
+    const resolvedPackageName = ticketName && swimmingUpgrades > 0 && /non-swimming|excluding water/i.test(ticketName)
+      ? `${ticketName} · ${swimmingUpgrades} upgraded to swimming on this booking`
+      : ticketName;
     const { data: bookingSpots, error: seatingError } = await supabase
       .from('booking_spots')
       .select('venue_spots(number,type)')
