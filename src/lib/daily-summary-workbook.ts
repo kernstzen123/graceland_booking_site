@@ -1,9 +1,9 @@
 import 'server-only';
 /**
  * Turns a DailySummary (src/lib/daily-summary.ts) into the printable Excel
- * sheet staff use on the day: party slots first, each with the number of
- * people on site during that slot (its party guests plus all day visitors),
- * then the day visitors and their totals. A second sheet holds the hut and
+ * sheet staff use on the day: the day visitors and their totals first, then
+ * the party slots, each with the number of people on site during that slot
+ * (its party guests plus all day visitors). A second sheet holds the hut and
  * table schedule for the day.
  */
 import ExcelJS from 'exceljs';
@@ -124,12 +124,13 @@ export async function buildDailySummaryWorkbook(summary: DailySummary, date: str
     next += 1;
   };
 
-  // The day visitors are listed last but counted in every slot's "on site" line,
-  // so work out which rows they will occupy before writing the party sections.
+  // Day visitors first: they are on site all day, so every party slot's "on site" line below counts them too.
   const dayVisitors = summary.dayVisitors;
-  const rowsBeforeDayVisitors = summary.parties.reduce((rows, section) => rows + 1 + Math.max(1, section.rows.length) + 2 + 1, 0);
-  const dayVisitorRange: Range | null = dayVisitors.length ? [5 + rowsBeforeDayVisitors + 1, 5 + rowsBeforeDayVisitors + dayVisitors.length] : null;
   const dayVisitorCounts = sumOf(dayVisitors);
+  addBand('Day visitors');
+  const dayVisitorRange = addBookings(dayVisitors, 'No day visitors booked.');
+  addTotals('Total day visitors', dayVisitorRange ? [dayVisitorRange] : [], dayVisitorCounts, paidOf(dayVisitors), TOTAL);
+  next += 1;
 
   const partyRanges: Range[] = [];
   const allParties: SummaryRow[] = [];
@@ -145,12 +146,8 @@ export async function buildDailySummaryWorkbook(summary: DailySummary, date: str
     next += 1;
   }
 
-  addBand('Day visitors');
-  addBookings(dayVisitors, 'No day visitors booked.');
-  addTotals('Total day visitors', dayVisitorRange ? [dayVisitorRange] : [], dayVisitorCounts, paidOf(dayVisitors), TOTAL);
-  next += 1;
-  const everyone = [...allParties, ...dayVisitors];
-  addTotals('Total booked for the day (all parties + day visitors)', [...partyRanges, ...(dayVisitorRange ? [dayVisitorRange] : [])], sumOf(everyone), paidOf(everyone), SUBTOTAL);
+  const everyone = [...dayVisitors, ...allParties];
+  addTotals('Total booked for the day (day visitors + all parties)', [...(dayVisitorRange ? [dayVisitorRange] : []), ...partyRanges], sumOf(everyone), paidOf(everyone), SUBTOTAL);
 
   if (schedule) addHutScheduleSheet(workbook, schedule);
   return Buffer.from(await workbook.xlsx.writeBuffer());
