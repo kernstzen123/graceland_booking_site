@@ -9,8 +9,9 @@ const meals = special('meals', { included_meals: [{ name: 'Hotdog', quantity: 2 
 const adult = special('adult', { free_tickets: [{ itemId: 'day-water-adult', quantity: 1 }] });
 
 describe('specials given free over a minimum spend', () => {
-  it('only apply when the cart is over the amount', () => {
-    expect(pickAutoSpecial([meals], 660, DEFAULT_PRICES)).toBeNull();
+  it('apply when the cart is the amount or more', () => {
+    expect(pickAutoSpecial([meals], 659.99, DEFAULT_PRICES)).toBeNull();
+    expect(pickAutoSpecial([meals], 660, DEFAULT_PRICES)?.id).toBe('meals');
     expect(pickAutoSpecial([meals], 660.01, DEFAULT_PRICES)?.id).toBe('meals');
   });
 

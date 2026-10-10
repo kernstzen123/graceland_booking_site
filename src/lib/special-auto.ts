@@ -1,7 +1,7 @@
 /**
  * Specials that apply by themselves: a special with "auto_apply_min_spend" set
  * gives its free extras (its free entrance tickets and meal vouchers, at R0)
- * to an online booking whose cart total is over that amount, on a date the
+ * to an online booking whose cart total is that amount or more, on a date the
  * special is valid. The customer's own tickets stay at their normal price.
  * When several qualify, only the one worth the most is given.
  *
@@ -43,7 +43,8 @@ export function pickAutoSpecial<T extends AutoSpecialCandidate>(candidates: T[],
   let bestMeals = -1;
   for (const special of candidates) {
     const minSpend = autoApplyMinSpend(special);
-    if (minSpend === null || !(cartTotal > minSpend)) continue;
+    // R660 or more (a cent of rounding is allowed for).
+    if (minSpend === null || !(cartTotal >= minSpend - 0.005)) continue;
     if (excludeIds.includes(special.id)) continue;
     if (special.remaining !== null && special.remaining !== undefined && special.remaining < 1) continue;
     const tickets = freeTickets(special.free_tickets);

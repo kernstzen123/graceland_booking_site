@@ -11,7 +11,7 @@ export function specialsErrorResponse(error: unknown, fallback: string) {
   if (error instanceof AdminAuthError) return NextResponse.json({ error: error.message }, { status: error.status });
   if (error instanceof SpecialInputError) return NextResponse.json({ error: error.message }, { status: 400 });
   if (/auto_apply_min_spend/.test(String((error as { message?: string })?.message || ''))) {
-    return NextResponse.json({ error: 'Giving a special free over a set amount needs the latest database update (supabase/migrations/20261012_special_auto_apply.sql). Run it in Supabase, or leave that amount empty.' }, { status: 500 });
+    return NextResponse.json({ error: 'Giving a special free from a set amount needs the latest database update (supabase/migrations/20261012_special_auto_apply.sql). Run it in Supabase, or leave that amount empty.' }, { status: 500 });
   }
   console.error(fallback, error);
   return NextResponse.json({ error: fallback }, { status: 500 });

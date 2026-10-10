@@ -74,7 +74,7 @@ function ticketLinesInput(value: unknown, label: string): SpecialItemDef[] {
   });
 }
 
-/** "Give free to bookings over R…": a rand amount, or empty for off. */
+/** "Give free to bookings of R… or more": a rand amount, or empty for off. */
 function autoApplyInput(value: unknown): { auto_apply_min_spend?: number } {
   if (value === null || value === undefined || value === '') return {};
   const amount = Number(value);
@@ -208,7 +208,7 @@ export async function loadBookingSpecials(requested: unknown, visitDate: string)
 }
 
 /**
- * The special an online booking gets free because its cart is over the
+ * The special an online booking gets free because its cart reaches the
  * special's minimum spend (see src/lib/special-auto.ts), or null. Only specials
  * that are active, valid on the visit date and not sold out that day count;
  * `excludeIds` are specials the customer added themselves.

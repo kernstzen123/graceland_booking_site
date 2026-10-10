@@ -80,7 +80,7 @@ export function BookingSummary({ selectedDate, selections, specials, party, pric
           {party.enabled && (
              <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Party slot: {party.slot}</p>
           )}
-          {autoSpecial && <p style={{ color: 'var(--success)', marginTop: 8 }}>🎁 Your booking is over R{autoApplyMinSpend(autoSpecial)}, so the {autoSpecial.title} extras above are included free.</p>}
+          {autoSpecial && <p style={{ color: 'var(--success)', marginTop: 8 }}>🎁 Your booking is R{autoApplyMinSpend(autoSpecial)} or more, so the {autoSpecial.title} extras above are included free.</p>}
         </div>
       </div>
 

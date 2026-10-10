@@ -338,7 +338,7 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
         </div>
         {autoSpecial && <div className="callout callout-success" role="status" style={{ marginTop: 0, marginBottom: '1.5rem' }}>
           <p><strong>🎁 {autoSpecial.title}</strong></p>
-          <p>Your booking is over R{autoApplyMinSpend(autoSpecial)}, so you also get {describeAutoExtras(autoSpecial)} free.</p>
+          <p>Your booking is R{autoApplyMinSpend(autoSpecial)} or more, so you also get {describeAutoExtras(autoSpecial)} free.</p>
         </div>}
 
         <div style={{ display: 'flex', gap: '1rem' }}>

@@ -94,7 +94,7 @@ export async function POST(request: Request) {
       throw new Error('Prices have been updated. Please refresh the page and try again.');
     }
 
-    // A special switched on to be given free over a set spend: when the cart is over that amount,
+    // A special switched on to be given free from a set spend: when the cart is that amount or more,
     // the booking also gets the special's free tickets and meal vouchers (R0, so the total is unchanged).
     // Decided here only; the browser never sends it.
     const autoSpecial = await loadAutoSpecial(selectedDate, serverTotal, prices, specials.map(special => special.id));

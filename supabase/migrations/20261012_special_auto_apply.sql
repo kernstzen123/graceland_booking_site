@@ -1,7 +1,7 @@
 -- 20261012_special_auto_apply.sql
 --
--- A special can be given free to online bookings whose cart total is over a
--- set amount (e.g. R660): the booking gets the special's free entrance tickets
+-- A special can be given free to online bookings whose cart total is a set
+-- amount or more (e.g. R660 or more): the booking gets the special's free entrance tickets
 -- and meal vouchers at R0, on dates the special is valid. Staff switch it on
 -- per special in Admin > Specials; empty (null) means off, which is how every
 -- existing special starts.
