@@ -3,7 +3,7 @@ import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce, generateTicketsAndSendEmail, resignBookingQrCodes } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
-import { archiveBooking, FORCEABLE_FAILURES, isStaffUnpaidBooking, setBookingPaymentStatus, staffHoldUntil } from '@/lib/booking-holds';
+import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
 import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
 import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
@@ -192,7 +192,10 @@ export async function POST(request: Request) {
     if (action === 'update') {
       const imported = isImportedBooking(booking);
       const paid = ['PAID', 'CONFIRMED'].includes(booking.status);
-      if (booking.deleted_at || booking.voucher_issued || !(paid || ['PENDING', 'PAYMENT_PENDING'].includes(booking.status))) {
+      // Unpaid bookings can be edited while they still hold their places (staff bookings always do;
+      // an online booking whose payment window ran out does not, and is not revived by an edit).
+      const holding = booking.status === 'PAYMENT_PENDING' || (booking.status === 'UNPAID' && Boolean(booking.expires_at) && new Date(booking.expires_at as string).getTime() > Date.now());
+      if (booking.deleted_at || booking.voucher_issued || !(paid || holding)) {
         return NextResponse.json({ success: false, error: 'This booking is cancelled, refunded or deleted, so it can no longer be edited.' }, { status: 400 });
       }
       const text = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '');
@@ -263,11 +266,6 @@ export async function POST(request: Request) {
       // settled by recording a payment.
       if (!paid && !imported && updates.total_amount !== undefined) {
         updates.amount_due = Math.max(0, Math.round((Number(updates.total_amount) - Number(booking.voucher_amount_used || 0)) * 100) / 100);
-      }
-      // An unpaid booking staff made is held until the end of its visit day: that moves with the date.
-      // (Only while it still holds its places, so a lapsed booking is not revived without the capacity check.)
-      if (dateChanged && booking.status === 'UNPAID' && isStaffUnpaidBooking(booking) && booking.expires_at && new Date(booking.expires_at).getTime() > Date.now()) {
-        updates.expires_at = staffHoldUntil(visitDate);
       }
 
       // Notes keep the system marker lines (e.g. IMPORTED_FROM_BOOK, so an imported booking stays recognisable).
@@ -414,8 +412,10 @@ export async function POST(request: Request) {
     }
 
     // action === 'delete': a soft delete. The booking is cancelled and hidden,
-    // but its payments, proofs and history stay for the records.
-    if (role !== 'ADMIN') return NextResponse.json({ success: false, error: 'Only admins can delete bookings' }, { status: 403 });
+    // but its payments, proofs and history stay for the records. Admins and managers
+    // can do this (it is the only way an unpaid booking staff made is removed); paid
+    // bookings are refused by archive_booking.
+    if (!['ADMIN', 'MANAGER'].includes(role)) return NextResponse.json({ success: false, error: 'Only admins and managers can delete bookings' }, { status: 403 });
     if (reason.length < 3) return NextResponse.json({ success: false, error: 'Enter a reason for deleting this booking.' }, { status: 400 });
     const result = await archiveBooking(booking.id, user.id, reason);
     if (!result.ok) return NextResponse.json({ success: false, error: result.detail || 'The booking could not be deleted' }, { status: 409 });

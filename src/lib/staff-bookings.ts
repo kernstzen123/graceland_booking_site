@@ -22,7 +22,7 @@ import { customerError } from '@/lib/public-errors';
 import { emailTicketsOnce, generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/mailer';
 import { sendEftInstructions } from '@/lib/eft-email';
-import { staffHoldUntil } from '@/lib/booking-holds';
+import { STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
 
 /** Payment method recorded on imported bookings; the gate checks these in by name. */
 export const IMPORTED_PAYMENT_METHOD = 'IMPORTED';
@@ -196,9 +196,9 @@ ${prepared.notes}` : IMPORTED_NOTE, expires_at: null, sold_by: actorId }).eq('id
       return { bookingId, reference, created: true, total: prepared.total, ticketsEmailed, eftSent: null };
     }
 
-    // Not paid yet: hold the booking until the end of the visit day (staff bookings have no
-    // 48-hour payment window, see staffHoldUntil) and email the EFT payment instructions.
-    const { error } = await supabase.from('bookings').update({ payment_method: 'MANUAL_EFT', sold_by: actorId, notes: prepared.notes || null, expires_at: staffHoldUntil(prepared.visitDate) }).eq('id', bookingId);
+    // Not paid yet: the booking keeps its places until an admin or manager deletes it (staff
+    // bookings have no payment window, see STAFF_HOLD_UNTIL), and the customer is emailed the EFT details.
+    const { error } = await supabase.from('bookings').update({ payment_method: 'MANUAL_EFT', sold_by: actorId, notes: prepared.notes || null, expires_at: STAFF_HOLD_UNTIL }).eq('id', bookingId);
     if (error) throw error;
     completed = true;
     await writeAudit(actorId, 'OFFICE_BOOKING', 'booking', bookingId, { reference, total: prepared.total, payment: 'EFT instructions sent' });

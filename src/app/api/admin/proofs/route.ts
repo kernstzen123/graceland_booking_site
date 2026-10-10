@@ -3,7 +3,7 @@ import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
-import { FORCEABLE_FAILURES, isStaffUnpaidBooking, setBookingPaymentStatus, staffHoldUntil } from '@/lib/booking-holds';
+import { FORCEABLE_FAILURES, isStaffUnpaidBooking, setBookingPaymentStatus, STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
 
 /** Hours a customer gets to upload a new proof after one is rejected. */
 const REUPLOAD_HOURS = 24;
@@ -66,12 +66,10 @@ export async function POST(request: Request) {
         .select('id', { count: 'exact', head: true }).eq('booking_id', booking.id).eq('status', 'PENDING');
       if (countError) throw countError;
       if (booking.status === 'PAYMENT_PENDING' && !otherPending) {
-        // A booking staff made (Add booking tab) keeps its places until the end of the visit day.
-        const reupload = Date.now() + REUPLOAD_HOURS * 60 * 60 * 1000;
-        const holdUntil = isStaffUnpaidBooking(booking) && booking.visit_date ? Math.max(reupload, new Date(staffHoldUntil(booking.visit_date)).getTime()) : reupload;
+        // A booking staff made (Add booking tab) keeps its places until an admin or manager deletes it.
         const { error: bookingError } = await supabase.from('bookings').update({
           status: 'UNPAID',
-          expires_at: new Date(holdUntil).toISOString(),
+          expires_at: isStaffUnpaidBooking(booking) ? STAFF_HOLD_UNTIL : new Date(Date.now() + REUPLOAD_HOURS * 60 * 60 * 1000).toISOString(),
         }).eq('id', booking.id).eq('status', 'PAYMENT_PENDING');
         if (bookingError) throw bookingError;
       }

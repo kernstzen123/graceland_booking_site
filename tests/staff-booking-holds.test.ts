@@ -3,10 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/supabase', () => ({ supabase: {} }));
 
 describe('holds on unpaid bookings made by staff', async () => {
-  const { isStaffUnpaidBooking, staffHoldUntil } = await import('@/lib/booking-holds');
+  const { isOpenEndedHold, isStaffUnpaidBooking, STAFF_HOLD_UNTIL } = await import('@/lib/booking-holds');
 
-  it('last until the end of the visit day in South Africa', () => {
-    expect(staffHoldUntil('2026-10-17')).toBe('2026-10-17T21:59:59.000Z');
+  it('never run out: the booking keeps its places until an admin or manager deletes it', () => {
+    expect(new Date(STAFF_HOLD_UNTIL).getTime()).toBeGreaterThan(new Date('2999-01-01T00:00:00Z').getTime());
+    expect(isOpenEndedHold(STAFF_HOLD_UNTIL)).toBe(true);
+    expect(isOpenEndedHold('2026-10-17T21:59:59.000Z')).toBe(false);
+    expect(isOpenEndedHold(null)).toBe(false);
   });
 
   it('apply to Add booking bookings only, not to online bookings', () => {
