@@ -1414,6 +1414,32 @@ button {
     max-width: none;
     padding: 0 !important;
   }
+
+  /* Dashboard "Print" on the hut and table schedule: print that card only. */
+  body.printing-hut-schedule .admin-content-pad > main > :not(.hut-schedule) {
+    display: none !important;
+  }
+
+  body.printing-hut-schedule .hut-schedule {
+    margin: 0 !important;
+  }
+
+  body.printing-hut-schedule .hut-schedule .admin-table-wrap {
+    overflow: visible;
+  }
+
+  body.printing-hut-schedule .hut-schedule .report-table {
+    min-width: 0 !important;
+    width: 100%;
+  }
+
+  .print-only {
+    display: inline !important;
+  }
+}
+
+.print-only {
+  display: none;
 }
 
 /* ── Staff portal shell ─────────────────────────────────────────────────── */

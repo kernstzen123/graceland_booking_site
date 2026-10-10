@@ -63,3 +63,41 @@ describe('daily summary', () => {
     expect(totals.get('On site 12:00–14:00 (parties + day visitors)')?.formula).toBe(`C${dayVisitorRow}`);
   });
 });
+
+describe('hut and table schedule in the daily summary', () => {
+  const schedule = {
+    date: '2026-10-03',
+    slots: SLOTS,
+    huts: [
+      { number: 'H1', bookings: [{ slot: null, client: 'Pieter Botha', reference: 'BK-1', paid: true }] },
+      { number: 'H2', bookings: [{ slot: '09:30–11:30', client: 'Thandi Mokoena', reference: 'BK-2', paid: true }, { slot: '14:30–16:30', client: 'Lerato Dube', reference: 'BK-3', paid: false }] },
+      { number: 'H3', bookings: [] },
+    ],
+    tables: [
+      { number: 'T1', bookings: [{ slot: '09:30–11:30', client: 'Thandi Mokoena', reference: 'BK-2', paid: true }] },
+      { number: 'T2', bookings: [] },
+    ],
+  };
+
+  it('lays out each hut by slot and each table for the day', async () => {
+    const { hutScheduleRows } = await import('@/lib/daily-summary-workbook');
+    const rows = hutScheduleRows(schedule);
+    expect(rows.hutHeaders).toEqual(['Hut', 'All day (day visitors)', 'Party 09:30–11:30', 'Party 12:00–14:00', 'Party 14:30–16:30']);
+    expect(rows.huts).toEqual([
+      ['H1', 'Pieter Botha', '—', '—', '—'],
+      ['H2', 'Free', 'Thandi Mokoena', 'Free', 'Lerato Dube (awaiting payment)'],
+      ['H3', 'Free', 'Free', 'Free', 'Free'],
+    ]);
+    expect(rows.tables).toEqual([['T1', 'Thandi Mokoena (party 09:30–11:30)'], ['T2', 'Free']]);
+  });
+
+  it('adds the schedule as a second sheet', async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await buildDailySummaryWorkbook(buildDailySummary([partyBooking, dayBooking], SLOTS), '2026-10-03', schedule) as unknown as ArrayBuffer);
+    expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['Daily summary', 'Huts & tables']);
+    const values = workbook.worksheets[1].getSheetValues().flat().map(value => String(value ?? ''));
+    expect(values).toContain('Covered huts');
+    expect(values).toContain('Shaded tables');
+    expect(values).toContain('Lerato Dube (awaiting payment)');
+  });
+});
