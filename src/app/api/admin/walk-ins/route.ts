@@ -10,6 +10,7 @@ import { spotLabel } from '@/lib/seating';
 import { generateTicketsAndSendEmail } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { GATE_PAYMENT_METHODS, GATE_PAYMENT_LABELS, type GatePaymentKey, type WalkInReceipt } from '@/lib/walk-ins';
+import { loadBookingSpecials, SpecialSelectionError } from '@/lib/specials-server';
 
 const STAFF_ROLES = ['ADMIN', 'MANAGER', 'SCANNER'] as const;
 // Postgres/PostgREST "column does not exist": the walk-in migration has not been applied.
@@ -39,7 +40,7 @@ async function staffNames(ids: string[]) {
 async function loadReceipt(bookingId: string, extras: Partial<Pick<WalkInReceipt, 'amountTendered' | 'change' | 'emailSent'>> = {}): Promise<WalkInReceipt> {
   const { data: booking, error } = await supabase
     .from('bookings')
-    .select('id,reference,created_at,visit_date,total_amount,people_count,payment_method,sold_by,customers(first_name,last_name),booking_items(quantity,price_per_unit,subtotal,metadata),payments(provider_reference,status),tickets(ticket_uid,qr_token,status),booking_spots(venue_spots(number,type))')
+    .select('id,reference,created_at,visit_date,total_amount,people_count,payment_method,sold_by,customers(first_name,last_name),booking_items(quantity,price_per_unit,subtotal,metadata),payments(provider_reference,status),tickets(ticket_uid,qr_token,status),meal_vouchers(meal_uid,qr_token,meal_name,status),booking_spots(venue_spots(number,type))')
     .eq('id', bookingId)
     .single();
   if (error || !booking) throw error || new Error('Walk-in sale not found');
@@ -64,6 +65,7 @@ async function loadReceipt(bookingId: string, extras: Partial<Pick<WalkInReceipt
     checkedIn: tickets.length > 0 && tickets.every(ticket => ticket.status === 'USED'),
     emailSent: extras.emailSent ?? null,
     tickets: tickets.map((ticket, index) => ({ ticketUid: ticket.ticket_uid, qrToken: ticket.qr_token, name: `Entrance ticket ${index + 1} of ${tickets.length}`, status: ticket.status })),
+    meals: (booking.meal_vouchers || []).map(meal => ({ mealUid: meal.meal_uid, qrToken: meal.qr_token, name: String(meal.meal_name || 'Meal voucher'), status: meal.status })),
     soldBy: names.get(booking.sold_by as string) || '',
   };
 }
@@ -76,6 +78,9 @@ function errorResponse(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String((error as { message?: string })?.message || '');
   if (/capacity exceeded/i.test(message)) return NextResponse.json({ success: false, error: message.replace(/^.*?(Capacity exceeded)/i, '$1').replace('Capacity exceeded.', 'The venue is at capacity for today.') }, { status: 409 });
   if (/seating spot/i.test(message)) return NextResponse.json({ success: false, error: message }, { status: 409 });
+  // Checked again by the database under its lock: sold out, ended, or not valid today.
+  const specialProblem = message.match(/Special .+ (?:is sold out|is no longer available|is not valid).*|Cannot book more than .+ of special .+/i);
+  if (specialProblem) return NextResponse.json({ success: false, error: specialProblem[0].trim() }, { status: 409 });
   console.error(fallback, error);
   return NextResponse.json({ success: false, error: fallback }, { status: 500 });
 }
@@ -165,8 +170,9 @@ export async function GET(request: Request) {
 
 /**
  * POST — record a walk-in sale for today and issue its tickets.
- * Body: { selections, spotIds?, paymentMethod: CASH|CARD|OTHER, paymentReference?, amountTendered?,
- *         checkIn?: boolean, customer?: { firstName?, lastName?, email?, phone? }, idempotencyKey }
+ * Body: { selections, specials?: [{ id, quantity }], spotIds?, paymentMethod: CASH|CARD|OTHER, paymentReference?,
+ *         amountTendered?, checkIn?: boolean, customer?: { firstName?, lastName?, email?, phone? }, idempotencyKey }
+ * Specials are priced from the database (as on the booking site), never from the request.
  */
 export async function POST(request: Request) {
   let bookingId: string | null = null;
@@ -178,20 +184,30 @@ export async function POST(request: Request) {
 
     // ── Validate the basket ──
     const selections: Record<string, number> = {};
-    if (!body?.selections || typeof body.selections !== 'object' || Array.isArray(body.selections)) throw new SaleError('Add at least one item to the sale.');
-    for (const [key, value] of Object.entries(body.selections as Record<string, unknown>)) {
+    if (body?.selections !== undefined && (!body.selections || typeof body.selections !== 'object' || Array.isArray(body.selections))) throw new SaleError('Add at least one item to the sale.');
+    for (const [key, value] of Object.entries((body?.selections || {}) as Record<string, unknown>)) {
       const qty = Number(value);
       if (!Number.isInteger(qty) || qty < 0 || qty > 500) throw new SaleError('Quantities must be whole numbers.');
       if (qty === 0) continue;
       if (!BOOKABLE_ITEMS[key]) throw new SaleError(`Unknown item: ${key}`);
       selections[key] = qty;
     }
-    const people = Object.entries(selections).reduce((sum, [key, qty]) => sum + (BOOKABLE_ITEMS[key].isPerson ? qty : 0), 0);
-    if (people === 0) throw new SaleError('Add at least one entrance ticket.');
+    // Specials on sale today (dates, weekdays, active); stock is checked again when the sale is saved.
+    let specials;
+    try { specials = await loadBookingSpecials(body?.specials, visitDate); } catch (specialError) {
+      if (specialError instanceof SpecialSelectionError) throw new SaleError(specialError.message.replace('Please refresh the page and try again.', 'Refresh the page to see today\'s specials.'));
+      throw specialError;
+    }
+    const prices = await getCurrentPrices();
+    const { lineItems, total } = calculateServerTotal(selections, undefined, prices, specials);
+    const countOf = (match: (line: (typeof lineItems)[number]) => boolean) => lineItems.reduce((sum, line) => sum + (match(line) ? line.quantity : 0), 0);
+    const people = countOf(line => line.isPerson);
+    if (people === 0) throw new SaleError('Add at least one entrance ticket or special.');
 
     const spotIds = Array.isArray(body.spotIds) ? body.spotIds.filter((id: unknown): id is string => typeof id === 'string') : [];
-    const huts = selections['hut-covered'] || 0;
-    const tables = selections['hut-shaded'] || 0;
+    // Huts and tables bought on their own or as part of a special.
+    const huts = countOf(line => line.itemId === 'hut-covered');
+    const tables = countOf(line => line.itemId === 'hut-shaded');
     if (huts + tables !== spotIds.length) throw new SaleError(`Choose ${huts + tables} seating spot${huts + tables === 1 ? '' : 's'} for the huts and tables in this sale.`);
     if (spotIds.length) {
       const { data: spots, error: spotError } = await supabase.from('venue_spots').select('id,type').in('id', spotIds).eq('active', true);
@@ -211,8 +227,6 @@ export async function POST(request: Request) {
     const phone = cleanText(String(body.customer?.phone || ''), 40);
     if (email && !isValidEmail(email)) throw new SaleError('The email address is not valid. Leave it empty if the customer does not want tickets emailed.');
 
-    const prices = await getCurrentPrices();
-    const { lineItems, total } = calculateServerTotal(selections, undefined, prices);
     const tendered = body.amountTendered === undefined || body.amountTendered === null || body.amountTendered === '' ? null : Number(body.amountTendered);
     if (methodKey === 'CASH' && tendered !== null && (!Number.isFinite(tendered) || tendered < total)) throw new SaleError(`Cash received must be at least R ${total.toFixed(2)}.`);
     if (body.expectedTotal !== undefined && Math.abs(Number(body.expectedTotal) - total) > 0.01) throw new SaleError('Prices have changed since this screen was opened. Refresh the page and check the total with the customer.');
@@ -239,9 +253,14 @@ export async function POST(request: Request) {
       p_voucher_code: null,
       p_items: lineItems.map(line => ({
         quantity: line.quantity, price_per_unit: line.pricePerUnit, subtotal: line.subtotal,
-        metadata: { itemId: line.itemId, name: line.name, isPerson: line.isPerson, walkIn: true },
+        metadata: {
+          itemId: line.itemId, name: line.name, isPerson: line.isPerson, walkIn: true,
+          // Lines from a special carry it, so reports can attribute revenue, free tickets and discounts.
+          ...(line.specialId ? { specialId: line.specialId, specialRole: line.specialRole, ...(line.fullPricePerUnit !== undefined ? { fullPricePerUnit: line.fullPricePerUnit } : {}) } : {}),
+        },
       })),
       p_spot_ids: spotIds,
+      p_specials: specials,
     });
     if (reserveError) throw reserveError;
     const createdRow = (Array.isArray(created) ? created[0] : created) as { booking_id: string; created: boolean } | null;
@@ -285,6 +304,7 @@ export async function POST(request: Request) {
     await writeAudit(user.id, 'WALK_IN_SALE', 'booking', bookingId, {
       reference, total, people, payment_method: method.code, payment_reference: paymentReference || null,
       amount_tendered: tendered, checked_in: body.checkIn !== false, seating: spotIds.length,
+      ...(specials.length ? { specials: specials.map(special => ({ id: special.id, title: special.snapshot.title, quantity: special.quantity })) } : {}),
     });
     const receipt = await loadReceipt(bookingId, {
       amountTendered: methodKey === 'CASH' ? tendered : null,
