@@ -55,6 +55,10 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
 
   const packageGroups = buildPackageGroups(prices);
   const price = (key: string) => priceOf(prices, key);
+  /** What the swimming button adds to a non-swimming party adult (R180 swimming − R80 non-swimming = R100 by default). */
+  const swimmingUpgrade = Math.max(0, price('party-adult-swimming') - price('party-adult-non-swimming'));
+  /** The same for an additional party child (R200 swimming − R100 non-swimming = R100 by default). */
+  const childSwimmingUpgrade = Math.max(0, price('party-child-swimming') - price('party-child-non-swimming'));
 
   const calculateTotal = () => {
     return calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total;
@@ -259,14 +263,18 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
             {party.adults > 0 && <div>
               <p className="field-label">Adult entrance type</p>
               <div className="party-entry-list">
-                {Array.from({ length: party.adults }, (_, index) => (
-                  <label key={index} className="party-entry-row">
-                    <input type="checkbox" checked={party.adultsWater[index] === true} onChange={event => { const water = [...party.adultsWater]; water[index] = event.target.checked; onPartyChange({ ...party, adultsWater: water }); }} />
-                    Adult {index + 1}: swimming and waterslides (R{price('party-adult-swimming')})
-                  </label>
-                ))}
+                {Array.from({ length: party.adults }, (_, index) => {
+                  const swimming = party.adultsWater[index] === true;
+                  const toggle = () => { const water = [...party.adultsWater]; water[index] = !swimming; onPartyChange({ ...party, adultsWater: water }); };
+                  return <div key={index} className={`party-entry-row party-adult-row${swimming ? ' swimming' : ''}`}>
+                    <span>Adult {index + 1}: {swimming ? `swimming and waterslides (R${price('party-adult-swimming')})` : `non-swimming entrance (R${price('party-adult-non-swimming')})`}</span>
+                    <button type="button" className={`party-swim-button${swimming ? ' selected' : ''}`} aria-pressed={swimming} aria-label={swimming ? `Remove swimming for adult ${index + 1}` : `Add swimming for adult ${index + 1}, plus R${swimmingUpgrade}`} onClick={toggle}>
+                      {swimming ? '✓ Swimming added' : `Swimming +R${swimmingUpgrade}`}
+                    </button>
+                  </div>;
+                })}
               </div>
-              <small style={{ color: 'var(--text-muted)' }}>Leave unchecked for non-swimming entrance (R{price('party-adult-non-swimming')}).</small>
+              <small style={{ color: 'var(--text-muted)' }}>Please note: When clicking the swimming button next to each non-swimming adult it will now include a swimming pass for an additional R{swimmingUpgrade}.</small>
             </div>}
 
             <label>
@@ -277,14 +285,18 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
             {party.additionalChildren > 0 && <div>
               <p className="field-label">Additional child entrance type</p>
               <div className="party-entry-list">
-                {Array.from({ length: party.additionalChildren }, (_, index) => (
-                  <label key={index} className="party-entry-row">
-                    <input type="checkbox" checked={party.additionalChildrenWater[index] === true} onChange={event => { const water = [...party.additionalChildrenWater]; water[index] = event.target.checked; onPartyChange({ ...party, additionalChildrenWater: water }); }} />
-                    Child {index + 1}: swimming and waterslides (R{price('party-child-swimming')})
-                  </label>
-                ))}
+                {Array.from({ length: party.additionalChildren }, (_, index) => {
+                  const swimming = party.additionalChildrenWater[index] === true;
+                  const toggle = () => { const water = [...party.additionalChildrenWater]; water[index] = !swimming; onPartyChange({ ...party, additionalChildrenWater: water }); };
+                  return <div key={index} className={`party-entry-row party-adult-row${swimming ? ' swimming' : ''}`}>
+                    <span>Child {index + 1}: {swimming ? `swimming and waterslides (R${price('party-child-swimming')})` : `non-swimming entrance (R${price('party-child-non-swimming')})`}</span>
+                    <button type="button" className={`party-swim-button${swimming ? ' selected' : ''}`} aria-pressed={swimming} aria-label={swimming ? `Remove swimming for child ${index + 1}` : `Add swimming for child ${index + 1}, plus R${childSwimmingUpgrade}`} onClick={toggle}>
+                      {swimming ? '✓ Swimming added' : `Swimming +R${childSwimmingUpgrade}`}
+                    </button>
+                  </div>;
+                })}
               </div>
-              <small style={{ color: 'var(--text-muted)' }}>Leave unchecked for non-swimming entrance (R{price('party-child-non-swimming')}).</small>
+              <small style={{ color: 'var(--text-muted)' }}>Please note: When clicking the swimming button next to each non-swimming child it will now include a swimming pass for an additional R{childSwimmingUpgrade}.</small>
             </div>}
 
             <label>
