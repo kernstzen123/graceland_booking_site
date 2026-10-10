@@ -1,6 +1,7 @@
 import 'server-only';
 import { supabase } from '@/lib/supabase';
-import { BOOKABLE_ITEMS } from '@/lib/pricing';
+import { BOOKABLE_ITEMS, type PriceList } from '@/lib/pricing';
+import { autoSpecialSelection, pickAutoSpecial } from '@/lib/special-auto';
 import type { BookingSpecialSelection, Special, SpecialItemDef, SpecialSnapshot } from '@/lib/specials';
 
 /** A special that cannot be booked as requested; the message is safe to show the customer. */
@@ -73,6 +74,14 @@ function ticketLinesInput(value: unknown, label: string): SpecialItemDef[] {
   });
 }
 
+/** "Give free to bookings over R…": a rand amount, or empty for off. */
+function autoApplyInput(value: unknown): { auto_apply_min_spend?: number } {
+  if (value === null || value === undefined || value === '') return {};
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) throw new SpecialInputError('The amount for giving the special free must be a rand amount, or left empty.');
+  return { auto_apply_min_spend: Math.round(amount * 100) / 100 };
+}
+
 /** The fields of a special as staff may set them, checked and cleaned. Throws SpecialInputError. */
 export function parseSpecialInput(body: Record<string, unknown>) {
   const title = optionalText(body.title, 120);
@@ -137,6 +146,8 @@ export function parseSpecialInput(body: Record<string, unknown>) {
     valid_from,
     valid_to,
     valid_weekdays,
+    // Only sent when set, so specials can still be saved before 20261012_special_auto_apply.sql is applied.
+    ...autoApplyInput(body.auto_apply_min_spend),
     stock_limit: optionalWhole(body.stock_limit, 'The daily stock limit'),
     max_per_booking: optionalWhole(body.max_per_booking, 'Max per booking'),
     active: body.active !== false,
@@ -194,4 +205,28 @@ export async function loadBookingSpecials(requested: unknown, visitDate: string)
     selections.push({ id, quantity, snapshot });
   }
   return selections;
+}
+
+/**
+ * The special an online booking gets free because its cart is over the
+ * special's minimum spend (see src/lib/special-auto.ts), or null. Only specials
+ * that are active, valid on the visit date and not sold out that day count;
+ * `excludeIds` are specials the customer added themselves.
+ */
+export async function loadAutoSpecial(visitDate: string, cartTotal: number, prices: PriceList, excludeIds: string[]): Promise<BookingSpecialSelection | null> {
+  const { data, error } = await supabase.from('specials').select('*')
+    .eq('active', true).is('archived_at', null).not('auto_apply_min_spend', 'is', null)
+    .or(`valid_from.is.null,valid_from.lte.${visitDate}`)
+    .or(`valid_to.is.null,valid_to.gte.${visitDate}`);
+  if (error) {
+    // Before 20261012_special_auto_apply.sql the column does not exist: no special applies by itself.
+    if (['42703', 'PGRST204'].includes(error.code || '') || /auto_apply_min_spend/.test(error.message || '')) return null;
+    throw error;
+  }
+  const onThisDay = ((data || []) as Special[]).filter(special => specialValidOnWeekday(special.valid_weekdays, visitDate));
+  if (!onThisDay.length) return null;
+  const sold = await specialsSoldOn(visitDate, onThisDay.filter(special => special.stock_limit !== null).map(special => special.id));
+  const candidates = onThisDay.map(special => ({ ...special, remaining: special.stock_limit === null ? null : special.stock_limit - (sold.get(special.id) || 0) }));
+  const best = pickAutoSpecial(candidates, cartTotal, prices, excludeIds);
+  return best ? autoSpecialSelection(best) : null;
 }

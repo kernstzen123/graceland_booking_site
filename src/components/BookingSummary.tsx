@@ -1,7 +1,8 @@
 import React from 'react';
 import type { PartyDetails } from '@/lib/parties';
 import { calculateServerTotal, type PriceList } from '@/lib/pricing';
-import type { BookingSpecialSelection } from '@/lib/specials';
+import type { BookingSpecialSelection, Special } from '@/lib/specials';
+import { autoApplyMinSpend, autoSpecialSelection, pickAutoSpecial } from '@/lib/special-auto';
 
 interface BookingSummaryProps {
   selectedDate: string;
@@ -21,7 +22,19 @@ interface BookingSummaryProps {
 }
 
 export function BookingSummary({ selectedDate, selections, specials, party, prices, customerDetails, onBack, onConfirm, submitting = false, termsAccepted, privacyAccepted, onTermsChange, onPrivacyChange, onVoucherApplied }: BookingSummaryProps) {
-  const { total: bookingTotal, lineItems: calcItems } = calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials);
+  const { total: bookingTotal } = calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials);
+  // A special given free because the cart is over its minimum spend: shown here, added by the booking API.
+  const [availableSpecials, setAvailableSpecials] = React.useState<Special[]>([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/specials?date=${encodeURIComponent(selectedDate)}`, { cache: 'no-store' })
+      .then(response => (response.ok ? response.json() : []))
+      .then(data => { if (!cancelled && Array.isArray(data)) setAvailableSpecials(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [selectedDate]);
+  const autoSpecial = pickAutoSpecial(availableSpecials, bookingTotal, prices, specials.map(special => special.id));
+  const { lineItems: calcItems } = calculateServerTotal(selections, party.enabled ? party : undefined, prices, autoSpecial ? [...specials, autoSpecialSelection(autoSpecial)] : specials);
   
   const [voucherInput, setVoucherInput] = React.useState('');
   const [voucher, setVoucher] = React.useState<{ code: string; amountUsed: number; amountDue: number; remainingBalance: number } | null>(null);
@@ -67,6 +80,7 @@ export function BookingSummary({ selectedDate, selections, specials, party, pric
           {party.enabled && (
              <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Party slot: {party.slot}</p>
           )}
+          {autoSpecial && <p style={{ color: 'var(--success)', marginTop: 8 }}>🎁 Your booking is over R{autoApplyMinSpend(autoSpecial)}, so the {autoSpecial.title} extras above are included free.</p>}
         </div>
       </div>
 

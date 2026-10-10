@@ -37,6 +37,8 @@ export type Special = {
   valid_weekdays: number[];
   stock_limit: number | null;
   max_per_booking: number | null;
+  /** Given free (its free tickets and meals) to online bookings whose cart is over this amount; null = off. */
+  auto_apply_min_spend?: number | null;
   active: boolean;
   archived_at: string | null;
   created_at: string;
