@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { escapeHtml, renderEmailLayout, calloutBox, statusBadge, buttonHtml } from '@/lib/email-layout';
 import { BANK_DETAILS } from '@/lib/business-details';
 import { getBusinessSettings } from '@/lib/business-settings';
-import { customerHoldMessage, eftHoldHours, formatJohannesburgDateTime, holdBookingForPayment } from '@/lib/booking-holds';
+import { customerHoldMessage, eftHoldHours, formatJohannesburgDateTime, holdBookingForPayment, isOpenEndedHold } from '@/lib/booking-holds';
 import { sendEmail } from '@/lib/mailer';
 
 /** A customer-safe reason the instructions were not sent (the booking is not payable). */
@@ -35,7 +35,9 @@ export async function sendEftInstructions(bookingId: string) {
 
   const hold = await holdBookingForPayment(booking.id, eftHoldHours() * 60);
   if (!hold.ok) throw new EftEmailRefused(customerHoldMessage(hold.reason, 'We could not send the payment instructions. Please contact support.'), 409);
-  const holdNotice = booking.status !== 'PAYMENT_PENDING' && hold.holdUntil
+  const holdNotice = booking.status !== 'PAYMENT_PENDING' && isOpenEndedHold(hold.holdUntil)
+    ? 'Your booking is reserved for you. Please make the payment and upload your proof of payment before your visit.'
+    : booking.status !== 'PAYMENT_PENDING' && hold.holdUntil
     ? `Your booking is held until <strong>${escapeHtml(formatJohannesburgDateTime(hold.holdUntil))}</strong> while we wait for proof of payment. If we have not received it by then, the booking will be released.`
     : 'We have already received a proof of payment for this booking.';
 

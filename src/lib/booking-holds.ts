@@ -22,11 +22,15 @@ export function eftHoldHours() {
 }
 
 /**
- * Bookings staff make on the Add booking tab without payment are not on a
- * 48-hour clock: they keep their places until the end of the visit day
- * (South African time), or until staff cancel or delete them.
+ * Bookings staff make on the Add booking tab without payment never lapse: they
+ * keep their places until an admin or manager deletes them (or they are paid).
+ * Only online bookings have a payment window. Stored as a far-future hold so
+ * every "is this booking still holding its places" check keeps working.
  */
-export const staffHoldUntil = (visitDate: string) => new Date(`${visitDate}T23:59:59+02:00`).toISOString();
+export const STAFF_HOLD_UNTIL = '9999-12-31T23:59:59.000Z';
+
+/** Whether a hold is the never-ending one staff bookings get. */
+export const isOpenEndedHold = (holdUntil: string | null | undefined) => Boolean(holdUntil) && new Date(holdUntil as string).getUTCFullYear() >= 9999;
 
 /** An unpaid booking made by staff (Add booking tab), not by a customer online. */
 export const isStaffUnpaidBooking = (booking: { sold_by?: string | null; payment_method?: string | null }) =>
@@ -58,18 +62,12 @@ function rpcError(error: { code?: string; message?: string }) {
  * was made, and is never shortened.
  */
 export async function holdBookingForPayment(bookingId: string, holdMinutes: number, maxHoldHours = eftHoldHours()): Promise<HoldResult> {
-  // A booking staff made without payment is held until the end of its visit day instead
-  // (resending the EFT email or paying by PayFast must not cut that short or refuse it).
-  const { data: booking, error: lookupError } = await supabase.from('bookings').select('sold_by,payment_method,visit_date,created_at').eq('id', bookingId).maybeSingle();
+  // A booking staff made without payment has no payment window: resending the EFT email or
+  // paying by PayFast must never refuse it as expired, and it keeps its never-ending hold.
+  const { data: booking, error: lookupError } = await supabase.from('bookings').select('sold_by,payment_method,created_at').eq('id', bookingId).maybeSingle();
   if (lookupError) throw lookupError;
-  if (booking?.visit_date && isStaffUnpaidBooking(booking)) {
-    const until = new Date(staffHoldUntil(booking.visit_date)).getTime();
-    const minutesLeft = Math.floor((until - Date.now()) / 60000);
-    if (minutesLeft >= 1) {
-      holdMinutes = Math.max(holdMinutes, minutesLeft);
-      maxHoldHours = Math.max(maxHoldHours, Math.ceil((until - new Date(booking.created_at || Date.now()).getTime()) / 3600000));
-    }
-  }
+  const staffBooking = Boolean(booking && isStaffUnpaidBooking(booking));
+  if (staffBooking) maxHoldHours = Math.max(maxHoldHours, Math.ceil((Date.now() - new Date(booking?.created_at || Date.now()).getTime()) / 3600000) + eftHoldHours());
   const { data, error } = await supabase.rpc('hold_booking_for_payment', {
     p_booking_id: bookingId,
     p_hold_minutes: holdMinutes,
@@ -78,6 +76,12 @@ export async function holdBookingForPayment(bookingId: string, holdMinutes: numb
   if (error) throw rpcError(error);
   const row = firstRow<{ ok: boolean; reason: HoldFailure | null; detail: string | null; hold_until: string | null }>(data);
   if (!row) throw new Error('hold_booking_for_payment returned no result');
+  // The database kept (or won back, after its capacity and seating checks) the booking's places; make the hold open-ended again.
+  if (row.ok && staffBooking && !isOpenEndedHold(row.hold_until)) {
+    const { data: updated, error: holdError } = await supabase.from('bookings').update({ expires_at: STAFF_HOLD_UNTIL }).eq('id', bookingId).eq('status', 'UNPAID').select('expires_at');
+    if (holdError) throw holdError;
+    if (updated?.length) return { ok: true, reason: null, detail: null, holdUntil: STAFF_HOLD_UNTIL };
+  }
   return { ok: row.ok, reason: row.reason, detail: row.detail, holdUntil: row.hold_until };
 }
 

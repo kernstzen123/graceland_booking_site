@@ -1,14 +1,18 @@
 -- revive_lapsed_office_bookings.sql (optional, run by hand in the Supabase SQL editor)
 --
 -- Unpaid bookings staff made on the Add booking tab used to lose their places
--- after 48 hours. This brings back the ones for today or later, with their
--- places held until the end of the visit day, but only when the day still has
--- room, their huts/tables are still free, any special is not sold out and any
--- voucher still covers them (the same checks as when a late payment arrives,
--- via public.reclaim_booking_hold). Each booking is reported in the output:
--- "revived" or "not revived" with the reason. Deleted bookings are skipped.
+-- when their hold ran out. This brings back the ones for today or later, so
+-- they keep their places until they are paid or an admin or manager deletes
+-- them, but only when the day still has room, their huts/tables are still
+-- free, any special is not sold out and any voucher still covers them (the
+-- same checks as when a late payment arrives, via public.reclaim_booking_hold).
+-- The result table lists every booking as "revived" or "not revived" with the
+-- reason. Deleted bookings are skipped. Running it again is harmless.
 --
--- Run 20261011_staff_booking_holds.sql first.
+-- Run supabase/migrations/20261013_staff_bookings_never_lapse.sql first.
+
+create temp table if not exists revive_results (reference text, visit_date date, result text);
+truncate revive_results;
 
 do $$
 declare
@@ -29,13 +33,15 @@ begin
     select * into v_check from public.reclaim_booking_hold(v_booking.id, false);
     if v_check.ok then
       update public.bookings b
-         set expires_at = ((b.visit_date + 1)::timestamp at time zone 'Africa/Johannesburg') - interval '1 second',
+         set expires_at = timestamptz '9999-12-31 23:59:59+00',
              payment_failed_at = null
        where b.id = v_booking.id;
-      raise notice 'revived % (%)', v_booking.reference, v_booking.visit_date;
+      insert into revive_results values (v_booking.reference, v_booking.visit_date, 'revived');
     else
-      raise notice 'not revived % (%): %', v_booking.reference, v_booking.visit_date, v_check.detail;
+      insert into revive_results values (v_booking.reference, v_booking.visit_date, 'not revived: ' || coalesce(v_check.detail, v_check.reason));
     end if;
   end loop;
 end;
 $$;
+
+select * from revive_results order by visit_date, reference;

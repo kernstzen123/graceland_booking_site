@@ -14,7 +14,7 @@ import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, p
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
-type Booking = { id: string; reference: string; visit_date: string; party_slot?: string | null; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; voucher_amount_used?: number | null; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean; party?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
+type Booking = { id: string; reference: string; visit_date: string; party_slot?: string | null; expires_at?: string | null; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; voucher_amount_used?: number | null; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean; party?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
 type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
 /** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
@@ -22,8 +22,9 @@ const staffNotes = (notes?: string | null) => staffNoteText(notes);
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }, { value: 'ATTENTION', label: 'Needs attention' }, { value: 'DELETED', label: 'Deleted' }];
 const PAID_STATUSES = ['PAID', 'CONFIRMED'];
-/** Bookings that can still be edited: paid, or waiting for payment (not cancelled, refunded or deleted). */
-const isEditable = (booking: Booking) => !booking.deleted_at && !booking.voucher_issued && [...PAID_STATUSES, 'PENDING', 'PAYMENT_PENDING'].includes(booking.status);
+/** Bookings that can still be edited: paid, or waiting for payment and still holding their places (not cancelled, refunded or deleted). */
+const isEditable = (booking: Booking) => !booking.deleted_at && !booking.voucher_issued && (PAID_STATUSES.includes(booking.status) || booking.status === 'PAYMENT_PENDING'
+  || (booking.status === 'UNPAID' && Boolean(booking.expires_at) && new Date(booking.expires_at as string).getTime() > Date.now()));
 /**
  * What a voucher refund is based on: the payments actually received (as the
  * database calculates it). An imported booking only counts the payments
