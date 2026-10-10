@@ -10,7 +10,7 @@ import { DownloadIcon } from '@/components/icons';
 import { DEFAULT_PRICES, EDITABLE_ITEMS, editableItemPrice, findEditableItem, matchEditableItem, type PriceList } from '@/lib/pricing';
 import { seatsNeeded } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
-import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, paymentSummary } from '@/lib/imported-payments';
+import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, paymentSummary, voucherRefundAmount } from '@/lib/imported-payments';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
@@ -29,17 +29,16 @@ const isEditable = (booking: Booking) => !booking.deleted_at && !booking.voucher
  * database calculates it). An imported booking only counts the payments
  * recorded on it.
  */
-const paidAmountOf = (booking: Booking) => {
-  const completed = (booking.payments || []).filter(payment => payment.status === 'COMPLETE');
-  if (completed.length) return completed.reduce((sum, payment) => sum + Number(payment.amount), 0);
-  return booking.payment_method === 'IMPORTED' ? 0 : Number(booking.total_amount);
-};
+const paidAmountOf = (booking: Booking) => voucherRefundAmount(booking);
 /** The money the customer pays: the total less any voucher used. */
 const amountToPayOf = (booking: Booking) => Math.max(0, Number(booking.total_amount) - Number(booking.voucher_amount_used || 0));
 const PAYMENT_STATE_COLOURS = { UNPAID: '#fee2e2', PARTIAL: '#fef3c7', PAID: '#dcfce7', OVERPAID: '#dbeafe' } as const;
 /** "12 Oct 2026" for a payment. */
 const paymentDate = (value: string) => new Date(value).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric' });
 type PaymentEntry = { amount: string; method: string; paidOn: string; note: string };
+/** One booking in the "Refund all for date" list, with the voucher it would get. */
+type RefundRow = { id: string; reference: string; customerName: string; email: string; people: number; partySlot: string | null; total: number; voucher: number };
+type RefundAllState = { date: string; bookings: RefundRow[]; result?: { message: string; failed: Array<{ reference: string; reason: string }> } };
 
 export default function BookingsAdmin() {
   // useSearchParams needs a Suspense boundary so the page can still be prerendered.
@@ -57,6 +56,7 @@ function BookingsPage() {
   const [statusFilter, setStatusFilter] = useState(urlStatus); const [dateFilter, setDateFilter] = useState(urlDate); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [pageSize, setPageSize] = useState(50); const [loadingDetail, setLoadingDetail] = useState(''); const [toast, setToast] = useState(''); const [busy, setBusy] = useState(''); const [refundDate, setRefundDate] = useState(johannesburgToday);
   const [showExport, setShowExport] = useState(false); const [exportMode, setExportMode] = useState<'all' | 'range'>('all'); const [exportFrom, setExportFrom] = useState(''); const [exportTo, setExportTo] = useState(''); const [exporting, setExporting] = useState(false);
   const { confirm, dialog } = useConfirm();
+  const [refundAllState, setRefundAllState] = useState<RefundAllState | null>(null);
   const token = async () => (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
   // The list holds one page of slim rows; the full booking loads when it is opened.
   const load = useCallback(async (options: { page?: number; search?: string; status?: string; date?: string } = {}) => {
@@ -199,16 +199,32 @@ function BookingsPage() {
       return '';
     } finally { setBusy(''); }
   };
+  /** Load every booking the date refund would cover and show them for checking. */
   const refundAll = async () => {
     if (busy) return;
-    const previewResponse = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate, preview: true }) });
-    const preview = await previewResponse.json();
-    if (!previewResponse.ok) return setMessage(preview.error || 'Could not check bookings for that date.');
-    if (!preview.count) return setMessage('No paid, unrefunded bookings found for that date.');
-    const result = await confirm({ title: 'Refund all bookings for date', message: `Issue vouchers for ${preview.count} bookings on ${refundDate}, totalling R ${Number(preview.total).toFixed(2)}? This will cancel them and invalidate their tickets.`, confirmLabel: 'Issue vouchers', tone: 'danger' });
-    if (!result.confirmed) return;
+    setBusy('refund-all-preview');
+    try {
+      const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate, preview: true }) });
+      const preview = await response.json();
+      if (!response.ok) return setMessage(preview.error || 'Could not check bookings for that date.');
+      if (!preview.bookings?.length) return setMessage('No paid, unrefunded bookings found for that date.');
+      setRefundAllState({ date: refundDate, bookings: preview.bookings });
+    } finally { setBusy(''); }
+  };
+  /** Issue the vouchers for the bookings shown in the list (and only those). */
+  const confirmRefundAll = async () => {
+    if (!refundAllState || busy) return;
+    const bookingIds = refundAllState.bookings.filter(row => row.voucher > 0).map(row => row.id);
     setBusy('refund-all'); setMessage('Issuing vouchers for the selected date... please wait.');
-    try { const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundDate }) }); const data = await response.json(); setMessage(data.message || data.error); if (response.ok) { showToast(data.message); await reload(); if (selected) await openBooking(selected.id); } } finally { setBusy(''); }
+    try {
+      const response = await fetch('/api/admin/bookings/refund-all', { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: refundAllState.date, bookingIds }) });
+      const data = await response.json();
+      setMessage(data.message || data.error);
+      if (!response.ok) { setRefundAllState({ ...refundAllState, result: { message: data.error || 'The refund could not be processed.', failed: [] } }); return; }
+      setRefundAllState({ ...refundAllState, result: { message: data.message, failed: data.failed || [] } });
+      showToast(data.message);
+      await reload(); if (selected) await openBooking(selected.id);
+    } finally { setBusy(''); }
   };
   const exportBookings = async () => {
     setExporting(true);
@@ -263,7 +279,7 @@ function BookingsPage() {
         {dateFilter && <button type="button" className="btn" onClick={() => setDateFilter('')} style={{ border: '1px solid var(--border-color)' }}>Any date</button>}
         <button className="btn btn-primary">Search</button>
       </form>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>Refund all for <input type="date" value={refundDate} onChange={event => setRefundDate(event.target.value)} style={{ padding: 8, marginLeft: 4 }} /></label><button className="btn" onClick={refundAll} style={{ color: '#b91c1c', border: '1px solid #b91c1c' }}>Refund all for date</button></div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>Refund all for <input type="date" value={refundDate} onChange={event => setRefundDate(event.target.value)} style={{ padding: 8, marginLeft: 4 }} /></label><button className="btn" onClick={refundAll} disabled={busy === 'refund-all-preview'} style={{ color: '#b91c1c', border: '1px solid #b91c1c' }}>{busy === 'refund-all-preview' ? 'Checking bookings…' : 'Refund all for date'}</button></div>
     </div>
     {attentionCount > 0 && statusFilter !== 'ATTENTION' && <div className="callout callout-danger" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
       <p style={{ margin: 0, flex: '1 1 260px' }}><strong>{attentionCount} booking{attentionCount === 1 ? ' needs' : 's need'} attention.</strong> Money was received for {attentionCount === 1 ? 'a booking that' : 'bookings that'} could not be confirmed automatically.</p>
@@ -282,8 +298,80 @@ function BookingsPage() {
       </div>
       {selected && <BookingDetail booking={selected} onAction={action} onSaveEdit={saveEdit} onRecordPayment={recordPayment} onRemovePayment={removePayment} />}
     </div>
+    {refundAllState && <RefundAllDialog state={refundAllState} working={busy === 'refund-all'} onConfirm={confirmRefundAll} onClose={() => { if (busy !== 'refund-all') setRefundAllState(null); }} />}
     {dialog}
   </main>;
+}
+
+/**
+ * The confirmation for "Refund all for date": every booking that gets a voucher, with its
+ * amount, so staff see exactly what will be cancelled before confirming.
+ */
+function RefundAllDialog({ state, working, onConfirm, onClose }: { state: RefundAllState; working: boolean; onConfirm: () => void; onClose: () => void }) {
+  const [understood, setUnderstood] = useState(false);
+  const refundable = state.bookings.filter(row => row.voucher > 0);
+  const skipped = state.bookings.filter(row => row.voucher <= 0);
+  const voucherTotal = refundable.reduce((sum, row) => sum + row.voucher, 0);
+  const people = refundable.reduce((sum, row) => sum + row.people, 0);
+  const longDate = new Date(`${state.date}T00:00:00`).toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const money = (value: number) => `R ${value.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const stat = (label: string, value: string) => <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.6rem 0.75rem' }}><small style={{ color: 'var(--text-muted)' }}>{label}</small><p style={{ fontWeight: 700, fontSize: '1.15rem' }}>{value}</p></div>;
+  return <div className="modal-overlay" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="refund-all-title" style={{ maxWidth: 860, maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="modal-header">
+        <h2 id="refund-all-title">{state.result ? 'Refund complete' : 'Confirm refund for the whole day'}</h2>
+        <button className="modal-close" onClick={onClose} disabled={working} aria-label="Close">✕</button>
+      </div>
+      {state.result ? <div style={{ overflowY: 'auto' }}>
+        <p className="modal-message">{state.result.message}</p>
+        {state.result.failed.length > 0 && <div className="callout callout-danger">
+          <p><strong>These bookings could not be refunded:</strong></p>
+          {state.result.failed.map(row => <p key={row.reference}>{row.reference}: {row.reason}</p>)}
+        </div>}
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={onClose}>Close</button>
+      </div> : <>
+        <div className="callout callout-danger" style={{ marginTop: 0 }}>
+          <p><strong>{longDate}</strong></p>
+          <p>Every booking below is cancelled, its tickets stop working and the customer is emailed a voucher for what they paid (no cancellation fee). This cannot be undone.</p>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.5rem', margin: '0.75rem 0' }}>
+          {stat('Bookings refunded', String(refundable.length))}
+          {stat('Guests affected', String(people))}
+          {stat('Vouchers issued', money(voucherTotal))}
+        </div>
+        <div className="admin-table-wrap" style={{ overflowY: 'auto', flex: '1 1 auto', minHeight: 120, border: '1px solid var(--border-color)', borderRadius: 8 }}>
+          <table className="report-table" style={{ minWidth: 620 }}>
+            <thead style={{ position: 'sticky', top: 0, background: 'var(--white)' }}><tr><th style={{ textAlign: 'left' }}>Reference</th><th style={{ textAlign: 'left' }}>Customer</th><th style={{ textAlign: 'right' }}>People</th><th style={{ textAlign: 'right' }}>Booking total</th><th style={{ textAlign: 'right' }}>Voucher</th></tr></thead>
+            <tbody>
+              {refundable.map(row => <tr key={row.id}>
+                <td><strong>{row.reference}</strong>{row.partySlot && <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Party {row.partySlot}</div>}</td>
+                <td style={{ whiteSpace: 'normal' }}>{row.customerName}{row.email && <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', wordBreak: 'break-all' }}>{row.email}</div>}</td>
+                <td style={{ textAlign: 'right' }}>{row.people}</td>
+                <td style={{ textAlign: 'right' }}>{money(row.total)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(row.voucher)}</td>
+              </tr>)}
+              {skipped.map(row => <tr key={row.id} style={{ opacity: 0.6 }}>
+                <td><strong>{row.reference}</strong></td>
+                <td style={{ whiteSpace: 'normal' }}>{row.customerName}</td>
+                <td style={{ textAlign: 'right' }}>{row.people}</td>
+                <td style={{ textAlign: 'right' }}>{money(row.total)}</td>
+                <td style={{ textAlign: 'right' }}>Skipped: nothing paid</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        {skipped.length > 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>{skipped.length} booking{skipped.length === 1 ? ' has' : 's have'} no payment recorded, so {skipped.length === 1 ? 'it is' : 'they are'} left as {skipped.length === 1 ? 'it is' : 'they are'}. Cancel {skipped.length === 1 ? 'it' : 'them'} by hand if needed.</p>}
+        <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: '0.75rem', fontSize: '0.9rem' }}>
+          <input type="checkbox" checked={understood} onChange={event => setUnderstood(event.target.checked)} style={{ marginTop: 3 }} />
+          <span>I have checked the list: refund these {refundable.length} booking{refundable.length === 1 ? '' : 's'} and email the vouchers.</span>
+        </label>
+        <div style={{ display: 'flex', gap: 8, marginTop: '1rem', flexWrap: 'wrap' }}>
+          <button className="btn" style={{ flex: '1 1 140px', border: '1px solid var(--border-color)' }} onClick={onClose} disabled={working}>Cancel</button>
+          <button className="btn btn-danger" style={{ flex: '2 1 240px' }} disabled={!understood || working || !refundable.length} onClick={onConfirm}>{working ? 'Issuing vouchers…' : `Refund ${refundable.length} booking${refundable.length === 1 ? '' : 's'} · ${money(voucherTotal)}`}</button>
+        </div>
+      </>}
+    </div>
+  </div>;
 }
 
 /** An item line in the edit form: a price-list item, or (itemId null) an old hand-typed line kept as it was. */

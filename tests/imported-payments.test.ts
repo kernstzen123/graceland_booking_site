@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ImportedPaymentError, importedPaymentReference, isImportedPaymentRow, paidFromNotes, parseImportedPayment, paymentSummary } from '@/lib/imported-payments';
+import { ImportedPaymentError, importedPaymentReference, isImportedPaymentRow, paidFromNotes, parseImportedPayment, paymentSummary, voucherRefundAmount } from '@/lib/imported-payments';
 import { buildDailySummary } from '@/lib/daily-summary';
 import type { ReportData } from '@/lib/reports';
 
@@ -117,5 +117,16 @@ describe('payments on imported bookings in reports and the daily sheet', async (
     expect(byName('Edited')).toMatchObject({ paid: 500, owing: 200 });
     expect(byName('Settled')).toMatchObject({ paid: 700, owing: 0 });
     expect(byName('Voucher')).toMatchObject({ paid: 500, owing: 0 });
+  });
+});
+
+describe('voucher refund amount (as issue_booking_voucher works it out)', () => {
+  it('refunds what was paid', () => {
+    expect(voucherRefundAmount({ total_amount: 700, payment_method: 'PAYFAST', payments: [{ amount: 500, status: 'COMPLETE' }, { amount: 200, status: 'COMPLETE' }, { amount: 90, status: 'VOID' }] })).toBe(700);
+    expect(voucherRefundAmount({ total_amount: 1960, payment_method: 'IMPORTED', payments: [{ amount: 1080, status: 'COMPLETE' }] })).toBe(1080);
+  });
+  it('falls back to the total only for bookings paid online without a payment line', () => {
+    expect(voucherRefundAmount({ total_amount: 450, payment_method: 'PAYFAST', payments: [] })).toBe(450);
+    expect(voucherRefundAmount({ total_amount: 1000, payment_method: 'IMPORTED', payments: [] })).toBe(0);
   });
 });

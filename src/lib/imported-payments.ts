@@ -94,3 +94,14 @@ export function paidFromNotes(notes: string | null | undefined): number | null {
   if (none) return 0;
   return null;
 }
+
+/**
+ * What a voucher refund gives back, as issue_booking_voucher in the database
+ * works it out: the completed payments, or, when none are recorded, the total
+ * of a booking paid online (an imported booking with none has nothing to refund).
+ */
+export function voucherRefundAmount(booking: { total_amount: number | string; payment_method?: string | null; payments?: Array<{ amount: number | string; status: string }> | null }) {
+  const completed = (booking.payments || []).filter(payment => payment.status === 'COMPLETE');
+  if (completed.length) return cents(completed.reduce((sum, payment) => sum + Number(payment.amount), 0));
+  return booking.payment_method === 'IMPORTED' ? 0 : cents(Number(booking.total_amount) || 0);
+}

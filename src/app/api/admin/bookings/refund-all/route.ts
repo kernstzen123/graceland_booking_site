@@ -2,22 +2,51 @@ import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { recordNotificationFailure, sendVoucherEmail } from '@/lib/voucher-email';
+import { voucherRefundAmount } from '@/lib/imported-payments';
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const one = <T,>(value: T | T[] | null | undefined) => (Array.isArray(value) ? value[0] : value) ?? null;
+
+/**
+ * POST { date, preview: true } — every paid booking on that date with the voucher it would get,
+ * so staff can check the list before anything changes.
+ * POST { date, bookingIds } — issue the vouchers, for the bookings staff confirmed only (a booking
+ * made after the list was shown is left alone).
+ */
 export async function POST(request: Request) {
   try {
     const { user } = await requireAdmin(request, ['ADMIN']);
-    const { date, preview } = await request.json();
+    const { date, preview, bookingIds } = await request.json();
     if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ success: false, error: 'A valid booking date is required' }, { status: 400 });
-    const { data: bookings, error } = await supabase.from('bookings').select('id,reference,total_amount,customers(first_name,last_name,email)').eq('visit_date', date).in('status', ['PAID', 'CONFIRMED']).eq('voucher_issued', false).order('created_at');
+    const { data: found, error } = await supabase.from('bookings')
+      .select('id,reference,total_amount,people_count,payment_method,party_slot,customers(first_name,last_name,email),payments(amount,status)')
+      .eq('visit_date', date).in('status', ['PAID', 'CONFIRMED']).eq('voucher_issued', false).is('deleted_at', null).order('created_at');
     if (error) throw error;
-    // Preview: how many bookings would be refunded, so staff can confirm before anything changes.
     if (preview === true) {
-      return NextResponse.json({ success: true, count: (bookings || []).length, total: (bookings || []).reduce((sum, booking) => sum + Number(booking.total_amount), 0) });
+      const rows = (found || []).map(booking => {
+        const customer = one(booking.customers);
+        return {
+          id: booking.id,
+          reference: booking.reference,
+          customerName: [customer?.first_name, customer?.last_name].filter(Boolean).join(' ') || 'Customer',
+          email: customer?.email || '',
+          people: Number(booking.people_count || 0),
+          partySlot: booking.party_slot || null,
+          total: Number(booking.total_amount),
+          voucher: voucherRefundAmount(booking),
+        };
+      });
+      const refundable = rows.filter(row => row.voucher > 0);
+      return NextResponse.json({ success: true, date, bookings: rows, count: refundable.length, total: refundable.reduce((sum, row) => sum + row.voucher, 0) });
     }
+    if (!Array.isArray(bookingIds) || !bookingIds.length || bookingIds.some(id => typeof id !== 'string')) {
+      return NextResponse.json({ success: false, error: 'Check the list of bookings to refund first.' }, { status: 400 });
+    }
+    const confirmed = new Set(bookingIds as string[]);
+    const bookings = (found || []).filter(booking => confirmed.has(booking.id));
     const succeeded: Array<{ bookingId: string; code: string; emailSent: boolean }> = [];
-    const failed: Array<{ bookingId: string; reason: string }> = [];
+    const failed: Array<{ bookingId: string; reference: string; reason: string }> = [];
     let emailsSent = 0;
     for (let index = 0; index < (bookings || []).length; index++) {
       const booking = bookings![index];
@@ -38,11 +67,13 @@ export async function POST(request: Request) {
         await writeAudit(user.id, 'ISSUE_VOUCHER_REFUND_BULK', 'booking', booking.id, { reference: credit.booking_reference || booking.reference, credit_id: credit.credit_id, credit_code: credit.credit_code, amount: credit.original_amount, date });
         succeeded.push({ bookingId: booking.id, code: credit.credit_code, emailSent });
       } catch (bookingError) {
-        failed.push({ bookingId: booking.id, reason: bookingError instanceof Error ? bookingError.message : 'Could not issue voucher' });
+        failed.push({ bookingId: booking.id, reference: booking.reference, reason: bookingError instanceof Error ? bookingError.message : String((bookingError as { message?: string })?.message || 'Could not issue voucher') });
       }
       if ((index + 1) % 10 === 0 && index + 1 < (bookings || []).length) await pause(1000);
     }
-    return NextResponse.json({ success: true, date, affected: bookings?.length || 0, refunded: succeeded.length, emailsSent, succeeded, failed, message: `${succeeded.length} bookings refunded, ${emailsSent} emails sent, ${failed.length} failed.` });
+    // Confirmed bookings that were refunded, cancelled or deleted in the meantime are not touched.
+    const alreadyChanged = confirmed.size - bookings.length;
+    return NextResponse.json({ success: true, date, affected: bookings.length, refunded: succeeded.length, emailsSent, succeeded, failed, alreadyChanged, message: `${succeeded.length} booking${succeeded.length === 1 ? '' : 's'} refunded, ${emailsSent} email${emailsSent === 1 ? '' : 's'} sent, ${failed.length} failed.${alreadyChanged > 0 ? ` ${alreadyChanged} had already been refunded or cancelled.` : ''}` });
   } catch (error) {
     if (error instanceof AdminAuthError) return NextResponse.json({ success: false, error: error.message }, { status: error.status });
     console.error('Bulk voucher refund error', error);
