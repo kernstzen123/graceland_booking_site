@@ -459,7 +459,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
             ))}
           </div>
           <button type="button" className="btn" onClick={() => setEditItems([...editItems, { itemId: null, quantity: '1', price: '0' }])} style={{ marginTop: 8, border: '1px solid var(--border-color)' }}>+ Add item</button>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 8 }}>Choosing an item fills in today&apos;s price; change it if a different price applies (e.g. the booking book or the price the customer paid). Every entrance ticket gets a gate ticket; on a paid booking, saving rebuilds unscanned tickets to match.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 8 }}>Choosing an item fills in today&apos;s price; change it if a different price applies (e.g. the booking book or the price the customer paid). Every entrance ticket gets a gate ticket; on a paid booking, saving rebuilds unscanned tickets to match. To let a non-swimming guest swim, add &quot;Upgrade to swimming&quot; (one per person): they keep their ticket and the gate scanner shows the upgrade.</p>
           {editItems.some(item => !item.itemId && item.legacyName) && <p style={{ color: 'var(--warning-text)', fontSize: '0.8rem', marginTop: 4 }}>Lines marked ⚠ were typed in by hand and are not counted in reports or the daily summary. Choose the matching item from the list.</p>}
 
           <h3 style={{ margin: '1rem 0 0.25rem' }}>Seating</h3>

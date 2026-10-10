@@ -30,6 +30,7 @@ const WATER = 'Day visitor — including water activities';
 const NO_WATER = 'Day visitor — excluding water activities';
 const HUTS = 'Huts and tables';
 const PARTIES = 'Birthday parties';
+const EXTRAS = 'Extras (added by staff)';
 
 /** Every price an admin can change, in the order the admin panel lists them. */
 export const PRICE_DEFINITIONS: PriceDefinition[] = [
@@ -52,6 +53,7 @@ export const PRICE_DEFINITIONS: PriceDefinition[] = [
   { key: 'party-child-swimming',     group: PARTIES,  label: 'Additional party child (swimming)',     defaultPrice: 200 },
   { key: 'party-child-non-swimming', group: PARTIES,  label: 'Additional party child (non-swimming)', defaultPrice: 100 },
   { key: 'party-pack',               group: PARTIES,  label: 'Party pack',                            defaultPrice: 50 },
+  { key: 'upgrade-swimming',         group: EXTRAS,   label: 'Upgrade to swimming (per person)',      defaultPrice: 110 },
 ];
 
 export const DEFAULT_PRICES: PriceList = Object.fromEntries(PRICE_DEFINITIONS.map(def => [def.key, def.defaultPrice]));
@@ -139,6 +141,9 @@ export const PACKAGE_GROUPS = buildPackageGroups(DEFAULT_PRICES);
  * store, so edited bookings are counted the same in the daily summary,
  * reports, tickets and seating.
  */
+/** Item id of the "Upgrade to swimming" line staff add to a booking (one per person upgraded). */
+export const SWIMMING_UPGRADE_ID = 'upgrade-swimming';
+
 export type EditableItem = {
   id: string;
   name: string;
@@ -172,6 +177,9 @@ export const EDITABLE_ITEMS: EditableItem[] = [
   { id: 'party-child-swimming', name: 'Additional birthday party child entrance (swimming)', group: 'Birthday parties', priceKey: 'party-child-swimming', isPerson: true, party: true },
   { id: 'party-child-non-swimming', name: 'Additional birthday party child entrance (non-swimming)', group: 'Birthday parties', priceKey: 'party-child-non-swimming', isPerson: true, party: true },
   { id: 'party-pack', name: 'Optional party pack', group: 'Birthday parties', priceKey: 'party-pack', isPerson: false, party: true },
+  // Turns a non-swimming ticket already on the booking into a swimming one: the person keeps
+  // their gate ticket, so this line has none of its own. The gate scanner shows the upgrade.
+  { id: SWIMMING_UPGRADE_ID, name: 'Upgrade to swimming', group: EXTRAS, priceKey: 'upgrade-swimming', isPerson: false, party: false },
 ];
 
 const EDITABLE_BY_ID = new Map(EDITABLE_ITEMS.map(item => [item.id, item]));

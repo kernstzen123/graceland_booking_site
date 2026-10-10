@@ -95,3 +95,22 @@ describe('notes after an edit', () => {
     expect(editedNotes(null, 'late arrival', undefined)).toBe('late arrival');
   });
 });
+
+describe('upgrade to swimming', () => {
+  const line = (itemId: string, quantity: number, price: number) => ({ itemId, quantity, price_per_unit: price });
+  it('is on the price list at R110 and has no gate ticket of its own', () => {
+    const upgrade = EDITABLE_ITEMS.find(item => item.id === 'upgrade-swimming')!;
+    expect(upgrade.name).toBe('Upgrade to swimming');
+    expect(upgrade.isPerson).toBe(false);
+    expect(DEFAULT_PRICES['upgrade-swimming']).toBe(110);
+  });
+  it('upgrades non-swimming tickets', () => {
+    const lines = parseEditedItems([line('day-no-water-adult', 2, 120), line('day-no-water-child', 1, 100), line('upgrade-swimming', 3, 110)], [], null);
+    expect(lines.reduce((sum, l) => sum + l.price * l.quantity, 0)).toBe(670);
+    expect(lines.filter(l => l.isPerson).reduce((sum, l) => sum + l.quantity, 0)).toBe(3);
+  });
+  it('cannot upgrade more people than have non-swimming tickets', () => {
+    expect(() => parseEditedItems([line('day-no-water-adult', 1, 120), line('upgrade-swimming', 2, 110)], [], null)).toThrow(/only 1 non-swimming ticket/);
+    expect(() => parseEditedItems([line('day-water-adult', 2, 230), line('upgrade-swimming', 1, 110)], [], null)).toThrow(/no non-swimming tickets/);
+  });
+});
