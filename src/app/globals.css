@@ -675,7 +675,7 @@ button {
   flex-shrink: 0;
 }
 
-/* Party adults: a "Swimming +R100" button instead of a checkbox. */
+/* Party adults and additional children: a "Swimming +R100" button instead of a checkbox. */
 .party-adult-row {
   justify-content: space-between;
   flex-wrap: wrap;
