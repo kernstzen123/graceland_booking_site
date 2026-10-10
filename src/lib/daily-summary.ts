@@ -4,6 +4,7 @@
  * Walk-in gate sales are not bookings and are left out.
  */
 import { compareSpots } from '@/lib/seating';
+import { staffNoteText } from '@/lib/booking-edit';
 
 export type SummaryItem = { quantity: number; metadata?: { itemId?: string; name?: string; party?: boolean; isPerson?: boolean } | null };
 export type SummaryBooking = {
@@ -14,6 +15,8 @@ export type SummaryBooking = {
   /** What an online, office or gate booking was charged when it was paid (its total less any voucher). */
   amount_due?: number | null;
   voucher_amount_used?: number | null;
+  /** Booking notes (system marker lines such as WALK_IN are left out of the sheet). */
+  notes?: string | null;
   /** Payments on the booking; for an imported booking, the payments staff recorded on it. */
   payments?: Array<{ amount: number | string; status: string }> | null;
   customers?: { first_name?: string | null; last_name?: string | null } | Array<{ first_name?: string | null; last_name?: string | null }> | null;
@@ -22,7 +25,7 @@ export type SummaryBooking = {
 };
 
 export type SummaryCounts = { children: number; toddlers: number; infants: number; adults: number; pensioners: number };
-export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number; imported: boolean; owing: number };
+export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number; imported: boolean; owing: number; notes: string };
 export type SummarySection = { slot: string; rows: SummaryRow[] };
 export type DailySummary = { parties: SummarySection[]; dayVisitors: SummaryRow[] };
 
@@ -80,6 +83,7 @@ function toRow(booking: SummaryBooking): SummaryRow {
     paid,
     imported,
     owing,
+    notes: staffNoteText(booking.notes),
   };
 }
 

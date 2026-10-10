@@ -108,6 +108,9 @@ export function linesChanged(lines: EditedLine[], existing: StoredLine[]) {
 /** A line of booking notes the system writes (IMPORTED_FROM_BOOK, WALK_IN, PAID_BY_VOUCHER, …) rather than staff. */
 const isMarkerLine = (line: string) => /^[A-Z_]+$/.test(line.trim());
 
+/** The notes staff (or an import) wrote on a booking, without the system's marker lines, on one line. */
+export const staffNoteText = (notes: string | null | undefined) => (notes || '').split('\n').filter(line => !isMarkerLine(line)).map(line => line.trim()).filter(Boolean).join(' ').trim();
+
 /**
  * The notes to save after an edit: the system's marker lines are kept as they
  * were (so an imported booking stays recognisable as imported, and so on) and
