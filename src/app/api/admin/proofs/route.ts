@@ -3,7 +3,7 @@ import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
-import { FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
+import { FORCEABLE_FAILURES, isStaffUnpaidBooking, setBookingPaymentStatus, staffHoldUntil } from '@/lib/booking-holds';
 
 /** Hours a customer gets to upload a new proof after one is rejected. */
 const REUPLOAD_HOURS = 24;
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
 
     const { data: proof, error: proofError } = await supabase
       .from('payment_proofs')
-      .select('id, status, booking_id, bookings(id,reference,total_amount,amount_due,status,expires_at,visit_date,people_count,customers(first_name,last_name,email))')
+      .select('id, status, booking_id, bookings(id,reference,total_amount,amount_due,status,expires_at,visit_date,people_count,sold_by,payment_method,customers(first_name,last_name,email))')
       .eq('id', proofId).maybeSingle();
     if (proofError) throw proofError;
     if (!proof) return NextResponse.json({ success: false, error: 'Proof not found' }, { status: 404 });
@@ -66,9 +66,12 @@ export async function POST(request: Request) {
         .select('id', { count: 'exact', head: true }).eq('booking_id', booking.id).eq('status', 'PENDING');
       if (countError) throw countError;
       if (booking.status === 'PAYMENT_PENDING' && !otherPending) {
+        // A booking staff made (Add booking tab) keeps its places until the end of the visit day.
+        const reupload = Date.now() + REUPLOAD_HOURS * 60 * 60 * 1000;
+        const holdUntil = isStaffUnpaidBooking(booking) && booking.visit_date ? Math.max(reupload, new Date(staffHoldUntil(booking.visit_date)).getTime()) : reupload;
         const { error: bookingError } = await supabase.from('bookings').update({
           status: 'UNPAID',
-          expires_at: new Date(Date.now() + REUPLOAD_HOURS * 60 * 60 * 1000).toISOString(),
+          expires_at: new Date(holdUntil).toISOString(),
         }).eq('id', booking.id).eq('status', 'PAYMENT_PENDING');
         if (bookingError) throw bookingError;
       }

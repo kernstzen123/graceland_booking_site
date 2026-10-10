@@ -3,7 +3,7 @@ import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce, generateTicketsAndSendEmail, resignBookingQrCodes } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
-import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
+import { archiveBooking, FORCEABLE_FAILURES, isStaffUnpaidBooking, setBookingPaymentStatus, staffHoldUntil } from '@/lib/booking-holds';
 import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
 import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     if (action === 'refund') return NextResponse.json({ success: false, error: 'Use "Voucher refund" on the booking. Only admins can issue refunds.' }, { status: 400 });
     if (typeof bookingId !== 'string' || !bookingId || !ACTIONS.includes(action)) return NextResponse.json({ success: false, error: 'Invalid booking action' }, { status: 400 });
     const { data: booking, error } = await supabase.from('bookings')
-      .select('id,reference,status,total_amount,amount_due,payment_method,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,voucher_issued,deleted_at,party_slot,customers(first_name,last_name,email,phone),tickets(id,ticket_uid,status),payments(id,amount,method,status,provider_reference),booking_spots(spot_id,venue_spots(number,type))')
+      .select('id,reference,status,total_amount,amount_due,payment_method,sold_by,expires_at,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,voucher_issued,deleted_at,party_slot,customers(first_name,last_name,email,phone),tickets(id,ticket_uid,status),payments(id,amount,method,status,provider_reference),booking_spots(spot_id,venue_spots(number,type))')
       .eq('id', bookingId).maybeSingle();
     if (error) throw error;
     if (!booking) return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
@@ -263,6 +263,11 @@ export async function POST(request: Request) {
       // settled by recording a payment.
       if (!paid && !imported && updates.total_amount !== undefined) {
         updates.amount_due = Math.max(0, Math.round((Number(updates.total_amount) - Number(booking.voucher_amount_used || 0)) * 100) / 100);
+      }
+      // An unpaid booking staff made is held until the end of its visit day: that moves with the date.
+      // (Only while it still holds its places, so a lapsed booking is not revived without the capacity check.)
+      if (dateChanged && booking.status === 'UNPAID' && isStaffUnpaidBooking(booking) && booking.expires_at && new Date(booking.expires_at).getTime() > Date.now()) {
+        updates.expires_at = staffHoldUntil(visitDate);
       }
 
       // Notes keep the system marker lines (e.g. IMPORTED_FROM_BOOK, so an imported booking stays recognisable).

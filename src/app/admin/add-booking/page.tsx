@@ -136,7 +136,7 @@ function NewBooking() {
 
   const submit = async () => {
     if (!canSubmit) return;
-    const summary = `${customer.firstName} ${customer.lastName} · ${date}${isParty ? ` · party ${party.slot}` : ''}\n${lineItems.filter(line => line.quantity > 0 && line.subtotal >= 0).map(line => `${line.quantity}× ${line.name}`).join('\n')}${spotIds.length ? `\nSeating: ${spots.filter(spot => spotIds.includes(spot.id)).map(spot => spotLabel(spot.type, spot.number)).join(', ')}` : ''}\n\nTotal: ${rand(total)}\n${paid ? `Paid: ${PAYMENT_LABELS[method]}${customer.email ? ' · QR tickets will be emailed' : ' · no email, so no tickets are emailed'}` : 'Not paid: EFT payment instructions will be emailed (booking held for 48 hours)'}`;
+    const summary = `${customer.firstName} ${customer.lastName} · ${date}${isParty ? ` · party ${party.slot}` : ''}\n${lineItems.filter(line => line.quantity > 0 && line.subtotal >= 0).map(line => `${line.quantity}× ${line.name}`).join('\n')}${spotIds.length ? `\nSeating: ${spots.filter(spot => spotIds.includes(spot.id)).map(spot => spotLabel(spot.type, spot.number)).join(', ')}` : ''}\n\nTotal: ${rand(total)}\n${paid ? `Paid: ${PAYMENT_LABELS[method]}${customer.email ? ' · QR tickets will be emailed' : ' · no email, so no tickets are emailed'}` : 'Not paid: EFT payment instructions will be emailed (the booking keeps its places until the end of the visit day)'}`;
     const answer = await confirm({ title: 'Save this booking?', message: summary, confirmLabel: 'Save booking' });
     if (!answer.confirmed) return;
     setSubmitting(true); setError('');
@@ -165,7 +165,7 @@ function NewBooking() {
         {result.ticketsEmailed === true && `QR tickets were emailed to ${result.email}.`}
         {result.ticketsEmailed === false && 'The tickets are ready, but the email could not be sent. It is listed under Email retries.'}
         {result.ticketsEmailed === null && result.eftSent === null && 'No email address, so no tickets were emailed. At the gate, find the guest by name or phone in the scanner search.'}
-        {result.eftSent === true && `EFT payment instructions were emailed to ${result.email}. The booking is held for 48 hours; approve the proof of payment when it arrives.`}
+        {result.eftSent === true && `EFT payment instructions were emailed to ${result.email}. The booking keeps its places until the end of the visit day; approve the proof of payment when it arrives.`}
         {result.eftSent === false && 'The EFT instructions could not be emailed. They are listed under Email retries; the booking is only held for 15 minutes until they are sent.'}
       </p>
       <div style={{ display: 'flex', gap: 8, marginTop: '1rem', flexWrap: 'wrap' }}>
@@ -254,7 +254,7 @@ function NewBooking() {
         </div>
         <label style={{ ...labelStyle, marginTop: '0.75rem' }}>Receipt / payment reference (optional)<input value={paymentReference} maxLength={80} onChange={event => setPaymentReference(event.target.value)} style={fieldStyle} /></label>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>Only choose Paid once the money has been received. {customer.email ? 'QR tickets are emailed to the customer.' : 'Without an email address, no tickets are emailed; the gate finds the guest by name or phone.'}</p>
-      </> : <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>The customer is emailed the EFT payment details and the booking is held for 48 hours. {customer.email ? '' : <strong>An email address is required.</strong>}</p>}
+      </> : <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>The customer is emailed the EFT payment details. The booking keeps its places until the end of the visit day (only online bookings have 48 hours to pay). {customer.email ? '' : <strong>An email address is required.</strong>}</p>}
 
       {error && <p role="alert" className="callout callout-danger" style={{ marginTop: '0.75rem' }}>{error}</p>}
       {!seatingReady && huts + tables > 0 && <p style={{ color: 'var(--warning-text)', fontSize: '0.85rem', marginTop: '0.75rem' }}>Choose the seating before saving.</p>}
