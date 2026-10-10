@@ -14,7 +14,7 @@ import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, p
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
-type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; voucher_amount_used?: number | null; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
+type Booking = { id: string; reference: string; visit_date: string; party_slot?: string | null; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; voucher_amount_used?: number | null; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean; party?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
 type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
 /** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
@@ -465,15 +465,26 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
     }
   };
 
+  // A birthday party: booked in a party time slot, or carrying party lines (older imports may have no slot).
+  const isParty = Boolean(booking.party_slot) || (booking.booking_items || []).some(item => item.metadata?.party === true);
+  const partyPackage = (booking.booking_items || []).find(item => /^kiddy party/i.test(item.metadata?.name || ''));
+
   return <section className="card">
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-      <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>{booking.reference}</p><h2>Booking details</h2></div>
+      <div><p style={{ color: 'var(--primary)', fontWeight: 700 }}>{booking.reference}</p><h2>{isParty ? 'Birthday party booking' : 'Booking details'}</h2></div>
       <span style={{ padding: '0.35rem 0.65rem', borderRadius: 20, background: isDeleted ? '#e2e8f0' : booking.voucher_issued ? '#dbeafe' : booking.status === 'PAID' ? '#dcfce7' : '#fef3c7' }}>{isDeleted ? 'Deleted' : booking.voucher_issued ? 'Voucher issued' : booking.status}</span>
     </div>
     {booking.attention_reason && <div className="callout callout-danger" role="alert">
       <p><strong>Needs attention{booking.attention_at ? ` · ${new Date(booking.attention_at).toLocaleString()}` : ''}</strong></p>
       <p style={{ whiteSpace: 'pre-line' }}>{booking.attention_reason}</p>
       <button type="button" className="btn btn-secondary" style={{ marginTop: '0.5rem' }} onClick={() => onAction('resolve_attention')}>Mark as resolved</button>
+    </div>}
+    {isParty && <div className="callout callout-info" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span aria-hidden="true" style={{ fontSize: '1.6rem' }}>🎉</span>
+      <div>
+        <p style={{ fontSize: '1.05rem' }}><strong>Birthday party</strong></p>
+        <p><strong>Time slot:</strong> {booking.party_slot || 'Not set'}{partyPackage ? <> · {partyPackage.metadata?.name} × {partyPackage.quantity} children</> : null}</p>
+      </div>
     </div>}
     {booking.payment_method === 'IMPORTED' && <div className="callout callout-info">
       <p><strong>Imported from the booking book</strong></p>
@@ -489,6 +500,8 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
       <p><strong>Email:</strong> <span style={{ wordBreak: 'break-all' }}>{customer?.email}</span></p>
       <p><strong>Phone:</strong> {customer?.phone}</p>
       <p><strong>Visit date:</strong> {booking.visit_date}</p>
+      {isParty && <p><strong>Booking type:</strong> Birthday party</p>}
+      {isParty && <p><strong>Party time slot:</strong> {booking.party_slot || 'Not set'}</p>}
       <p><strong>Total:</strong> R {Number(booking.total_amount).toFixed(2)}</p>
       <p><strong>People:</strong> {booking.people_count}</p>
       {spots.length > 0 && <p><strong>Seating:</strong> {spots.map(s => `${s?.type === 'hut' ? 'Hut' : 'Table'} ${s?.number}`).join(', ')}</p>}
