@@ -675,6 +675,41 @@ button {
   flex-shrink: 0;
 }
 
+/* Party adults: a "Swimming +R100" button instead of a checkbox. */
+.party-adult-row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.party-adult-row.swimming {
+  border-color: var(--primary);
+}
+
+.party-swim-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.party-swim-button:hover {
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.party-swim-button.selected {
+  background: var(--primary);
+  color: #fff;
+}
+
 .party-total {
   display: flex;
   justify-content: space-between;
