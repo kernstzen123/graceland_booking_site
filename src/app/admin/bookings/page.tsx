@@ -8,7 +8,7 @@ import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { DownloadIcon } from '@/components/icons';
 import { DEFAULT_PRICES, EDITABLE_ITEMS, editableItemPrice, findEditableItem, matchEditableItem, type PriceList } from '@/lib/pricing';
-import { seatsNeeded } from '@/lib/booking-edit';
+import { seatsNeeded, staffNoteText } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
 import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, paymentSummary, voucherRefundAmount } from '@/lib/imported-payments';
 
@@ -18,7 +18,7 @@ type Booking = { id: string; reference: string; visit_date: string; party_slot?:
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
 type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
 /** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
-const staffNotes = (notes?: string | null) => (notes || '').split('\n').filter(line => !/^[A-Z_]+$/.test(line.trim())).join(' ').trim();
+const staffNotes = (notes?: string | null) => staffNoteText(notes);
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }, { value: 'ATTENTION', label: 'Needs attention' }, { value: 'DELETED', label: 'Deleted' }];
 const PAID_STATUSES = ['PAID', 'CONFIRMED'];

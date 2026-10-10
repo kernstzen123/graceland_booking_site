@@ -105,3 +105,22 @@ describe('hut and table schedule in the daily summary', () => {
     expect(values).toContain('Lerato Dube (awaiting payment)');
   });
 });
+
+describe('booking notes in the daily summary', () => {
+  const withNotes = (notes: string | null, payment_method = 'PAYFAST') => ({ party_slot: null, total_amount: 460, payment_method, notes, customers: { first_name: 'Anna', last_name: 'Smit' }, booking_items: [day('day-water-adult', 2)] });
+
+  it('keeps the staff notes and leaves out the system markers', () => {
+    expect(buildDailySummary([withNotes('WALK_IN')], SLOTS).dayVisitors[0].notes).toBe('');
+    expect(buildDailySummary([withNotes('IMPORTED_FROM_BOOK\nBirthday cake at 12, paid R460', 'IMPORTED')], SLOTS).dayVisitors[0].notes).toBe('Birthday cake at 12, paid R460');
+    expect(buildDailySummary([withNotes('Wheelchair access needed\nArriving late')], SLOTS).dayVisitors[0].notes).toBe('Wheelchair access needed Arriving late');
+    expect(buildDailySummary([withNotes(null)], SLOTS).dayVisitors[0].notes).toBe('');
+  });
+
+  it('writes them in the Additional info column', async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await buildDailySummaryWorkbook(buildDailySummary([withNotes('PAID_BY_VOUCHER\nWheelchair access needed')], SLOTS), '2026-10-03') as unknown as ArrayBuffer);
+    const sheet = workbook.worksheets[0];
+    const row = sheet.getColumn(2).values.findIndex(value => value === 'Anna Smit');
+    expect(sheet.getRow(row).getCell(12).value).toBe('Notes: Wheelchair access needed');
+  });
+});

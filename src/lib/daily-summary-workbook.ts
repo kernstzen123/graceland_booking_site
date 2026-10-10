@@ -20,7 +20,7 @@ const MUTED = 'FF475569';
 const CURRENCY_FORMAT = '"R" #,##0.00';
 
 const HEADERS = ['Time', 'Client name', 'Total visitors', 'Children', 'Toddlers', 'Infants', 'Adults', 'Pensioners', 'Meals', 'Hut / table', 'Paid', 'Additional info'];
-const WIDTHS = [10, 26, 10, 10, 10, 9, 9, 11, 26, 12, 13, 34];
+const WIDTHS = [10, 26, 10, 10, 10, 9, 9, 11, 26, 12, 13, 42];
 const LAST_COLUMN = HEADERS.length;
 const LEFT_ALIGNED = new Set([2, 9, 12]);
 /** Total visitors … Pensioners. */
@@ -36,6 +36,12 @@ type Range = [first: number, last: number];
 const countsOf = (row: SummaryRow) => [row.total, row.children, row.toddlers, row.infants, row.adults, row.pensioners];
 const sumOf = (rows: SummaryRow[]) => rows.reduce((sum, row) => sum.map((value, index) => value + countsOf(row)[index]), [0, 0, 0, 0, 0, 0]);
 const paidOf = (rows: SummaryRow[]) => rows.reduce((sum, row) => sum + row.paid, 0);
+
+/** The "Additional info" cell: what is owed or that it came from the booking book, then the booking's notes. */
+const additionalInfo = (booking: SummaryRow) => [
+  booking.owing > 0 ? `${booking.imported ? 'Booking book: owes' : 'Owes'} R ${booking.owing.toFixed(2)}` : booking.imported ? 'Booking book' : '',
+  booking.notes ? `Notes: ${booking.notes}` : '',
+].filter(Boolean).join('\n');
 
 const longDate = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-ZA', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -92,8 +98,11 @@ export async function buildDailySummaryWorkbook(summary: DailySummary, date: str
   };
   const addBooking = (booking: SummaryRow) => {
     const row = sheet.getRow(next);
-    row.values = [booking.time, booking.client, { formula: `SUM(D${next}:H${next})`, result: booking.total }, booking.children, booking.toddlers, booking.infants, booking.adults, booking.pensioners, booking.meals, booking.seating, booking.paid, booking.owing > 0 ? `${booking.imported ? 'Booking book: owes' : 'Owes'} R ${booking.owing.toFixed(2)}` : booking.imported ? 'Booking book' : ''];
+    row.values = [booking.time, booking.client, { formula: `SUM(D${next}:H${next})`, result: booking.total }, booking.children, booking.toddlers, booking.infants, booking.adults, booking.pensioners, booking.meals, booking.seating, booking.paid, additionalInfo(booking)];
     styleRow(row);
+    // Room for wrapped notes: about 48 characters fit on a line of the "Additional info" column.
+    const lines = additionalInfo(booking).split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / 48)), 0);
+    if (lines > 1) row.height = Math.min(150, 15 * lines + 4);
     next += 1;
   };
   /** Add a block of bookings (or a "none" line). Returns the rows they occupy, if any. */

@@ -15,7 +15,7 @@ export async function GET(request: Request) {
 
     const [{ data, error }, schedule] = await Promise.all([supabase
       .from('bookings')
-      .select('party_slot,total_amount,amount_due,voucher_amount_used,payment_method,voucher_issued,payments(amount,status),customers(first_name,last_name),booking_items(quantity,metadata),booking_spots(venue_spots(number,type))')
+      .select('party_slot,notes,total_amount,amount_due,voucher_amount_used,payment_method,voucher_issued,payments(amount,status),customers(first_name,last_name),booking_items(quantity,metadata),booking_spots(venue_spots(number,type))')
       .eq('visit_date', date)
       .in('status', ['PAID', 'CONFIRMED'])
       .is('deleted_at', null)
