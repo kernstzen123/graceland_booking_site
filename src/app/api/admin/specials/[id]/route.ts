@@ -11,11 +11,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const { user } = await requireAdmin(request, SPECIALS_ROLES);
     const { id } = await params;
     if (!isUuid(id)) throw new SpecialInputError('Special not found.');
-    const special = parseSpecialInput(await request.json());
+    const special: ReturnType<typeof parseSpecialInput> = parseSpecialInput(await request.json());
 
     const { data: before, error: loadError } = await supabase.from('specials').select('*').eq('id', id).maybeSingle();
     if (loadError) throw loadError;
     if (!before) return NextResponse.json({ error: 'Special not found.' }, { status: 404 });
+    // An emptied "give free over R…" amount switches it off (once the column exists).
+    if ('auto_apply_min_spend' in before && special.auto_apply_min_spend === undefined) Object.assign(special, { auto_apply_min_spend: null });
 
     const { data, error } = await supabase.from('specials').update({ ...special, updated_at: new Date().toISOString() }).eq('id', id).select().single();
     if (error) throw error;

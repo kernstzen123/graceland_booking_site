@@ -11,7 +11,7 @@ import { PRIVACY_VERSION, TERMS_VERSION } from '@/lib/legal';
 import { BOOKABLE_ITEMS, calculateServerTotal, validatePartyFields } from '@/lib/pricing';
 import { getCurrentPrices } from '@/lib/price-store';
 import { validateBookableDate } from '@/lib/closed-dates';
-import { loadBookingSpecials, SpecialSelectionError } from '@/lib/specials-server';
+import { loadAutoSpecial, loadBookingSpecials, SpecialSelectionError } from '@/lib/specials-server';
 import { maxHutsFor, maxTablesFor, PEOPLE_PER_HUT } from '@/lib/seating';
 
 export async function POST(request: Request) {
@@ -80,7 +80,9 @@ export async function POST(request: Request) {
       if (qty > 0) serverSelections[key] = qty;
     }
     const prices = await getCurrentPrices();
-    const { lineItems, total: serverTotal } = calculateServerTotal(serverSelections, validatedParty, prices, specials);
+    const priced = calculateServerTotal(serverSelections, validatedParty, prices, specials);
+    let lineItems = priced.lineItems;
+    const serverTotal = priced.total;
 
     // Reject if the server total is zero or negative
     if (serverTotal <= 0) throw new Error('Invalid booking amount');
@@ -90,6 +92,15 @@ export async function POST(request: Request) {
     if (Math.abs(serverTotal - clientTotal) > 0.01) {
       console.error(`Price mismatch: server=${serverTotal}, client=${clientTotal}, selections=${JSON.stringify(serverSelections)}, party=${JSON.stringify(validatedParty)}`);
       throw new Error('Prices have been updated. Please refresh the page and try again.');
+    }
+
+    // A special switched on to be given free from a set spend: when the cart is that amount or more,
+    // the booking also gets the special's free tickets and meal vouchers (R0, so the total is unchanged).
+    // Decided here only; the browser never sends it.
+    const autoSpecial = await loadAutoSpecial(selectedDate, serverTotal, prices, specials.map(special => special.id));
+    if (autoSpecial) {
+      specials = [...specials, autoSpecial];
+      lineItems = calculateServerTotal(serverSelections, validatedParty, prices, specials).lineItems;
     }
 
     // 1. Calculate the total people count from selections
@@ -187,6 +198,7 @@ export async function POST(request: Request) {
             isPerson: line.isPerson,
             // Lines from a special carry it, so reports can attribute revenue, free tickets and discounts.
             ...(line.specialId ? { specialId: line.specialId, specialRole: line.specialRole, ...(line.fullPricePerUnit !== undefined ? { fullPricePerUnit: line.fullPricePerUnit } : {}) } : {}),
+            ...(autoSpecial && line.specialId === autoSpecial.id ? { autoApplied: true } : {}),
             ...(attendeeNamesForItem.length > 0 ? { attendeeNames: attendeeNamesForItem } : {}),
           },
         });

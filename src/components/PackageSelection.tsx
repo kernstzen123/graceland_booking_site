@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties';
 import { buildPackageGroups, PACKAGE_GROUPS, priceOf, calculateServerTotal, calculateSpecialPrice, type PriceList } from '@/lib/pricing';
 import type { BookingSpecialSelection, Special } from '@/lib/specials';
+import { autoApplyMinSpend, describeAutoExtras, pickAutoSpecial } from '@/lib/special-auto';
 import { CheckIcon } from '@/components/icons';
 import { maxHutsFor, maxTablesFor } from '@/lib/seating';
 
@@ -54,6 +55,8 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
   }, [selectedDate]);
 
   const packageGroups = buildPackageGroups(prices);
+  // A special given free when the cart is over its minimum spend (the booking API decides; this only shows it).
+  const autoSpecial = pickAutoSpecial(availableSpecials, calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total, prices, specials.map(special => special.id));
   const price = (key: string) => priceOf(prices, key);
   /** What the swimming button adds to a non-swimming party adult (R180 swimming − R80 non-swimming = R100 by default). */
   const swimmingUpgrade = Math.max(0, price('party-adult-swimming') - price('party-adult-non-swimming'));
@@ -333,6 +336,10 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
           <span>Total:</span>
           <span>R {calculateTotal()}</span>
         </div>
+        {autoSpecial && <div className="callout callout-success" role="status" style={{ marginTop: 0, marginBottom: '1.5rem' }}>
+          <p><strong>🎁 {autoSpecial.title}</strong></p>
+          <p>Your booking is R{autoApplyMinSpend(autoSpecial)} or more, so you also get {describeAutoExtras(autoSpecial)} free.</p>
+        </div>}
 
         <div style={{ display: 'flex', gap: '1rem' }}>
           <button className="btn" style={{ border: '1px solid var(--border-color)', flex: 1 }} onClick={onBack}>Back</button>

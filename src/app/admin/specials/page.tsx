@@ -307,6 +307,14 @@ export default function SpecialsAdminPage() {
               </label>
             </div>
 
+            <div style={{ marginTop: '1rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: 8, background: 'var(--bg-color)' }}>
+              <label style={labelStyle}>
+                Give this special free to online bookings of (R) or more
+                <input type="number" min="0" step="0.01" value={editing.auto_apply_min_spend ?? ''} onChange={e => setEditing({ ...editing, auto_apply_min_spend: e.target.value === '' ? null : Number(e.target.value) })} placeholder="Off (e.g. 660)" style={{ ...inputStyle, maxWidth: 220 }} />
+              </label>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 6 }}>When a customer&apos;s cart is this amount or more on a date this special is valid, their booking also gets this special&apos;s free tickets and meal vouchers at no charge. Their own tickets stay at the normal price. If more than one special qualifies, they get only the one worth the most. Leave empty to switch this off.</p>
+            </div>
+
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
               <button type="button" onClick={() => setEditing(null)} className="btn">Cancel</button>
               <button type="submit" disabled={saving} className="btn btn-primary">{saving ? 'Saving...' : 'Save Special'}</button>
@@ -330,6 +338,7 @@ export default function SpecialsAdminPage() {
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', gap: 12 }}>
                        <span><strong>Type:</strong> {s.type.replace(/_/g, ' ')}</span>
                        {s.stock_limit && <span><strong>Limit:</strong> {s.stock_limit}/day</span>}
+                       {s.auto_apply_min_spend !== null && s.auto_apply_min_spend !== undefined && <span><strong>Free from:</strong> R {Number(s.auto_apply_min_spend).toFixed(2)}</span>}
                     </div>
                  </div>
                  <div style={{ display: 'flex', gap: 8 }}>
