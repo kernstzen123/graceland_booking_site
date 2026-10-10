@@ -156,7 +156,7 @@ export default function AdminDashboard() {
         })}
       </div>}
     </section>
-    {hutSchedule && <HutScheduleCard schedule={hutSchedule} />}
+    {hutSchedule && <HutScheduleCard schedule={hutSchedule} dateLabel={dateLabel} />}
   </main>;
 }
 
@@ -165,7 +165,7 @@ export default function AdminDashboard() {
  * slot, so this shows staff when to clear a hut for the next group. Tables are
  * booked for the whole day.
  */
-function HutScheduleCard({ schedule }: { schedule: HutSchedule }) {
+function HutScheduleCard({ schedule, dateLabel }: { schedule: HutSchedule; dateLabel: string }) {
   const cell = (bookings: HutBooking[]) => bookings.length
     ? bookings.map(booking => <div key={booking.reference}>{booking.client}{booking.paid ? '' : ' (awaiting payment)'}</div>)
     : <span style={{ color: 'var(--text-muted)' }}>Free</span>;
@@ -176,10 +176,20 @@ function HutScheduleCard({ schedule }: { schedule: HutSchedule }) {
   const tableCell = (bookings: HutBooking[]) => bookings.length
     ? bookings.map(booking => <div key={booking.reference}>{booking.client}{booking.slot ? ` (party ${booking.slot})` : ''}{booking.paid ? '' : ' (awaiting payment)'}</div>)
     : <span style={{ color: 'var(--text-muted)' }}>Free</span>;
-  return <section className="card" style={{ marginTop: '1rem' }}>
-    <div style={{ marginBottom: '0.75rem' }}>
-      <h2 style={{ fontSize: '1.15rem' }}>Hut &amp; table schedule</h2>
+  // Print only this card: the rest of the dashboard is hidden while printing (see .printing-hut-schedule in globals.css).
+  const print = () => {
+    const done = () => { document.body.classList.remove('printing-hut-schedule'); window.removeEventListener('afterprint', done); };
+    document.body.classList.add('printing-hut-schedule');
+    window.addEventListener('afterprint', done);
+    window.print();
+  };
+  return <section className="card hut-schedule print-area" style={{ marginTop: '1rem' }}>
+    <div style={{ marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 320px' }}>
+      <h2 style={{ fontSize: '1.15rem' }}>Hut &amp; table schedule <span className="print-only">· {dateLabel}</span></h2>
       <p className="admin-stat-note">{bookedHuts} of {schedule.huts.length} huts and {bookedTables} of {tables.length} tables booked. A party has its hut from 15 minutes before its slot until 15 minutes after, so the hut must be cleared for the next party. Tables are booked for the whole day.</p>
+      </div>
+      <button type="button" className="btn btn-secondary no-print" onClick={print}>Print</button>
     </div>
     <h3 className="report-group-heading">Covered huts</h3>
     <div className="admin-table-wrap">
