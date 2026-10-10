@@ -4,10 +4,11 @@ import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce, generateTicketsAndSendEmail, resignBookingQrCodes } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
-import { BookingEditError, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
+import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
 import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
 import { johannesburgToday } from '@/lib/opening-rules';
+import { IMPORTED_NOTE } from '@/lib/staff-bookings';
 
 const DETAIL_FIELDS = 'id,reference,visit_date,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),booking_spots(spot_id,venue_spots(number,type)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
 const STATUS_FILTERS = ['PAID', 'PENDING', 'CANCELLED', 'FAILED', 'ATTENTION', 'DELETED'];
@@ -103,11 +104,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, message: 'Ticket email sent' });
     }
 
-    // Recording what was paid on a booking imported from the booking book. The
-    // booking stays PAID (its seats and capacity stay held); the payments only
-    // change what it shows as paid and outstanding.
+    // Recording a payment taken by hand (cash, card or EFT at the office or gate),
+    // e.g. what was paid on a booking imported from the booking book, or the
+    // difference after a booking was edited. The booking stays PAID (its seats
+    // and capacity stay held); the payments only change what it shows as paid
+    // and outstanding.
     if (action === 'add_payment' || action === 'void_payment') {
-      if (!isImportedBooking(booking)) return NextResponse.json({ success: false, error: 'Payments can only be recorded by hand on bookings imported from the booking book.' }, { status: 400 });
+      const auditPrefix = isImportedBooking(booking) ? '_IMPORTED' : '';
       if (booking.deleted_at || !['PAID', 'CONFIRMED'].includes(booking.status) || booking.voucher_issued) return NextResponse.json({ success: false, error: 'This booking is cancelled or refunded, so its payments can no longer be changed.' }, { status: 400 });
       const payments = (booking.payments || []) as Array<{ id: string; amount: number; method: string; status: string; provider_reference: string | null }>;
       const amountToPay = Number(booking.total_amount) - Number(booking.voucher_amount_used || 0);
@@ -128,7 +131,7 @@ export async function POST(request: Request) {
         }).select('id').single();
         if (insertError) throw insertError;
         const after = paymentSummary(amountToPay, [...payments, { amount: payment.amount, status: 'COMPLETE' }]);
-        await writeAudit(user.id, 'RECORD_IMPORTED_PAYMENT', 'booking', booking.id, { reference: booking.reference, payment_id: inserted.id, amount: payment.amount, method: payment.method, paid_on: payment.paidOn, note: payment.note || null, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
+        await writeAudit(user.id, `RECORD${auditPrefix}_PAYMENT`, 'booking', booking.id, { reference: booking.reference, payment_id: inserted.id, amount: payment.amount, method: payment.method, paid_on: payment.paidOn, note: payment.note || null, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
         return NextResponse.json({ success: true, message: `R${payment.amount.toFixed(2)} ${IMPORTED_PAYMENT_METHODS[payment.method].toLowerCase()} payment recorded. ${after.outstanding > 0 ? `R${after.outstanding.toFixed(2)} still owed.` : 'Paid in full.'}` });
       }
 
@@ -141,7 +144,7 @@ export async function POST(request: Request) {
       if (voidError) throw voidError;
       if (!voided?.length) return NextResponse.json({ success: false, error: 'This payment was already removed. Refresh the booking.' }, { status: 409 });
       const after = paymentSummary(amountToPay, payments.filter(payment => payment.id !== target.id));
-      await writeAudit(user.id, 'VOID_IMPORTED_PAYMENT', 'booking', booking.id, { reference: booking.reference, payment_id: target.id, amount: Number(target.amount), method: target.method, reason, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
+      await writeAudit(user.id, `VOID${auditPrefix}_PAYMENT`, 'booking', booking.id, { reference: booking.reference, payment_id: target.id, amount: Number(target.amount), method: target.method, reason, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
       return NextResponse.json({ success: true, message: `Payment removed. R${after.outstanding.toFixed(2)} now owed.` });
     }
 
@@ -187,7 +190,11 @@ export async function POST(request: Request) {
     }
 
     if (action === 'update') {
-      if (!isImportedBooking(booking)) return NextResponse.json({ success: false, error: 'Only imported (IM-) bookings can be edited this way.' }, { status: 400 });
+      const imported = isImportedBooking(booking);
+      const paid = ['PAID', 'CONFIRMED'].includes(booking.status);
+      if (booking.deleted_at || booking.voucher_issued || !(paid || ['PENDING', 'PAYMENT_PENDING'].includes(booking.status))) {
+        return NextResponse.json({ success: false, error: 'This booking is cancelled, refunded or deleted, so it can no longer be edited.' }, { status: 400 });
+      }
       const text = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '');
       const edit = body.edit || {};
       const updates: Record<string, unknown> = {};
@@ -251,12 +258,17 @@ export async function POST(request: Request) {
         updates.people_count = people;
       } else if (lines && itemsChanged) updates.people_count = lines.reduce((sum, line) => sum + (line.isPerson ? line.quantity : 0), 0);
       for (const key of ['total_amount', 'people_count'] as const) if (updates[key] !== undefined && Number(updates[key]) === Number(booking[key])) delete updates[key];
+      // A booking that is not paid yet is charged its amount due (PayFast, EFT, "Mark paid"), so
+      // that follows the new total. Once paid it stays what was paid online; any difference is
+      // settled by recording a payment.
+      if (!paid && !imported && updates.total_amount !== undefined) {
+        updates.amount_due = Math.max(0, Math.round((Number(updates.total_amount) - Number(booking.voucher_amount_used || 0)) * 100) / 100);
+      }
 
-      // Notes keep the system marker line so the booking stays recognisable as imported.
+      // Notes keep the system marker lines (e.g. IMPORTED_FROM_BOOK, so an imported booking stays recognisable).
       if (edit.notes !== undefined) {
-        const staffNote = text(edit.notes, 500);
-        const notes = staffNote ? `IMPORTED_FROM_BOOK\n${staffNote}` : 'IMPORTED_FROM_BOOK';
-        if (notes !== booking.notes) updates.notes = notes;
+        const notes = editedNotes(booking.notes, text(edit.notes, 500), imported ? IMPORTED_NOTE : undefined);
+        if (notes !== (booking.notes || null)) updates.notes = notes;
       }
 
       // Customer: only when something changed, as a fresh customer row so no other booking sharing the old one is changed.
@@ -322,8 +334,9 @@ export async function POST(request: Request) {
       }
 
       // Gate tickets follow the items. Tickets that were already scanned are never touched.
+      // A booking that is not paid yet has no tickets: they are issued from its items once it is paid.
       let ticketNote = '';
-      if (itemsChanged) {
+      if (itemsChanged && paid) {
         const hasUsed = (booking.tickets || []).some(ticket => ticket.status === 'USED');
         if (hasUsed) ticketNote = ' Some tickets were already scanned, so the tickets were left as they are.';
         else {
@@ -338,7 +351,7 @@ export async function POST(request: Request) {
 
       const seatNames = (spots: Array<{ type: string; number: string } | null | undefined>) => spots.filter(Boolean).map(spot => spotLabel(spot!.type, spot!.number)).join(', ') || 'none';
       const describeLines = (rows: Array<{ quantity: number; price: number; name: string }>) => rows.map(row => `${row.quantity}× ${row.name} @ R${row.price}`);
-      await writeAudit(user.id, 'EDIT_IMPORTED_BOOKING', 'booking', booking.id, {
+      await writeAudit(user.id, imported ? 'EDIT_IMPORTED_BOOKING' : 'EDIT_BOOKING', 'booking', booking.id, {
         reference: booking.reference,
         fields: Object.keys(updates),
         ...(itemsChanged && lines ? { items: { from: describeLines(existingLines.map(line => ({ quantity: line.quantity, price: Number(line.price_per_unit), name: String(line.metadata?.name || 'Item') }))), to: describeLines(lines) } } : {}),
@@ -346,9 +359,15 @@ export async function POST(request: Request) {
         ...(dateChanged ? { visit_date: { from: booking.visit_date, to: visitDate } } : {}),
         ...(updates.total_amount !== undefined ? { total_amount: { from: booking.total_amount, to: updates.total_amount } } : {}),
         ...(updates.people_count !== undefined ? { people_count: { from: booking.people_count, to: updates.people_count } } : {}),
+        ...(updates.amount_due !== undefined ? { amount_due: { from: booking.amount_due, to: updates.amount_due } } : {}),
       });
       const changed = itemsChanged || seatsMoved || Object.keys(updates).length > 0;
-      return NextResponse.json({ success: true, message: changed ? `Booking updated.${ticketNote}` : 'Nothing was changed.' });
+      // The customer's emailed QR codes no longer match once the tickets are rebuilt or the date moves.
+      const resendNote = paid && !imported && (dateChanged || (itemsChanged && !ticketNote))
+        ? ' Use "Resend tickets" to email the customer their updated tickets.' : '';
+      const owedNote = paid && updates.total_amount !== undefined && Number(updates.total_amount) > Number(booking.total_amount)
+        ? ' The total went up: record the extra payment under Balance once it is paid.' : '';
+      return NextResponse.json({ success: true, message: changed ? `Booking updated.${ticketNote}${resendNote}${owedNote}` : 'Nothing was changed.' });
     }
 
     if (action === 'purge') {

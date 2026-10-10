@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BookingEditError, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
+import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { calculateServerTotal, DEFAULT_PRICES, EDITABLE_ITEMS, matchEditableItem } from '@/lib/pricing';
 import { buildDailySummary } from '@/lib/daily-summary';
 
@@ -78,5 +78,20 @@ describe('editing booking items', () => {
     expect(row.children).toBe(10);
     expect(row.adults).toBe(3);
     expect(row.total).toBe(13); // the old "hut 3" line no longer counts as a person
+  });
+});
+
+describe('notes after an edit', () => {
+  it('keeps the system markers and replaces the staff note', () => {
+    expect(editedNotes('IMPORTED_FROM_BOOK\nold note', 'new note', 'IMPORTED_FROM_BOOK')).toBe('IMPORTED_FROM_BOOK\nnew note');
+    expect(editedNotes('WALK_IN', 'birthday', undefined)).toBe('WALK_IN\nbirthday');
+    expect(editedNotes('PAID_BY_VOUCHER', '', undefined)).toBe('PAID_BY_VOUCHER');
+  });
+  it('adds the imported marker when it is missing', () => {
+    expect(editedNotes(null, '', 'IMPORTED_FROM_BOOK')).toBe('IMPORTED_FROM_BOOK');
+  });
+  it('clears notes that only held a staff note', () => {
+    expect(editedNotes('call before arrival', '', undefined)).toBeNull();
+    expect(editedNotes(null, 'late arrival', undefined)).toBe('late arrival');
   });
 });

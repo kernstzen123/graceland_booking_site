@@ -94,3 +94,18 @@ export function linesChanged(lines: EditedLine[], existing: StoredLine[]) {
       || (stored.metadata?.isPerson === true) !== line.isPerson;
   });
 }
+
+/** A line of booking notes the system writes (IMPORTED_FROM_BOOK, WALK_IN, PAID_BY_VOUCHER, …) rather than staff. */
+const isMarkerLine = (line: string) => /^[A-Z_]+$/.test(line.trim());
+
+/**
+ * The notes to save after an edit: the system's marker lines are kept as they
+ * were (so an imported booking stays recognisable as imported, and so on) and
+ * the staff note replaces everything else.
+ */
+export function editedNotes(existing: string | null | undefined, staffNote: string, markerIfMissing?: string): string | null {
+  const markers = (existing || '').split('\n').filter(isMarkerLine).map(line => line.trim());
+  if (markerIfMissing && !markers.includes(markerIfMissing)) markers.unshift(markerIfMissing);
+  const notes = [...markers, ...(staffNote ? [staffNote] : [])].join('\n');
+  return notes || null;
+}

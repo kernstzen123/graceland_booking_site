@@ -17,12 +17,13 @@ type Payment = { id: string; amount: number; method: string; status: string; pro
 type Booking = { id: string; reference: string; visit_date: string; status: string; payment_method: string | null; total_amount: number; amount_due?: number | null; people_count: number; created_at: string; refunded_at?: string | null; voucher_issued?: boolean; voucher_amount_used?: number | null; deleted_at?: string | null; delete_reason?: string | null; attention_reason?: string | null; attention_at?: string | null; notes?: string | null; customers?: Customer | Customer[]; booking_items?: Array<{ id?: string; quantity: number; price_per_unit?: number; subtotal: number; metadata: { name?: string; itemId?: string; isPerson?: boolean } | null; packages?: Array<{ name: string }>; huts?: Array<{ name: string }> }>; booking_spots?: Array<{ spot_id?: string; venue_spots?: { number: string; type: string } | null }>; tickets?: Array<{ id: string; ticket_uid: string; status: string }>; payments?: Payment[] };
 type ListBooking = Pick<Booking, 'id' | 'reference' | 'visit_date' | 'status' | 'payment_method' | 'total_amount' | 'people_count' | 'created_at' | 'voucher_issued' | 'attention_reason' | 'deleted_at'> & { customers?: Partial<Customer> };
 type Action = 'resend_tickets' | 'delete' | 'purge' | 'mark_paid' | 'refund' | 'cancel_ticket' | 'resolve_attention';
-const isImported = (booking: Booking) => booking.reference.toUpperCase().startsWith('IM-') || booking.payment_method === 'IMPORTED';
 /** Notes typed by staff, without the system's markers (IMPORTED_FROM_BOOK, WALK_IN, …). */
 const staffNotes = (notes?: string | null) => (notes || '').split('\n').filter(line => !/^[A-Z_]+$/.test(line.trim())).join(' ').trim();
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }, { value: 'ATTENTION', label: 'Needs attention' }, { value: 'DELETED', label: 'Deleted' }];
 const PAID_STATUSES = ['PAID', 'CONFIRMED'];
+/** Bookings that can still be edited: paid, or waiting for payment (not cancelled, refunded or deleted). */
+const isEditable = (booking: Booking) => !booking.deleted_at && !booking.voucher_issued && [...PAID_STATUSES, 'PENDING', 'PAYMENT_PENDING'].includes(booking.status);
 /**
  * What a voucher refund is based on: the payments actually received (as the
  * database calculates it). An imported booking only counts the payments
@@ -153,7 +154,7 @@ function BookingsPage() {
       if (type === 'refund') showToast(data.emailSent ? 'Voucher issued and email sent' : 'Voucher issued; email queued for retry');
     } finally { setBusy(''); }
   };
-  /** Record a payment on an imported booking. Returns an error message, or '' when saved. */
+  /** Record a payment taken by hand on a paid booking. Returns an error message, or '' when saved. */
   const recordPayment = async (entry: PaymentEntry) => {
     if (!selected || busy) return 'Please wait…';
     setBusy('add_payment');
@@ -185,7 +186,7 @@ function BookingsPage() {
       if (response.ok) { showToast('Payment removed'); await openBooking(selected.id); }
     } finally { setBusy(''); }
   };
-  /** Save edits to an imported booking. Returns an error message, or '' when saved. */
+  /** Save edits to a booking. Returns an error message, or '' when saved. */
   const saveEdit = async (edit: Record<string, unknown>) => {
     if (!selected || busy) return 'Please wait…';
     setBusy('update');
@@ -408,7 +409,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
     </div>
     <h3 style={{ marginTop: '1.5rem' }}>Items</h3>
     {booking.booking_items?.map((item, index) => <p key={index} style={{ borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>{item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item'} × {item.quantity} · R {Number(item.subtotal).toFixed(2)}</p>)}
-    <BalanceSection booking={booking} canRecord={isImported(booking) && isPaid && !isDeleted && !booking.voucher_issued} onRecordPayment={onRecordPayment} />
+    <BalanceSection booking={booking} canRecord={isPaid && !isDeleted && !booking.voucher_issued} onRecordPayment={onRecordPayment} />
     <h3 style={{ marginTop: '1.5rem' }}>Payments</h3>
     {booking.payments?.length ? booking.payments.map(payment => {
       const recordedByHand = isImportedPaymentRow(payment);
@@ -422,7 +423,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
     <h3 style={{ marginTop: '1.5rem' }}>Tickets</h3>
     {booking.tickets?.length ? booking.tickets.map(ticket => <div key={ticket.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', flexWrap: 'wrap' }}><span style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>{ticket.ticket_uid} · <strong>{ticket.status}</strong></span>{ticket.status === 'VALID' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onAction('cancel_ticket', ticket.id)}>Invalidate</button>}</div>) : <p style={{ color: 'var(--text-muted)' }}>No tickets issued.</p>}
     {!isDeleted && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: '1.5rem' }}>
-      {isImported(booking) && <button className="btn btn-primary" onClick={startEditing}>Edit booking</button>}
+      {isEditable(booking) && <button className="btn btn-primary" onClick={startEditing}>Edit booking</button>}
       {isPaid && <button className="btn btn-primary" onClick={() => onAction('resend_tickets')}>Resend tickets</button>}
       {!isPaid && !isCancelled && <button className="btn" onClick={() => onAction('mark_paid')} style={{ border: '1px solid var(--border-color)' }}>Mark paid</button>}
       {isPaid && !booking.voucher_issued && <button className="btn" style={{ color: '#b91c1c', border: '1px solid #b91c1c' }} onClick={() => setShowRefundModal(true)}>Voucher refund</button>}
@@ -458,7 +459,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
             ))}
           </div>
           <button type="button" className="btn" onClick={() => setEditItems([...editItems, { itemId: null, quantity: '1', price: '0' }])} style={{ marginTop: 8, border: '1px solid var(--border-color)' }}>+ Add item</button>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 8 }}>Choosing an item fills in today&apos;s price; change it if the booking book shows a different price. Every entrance ticket gets a gate ticket; saving rebuilds unscanned tickets to match.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 8 }}>Choosing an item fills in today&apos;s price; change it if a different price applies (e.g. the booking book or the price the customer paid). Every entrance ticket gets a gate ticket; on a paid booking, saving rebuilds unscanned tickets to match.</p>
           {editItems.some(item => !item.itemId && item.legacyName) && <p style={{ color: 'var(--warning-text)', fontSize: '0.8rem', marginTop: 4 }}>Lines marked ⚠ were typed in by hand and are not counted in reports or the daily summary. Choose the matching item from the list.</p>}
 
           <h3 style={{ margin: '1rem 0 0.25rem' }}>Seating</h3>
@@ -519,7 +520,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
   </section>;
 }
 
-/** Total, paid and outstanding for a booking; on an imported booking, a form to record a payment. */
+/** Total, paid and outstanding for a booking, with a form to record a payment taken by hand. */
 function BalanceSection({ booking, canRecord, onRecordPayment }: { booking: Booking; canRecord: boolean; onRecordPayment: (entry: PaymentEntry) => Promise<string> }) {
   const [adding, setAdding] = useState(false);
   const [entry, setEntry] = useState<PaymentEntry>({ amount: '', method: 'CASH', paidOn: johannesburgToday(), note: '' });
