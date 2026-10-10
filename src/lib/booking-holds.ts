@@ -21,6 +21,17 @@ export function eftHoldHours() {
   return Number.isInteger(hours) && hours >= 1 && hours <= 168 ? hours : 48;
 }
 
+/**
+ * Bookings staff make on the Add booking tab without payment are not on a
+ * 48-hour clock: they keep their places until the end of the visit day
+ * (South African time), or until staff cancel or delete them.
+ */
+export const staffHoldUntil = (visitDate: string) => new Date(`${visitDate}T23:59:59+02:00`).toISOString();
+
+/** An unpaid booking made by staff (Add booking tab), not by a customer online. */
+export const isStaffUnpaidBooking = (booking: { sold_by?: string | null; payment_method?: string | null }) =>
+  Boolean(booking.sold_by) || booking.payment_method === 'MANUAL_EFT';
+
 export type HoldFailure =
   | 'NOT_FOUND' | 'CANCELLED' | 'ALREADY_PAID' | 'NOT_PAYABLE' | 'EXPIRED'
   | 'FULL' | 'SEAT_TAKEN' | 'VOUCHER_UNAVAILABLE' | 'DATE_PASSED' | 'DATE_CLOSED';
@@ -47,6 +58,18 @@ function rpcError(error: { code?: string; message?: string }) {
  * was made, and is never shortened.
  */
 export async function holdBookingForPayment(bookingId: string, holdMinutes: number, maxHoldHours = eftHoldHours()): Promise<HoldResult> {
+  // A booking staff made without payment is held until the end of its visit day instead
+  // (resending the EFT email or paying by PayFast must not cut that short or refuse it).
+  const { data: booking, error: lookupError } = await supabase.from('bookings').select('sold_by,payment_method,visit_date,created_at').eq('id', bookingId).maybeSingle();
+  if (lookupError) throw lookupError;
+  if (booking?.visit_date && isStaffUnpaidBooking(booking)) {
+    const until = new Date(staffHoldUntil(booking.visit_date)).getTime();
+    const minutesLeft = Math.floor((until - Date.now()) / 60000);
+    if (minutesLeft >= 1) {
+      holdMinutes = Math.max(holdMinutes, minutesLeft);
+      maxHoldHours = Math.max(maxHoldHours, Math.ceil((until - new Date(booking.created_at || Date.now()).getTime()) / 3600000));
+    }
+  }
   const { data, error } = await supabase.rpc('hold_booking_for_payment', {
     p_booking_id: bookingId,
     p_hold_minutes: holdMinutes,
