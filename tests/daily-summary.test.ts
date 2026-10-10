@@ -57,10 +57,14 @@ describe('daily summary', () => {
     expect(totals.get('On site 09:30–11:30 (parties + day visitors)')?.value).toBe(28);
     expect(totals.get('On site 12:00–14:00 (parties + day visitors)')?.value).toBe(8);
     expect(totals.get('Total day visitors')?.value).toBe(8);
-    expect(totals.get('Total booked for the day (all parties + day visitors)')?.value).toBe(28);
+    expect(totals.get('Total booked for the day (day visitors + all parties)')?.value).toBe(28);
     // The on-site formula must point at the row the day visitor actually sits on.
     const dayVisitorRow = sheet.getColumn(1).values.findIndex(value => value === 'DV');
     expect(totals.get('On site 12:00–14:00 (parties + day visitors)')?.formula).toBe(`C${dayVisitorRow}`);
+    // Day visitors come first, then the party slots.
+    const labels = sheet.getColumn(1).values.map(value => String(value ?? ''));
+    expect(labels.indexOf('Day visitors')).toBeLessThan(labels.indexOf('Birthday parties · 09:30–11:30'));
+    expect(labels.indexOf('Total day visitors')).toBeLessThan(labels.indexOf('Birthday parties · 09:30–11:30'));
   });
 });
 

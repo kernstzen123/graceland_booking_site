@@ -6,7 +6,7 @@ import { buildDailySummary, type SummaryBooking } from '@/lib/daily-summary';
 import { buildDailySummaryWorkbook } from '@/lib/daily-summary-workbook';
 import { loadHutSchedule } from '@/lib/hut-schedule';
 
-/** The day's paid online bookings as a printable Excel sheet (party slots, then day visitors), plus the hut and table schedule. */
+/** The day's paid online bookings as a printable Excel sheet (day visitors, then party slots), plus the hut and table schedule. */
 export async function GET(request: Request) {
   try {
     await requireAdmin(request, ['ADMIN', 'MANAGER']);
