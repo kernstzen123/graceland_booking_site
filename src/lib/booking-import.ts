@@ -173,7 +173,7 @@ export async function readImportFile(buffer: ArrayBuffer): Promise<ImportRow[]> 
       add(`${prefix}-infant`, count('infants'));
 
       const bad = input.spotNumbers.find(number => !/^[HT]\d{1,2}$/.test(number));
-      if (bad) throw new Error(`"${bad}" is not a hut or table number. Use H1–H16 or T1–T12.`);
+      if (bad) throw new Error(`"${bad}" is not a hut or table number. Use H1–H16 or T1–T14.`);
       const hutCount = input.spotNumbers.filter(number => number.startsWith('H')).length;
       const tableCount = input.spotNumbers.filter(number => number.startsWith('T')).length;
 

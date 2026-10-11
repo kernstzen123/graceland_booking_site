@@ -1,6 +1,6 @@
 /**
  * Seating spots on the venue map. Current spots are numbered H1–H16 (covered
- * huts) and T1–T12 (shaded tables); spots from the previous map were numbered
+ * huts) and T1–T14 (shaded tables); spots from the previous map were numbered
  * 1–28 and are only still shown on bookings made before the map changed.
  */
 
