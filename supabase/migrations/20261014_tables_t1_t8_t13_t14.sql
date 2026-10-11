@@ -1,33 +1,38 @@
 -- 20261014_tables_t1_t8_t13_t14.sql
 --
--- Seating map (public/venue-map-new.jpg): new positions for shaded tables
--- T1–T8, and two new shaded tables, T13 and T14 (6 people each). Positions
--- are percentages of the map image, as staff measured them.
+-- Seating map (public/venue-map-new.jpg, 1024 × 922): measured positions for
+-- shaded tables T1–T12, and two new shaded tables, T13 and T14 (6 people
+-- each). Positions are percentages of the map image.
 --
 -- Moving a table only moves its marker on the map: bookings that already have
--- T1–T8 keep them. T9–T12 and the huts are not touched.
+-- a table keep it. The huts are not touched.
 --
--- Safe to run more than once. Apply after 20261013_staff_bookings_never_lapse.sql.
+-- Safe to run more than once (also after an earlier version of this file).
+-- Apply after 20261013_staff_bookings_never_lapse.sql.
 
 begin;
 
 update public.venue_spots s
    set x_percent = v.x, y_percent = v.y
   from (values
-    ('T1', 52.93, 31.90),
-    ('T2', 55.17, 30.27),
-    ('T3', 57.53, 28.83),
-    ('T4', 59.83, 27.33),
-    ('T5', 54.83, 35.57),
-    ('T6', 57.01, 33.93),
-    ('T7', 59.37, 32.36),
-    ('T8', 61.72, 30.79)
+    ('T1',  53.59, 28.39),
+    ('T2',  56.62, 26.12),
+    ('T3',  59.23, 24.31),
+    ('T4',  62.42, 22.04),
+    ('T5',  55.96, 31.93),
+    ('T6',  58.58, 29.75),
+    ('T7',  61.11, 27.76),
+    ('T8',  64.30, 25.94),
+    ('T9',  49.59, 58.34),
+    ('T10', 54.58, 58.70),
+    ('T11', 53.02, 63.60),
+    ('T12', 48.28, 62.87)
   ) as v(number, x, y)
  where s.number = v.number and s.type = 'table';
 
 insert into public.venue_spots(number, type, capacity, x_percent, y_percent, active) values
-  ('T13', 'table', 6, 45.92, 64.79, true),
-  ('T14', 'table', 6, 44.25, 60.94, true)
+  ('T13', 'table', 6, 46.16, 65.96, true),
+  ('T14', 'table', 6, 43.79, 61.78, true)
 on conflict (number) do update
   set type = excluded.type, capacity = excluded.capacity,
       x_percent = excluded.x_percent, y_percent = excluded.y_percent, active = true;
