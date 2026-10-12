@@ -60,6 +60,12 @@ export async function POST(request: Request) {
     let validatedParty: PartyDetails | undefined;
     if (isParty) {
       validatedParty = validatePartyFields(party as PartyDetails);
+      // A booking is a birthday party or a day visit, not both: a party can add extra huts and
+      // tables, but no day-visitor entrance tickets or specials.
+      const dayTickets = Object.entries(selections || {}).some(([key, value]) => Number(value) > 0 && BOOKABLE_ITEMS[key]?.isPerson);
+      if (dayTickets || specials.length) {
+        return NextResponse.json({ success: false, error: 'A booking can be a birthday party or a day visit, not both. Remove the day-visitor tickets and specials, or book them separately.' }, { status: 400 });
+      }
     }
 
     // Validate and sanitize attendee names (only for non-party bookings)
@@ -97,7 +103,7 @@ export async function POST(request: Request) {
     // A special switched on to be given free from a set spend: when the cart is that amount or more,
     // the booking also gets the special's free tickets and meal vouchers (R0, so the total is unchanged).
     // Decided here only; the browser never sends it.
-    const autoSpecial = await loadAutoSpecial(selectedDate, serverTotal, prices, specials.map(special => special.id));
+    const autoSpecial = isParty ? null : await loadAutoSpecial(selectedDate, serverTotal, prices, specials.map(special => special.id));
     if (autoSpecial) {
       specials = [...specials, autoSpecial];
       lineItems = calculateServerTotal(serverSelections, validatedParty, prices, specials).lineItems;

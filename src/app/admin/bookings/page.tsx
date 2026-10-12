@@ -251,7 +251,11 @@ function BookingsPage() {
   };
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     {toast && <div role="status" style={{ position: 'fixed', top: 24, right: 24, left: 24, zIndex: 20, background: '#065f46', color: 'white', padding: '1rem 1.25rem', borderRadius: 10, textAlign: 'center' }}>✓ {toast}</div>}
-    <PageHeader eyebrow="Bookings" title="All bookings" description="Search, filter and manage every booking." actions={<button className="btn btn-primary" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ gap: 6 }}><DownloadIcon size={15} /> Export to Excel</button>} />
+    <PageHeader eyebrow="Bookings" title="All bookings" description="Search, filter and manage every booking." actions={<>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>Refund all for <input aria-label="Refund all date" type="date" value={refundDate} onChange={event => setRefundDate(event.target.value)} style={{ padding: 8, marginLeft: 4 }} /></label>
+      <button className="btn" onClick={refundAll} disabled={busy === 'refund-all-preview'} style={{ color: '#b91c1c', border: '1px solid #b91c1c' }}>{busy === 'refund-all-preview' ? 'Checking bookings…' : 'Refund all for date'}</button>
+      <button className="btn btn-primary" onClick={() => { setExportMode('all'); setExportFrom(''); setExportTo(''); setShowExport(true); }} style={{ gap: 6 }}><DownloadIcon size={15} /> Export to Excel</button>
+    </>} />
     {/* ── Export Modal ─── */}
     {showExport && <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowExport(false); }}>
       <div className="modal-card" role="dialog" aria-modal="true">
@@ -280,7 +284,6 @@ function BookingsPage() {
         {dateFilter && <button type="button" className="btn" onClick={() => setDateFilter('')} style={{ border: '1px solid var(--border-color)' }}>Any date</button>}
         <button className="btn btn-primary">Search</button>
       </form>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>Refund all for <input type="date" value={refundDate} onChange={event => setRefundDate(event.target.value)} style={{ padding: 8, marginLeft: 4 }} /></label><button className="btn" onClick={refundAll} disabled={busy === 'refund-all-preview'} style={{ color: '#b91c1c', border: '1px solid #b91c1c' }}>{busy === 'refund-all-preview' ? 'Checking bookings…' : 'Refund all for date'}</button></div>
     </div>
     {attentionCount > 0 && statusFilter !== 'ATTENTION' && <div className="callout callout-danger" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
       <p style={{ margin: 0, flex: '1 1 260px' }}><strong>{attentionCount} booking{attentionCount === 1 ? ' needs' : 's need'} attention.</strong> Money was received for {attentionCount === 1 ? 'a booking that' : 'bookings that'} could not be confirmed automatically.</p>

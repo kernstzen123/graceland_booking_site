@@ -33,7 +33,7 @@ export function BookingSummary({ selectedDate, selections, specials, party, pric
       .catch(() => {});
     return () => { cancelled = true; };
   }, [selectedDate]);
-  const autoSpecial = pickAutoSpecial(availableSpecials, bookingTotal, prices, specials.map(special => special.id));
+  const autoSpecial = party.enabled ? null : pickAutoSpecial(availableSpecials, bookingTotal, prices, specials.map(special => special.id));
   const { lineItems: calcItems } = calculateServerTotal(selections, party.enabled ? party : undefined, prices, autoSpecial ? [...specials, autoSpecialSelection(autoSpecial)] : specials);
   
   const [voucherInput, setVoucherInput] = React.useState('');

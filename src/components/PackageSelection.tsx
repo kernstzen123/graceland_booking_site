@@ -56,7 +56,9 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
 
   const packageGroups = buildPackageGroups(prices);
   // A special given free when the cart is over its minimum spend (the booking API decides; this only shows it).
-  const autoSpecial = pickAutoSpecial(availableSpecials, calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total, prices, specials.map(special => special.id));
+  // A booking is a birthday party or a day visit, not both (huts and tables can be added to either).
+  const dayVisitInCart = specials.length > 0 || Object.entries(selections).some(([id, quantity]) => Number(quantity) > 0 && !id.startsWith('hut-'));
+  const autoSpecial = party.enabled ? null : pickAutoSpecial(availableSpecials, calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total, prices, specials.map(special => special.id));
   const price = (key: string) => priceOf(prices, key);
   /** What the swimming button adds to a non-swimming party adult (R180 swimming − R80 non-swimming = R100 by default). */
   const swimmingUpgrade = Math.max(0, price('party-adult-swimming') - price('party-adult-non-swimming'));
@@ -115,7 +117,11 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
       <div className="card" style={{ flex: '1 1 700px', maxWidth: 'none', margin: 0 }}>
         <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Step 2: Select Packages</h2>
 
-        {availableSpecials.length > 0 && (
+        {party.enabled && <div className="callout callout-info" style={{ marginTop: 0, marginBottom: '1.5rem' }}>
+          <p><strong>You are booking a birthday party.</strong> Day-visitor tickets and specials can&apos;t be added to a party booking; you can still add extra huts or shaded tables. To book a day visit instead, untick &quot;I want to book a birthday party&quot; below.</p>
+        </div>}
+
+        {!party.enabled && availableSpecials.length > 0 && (
           <div style={{ marginBottom: '2.5rem' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '1.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               SPECIAL OFFERS & PACKAGES
@@ -174,7 +180,7 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
           </div>
         )}
 
-        {packageGroups.map((group, i) => (
+        {packageGroups.filter(group => !party.enabled || group.category === 'DAY VISITOR HUTS').map((group, i) => (
           <div key={i} style={{ marginBottom: '2rem' }}>
             <h3 style={{ fontSize: '1.2rem', color: 'var(--primary)', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
               {group.category}
@@ -226,10 +232,11 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
           )}
           {partyError && <div className="callout callout-danger"><p>{partyError}</p></div>}
 
-          <label className={`party-toggle-row${party.enabled ? ' active' : ''}`}>
-            <input type="checkbox" checked={party.enabled} onChange={event => onPartyChange({ ...party, enabled: event.target.checked })} />
+          <label className={`party-toggle-row${party.enabled ? ' active' : ''}`} style={!party.enabled && dayVisitInCart ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}>
+            <input type="checkbox" checked={party.enabled} disabled={!party.enabled && dayVisitInCart} onChange={event => onPartyChange({ ...party, enabled: event.target.checked })} />
             <span>I want to book a birthday party</span>
           </label>
+          {!party.enabled && dayVisitInCart && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>A booking can be a day visit or a birthday party, not both. To book a party, first remove the day-visitor tickets and specials above.</p>}
 
           {party.enabled && <div className="party-fieldset">
             <div>
