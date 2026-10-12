@@ -121,18 +121,18 @@ export async function prepareStaffBooking(input: StaffBookingInput) {
   return { visitDate, customer: { firstName, lastName, email, phone }, party, people, total, items, spotIds, notes };
 }
 
-export type StaffBookingResult = { bookingId: string; reference: string; created: boolean; total: number; ticketsEmailed: boolean | null; eftSent: boolean | null };
+export type StaffBookingResult = { bookingId: string; reference: string; created: boolean; total: number; ticketsEmailed: boolean | null; eftSent: boolean | null; unpaid?: boolean };
 
 /**
  * Create a prepared staff booking.
  * - kind IMPORTED: marked paid and imported; tickets are created for check-in but never emailed.
  * - kind OFFICE with payment: marked paid; tickets emailed when there is an email address.
- * - kind OFFICE without payment: left unpaid and the customer is emailed EFT instructions.
+ * - kind OFFICE without payment: left unpaid; the customer is emailed EFT instructions only when staff ask for it (sendEftEmail).
  * Re-running with the same idempotency key returns the booking made the first time.
  */
-export async function createStaffBooking(prepared: PreparedBooking, options: { kind: 'IMPORTED' | 'OFFICE'; actorId: string; idempotencyKey?: string | null; payment?: { method: OfficePaymentKey; reference?: string } | null }): Promise<StaffBookingResult> {
+export async function createStaffBooking(prepared: PreparedBooking, options: { kind: 'IMPORTED' | 'OFFICE'; actorId: string; idempotencyKey?: string | null; payment?: { method: OfficePaymentKey; reference?: string } | null; sendEftEmail?: boolean }): Promise<StaffBookingResult> {
   const { kind, actorId } = options;
-  if (kind === 'OFFICE' && !options.payment && !prepared.customer.email) throw new StaffBookingError('An email address is needed to send EFT payment instructions.');
+  if (kind === 'OFFICE' && !options.payment && options.sendEftEmail && !prepared.customer.email) throw new StaffBookingError('An email address is needed to send EFT payment instructions.');
   const prefix = kind === 'IMPORTED' ? 'IM' : 'BK';
   const reference = `${prefix}-${prepared.visitDate.slice(0, 4)}-${crypto.randomBytes(5).toString('base64url').replace(/[_-]/g, '').slice(0, 8).toUpperCase().padEnd(8, '0')}`;
 
@@ -201,13 +201,17 @@ ${prepared.notes}` : IMPORTED_NOTE, expires_at: null, sold_by: actorId }).eq('id
     const { error } = await supabase.from('bookings').update({ payment_method: 'MANUAL_EFT', sold_by: actorId, notes: prepared.notes || null, expires_at: STAFF_HOLD_UNTIL }).eq('id', bookingId);
     if (error) throw error;
     completed = true;
-    await writeAudit(actorId, 'OFFICE_BOOKING', 'booking', bookingId, { reference, total: prepared.total, payment: 'EFT instructions sent' });
-    let eftSent = true;
-    try { await sendEftInstructions(bookingId); } catch (emailError) {
-      eftSent = false;
-      await recordNotificationFailure('booking', 'EFT_INSTRUCTIONS', prepared.customer.email, bookingId, emailError);
+    await writeAudit(actorId, 'OFFICE_BOOKING', 'booking', bookingId, { reference, total: prepared.total, payment: options.sendEftEmail ? 'EFT instructions sent' : 'Unpaid, no EFT email' });
+    // The EFT email only goes out when staff tick it on the Add booking page.
+    let eftSent: boolean | null = null;
+    if (options.sendEftEmail) {
+      eftSent = true;
+      try { await sendEftInstructions(bookingId); } catch (emailError) {
+        eftSent = false;
+        await recordNotificationFailure('booking', 'EFT_INSTRUCTIONS', prepared.customer.email, bookingId, emailError);
+      }
     }
-    return { bookingId, reference, created: true, total: prepared.total, ticketsEmailed: null, eftSent };
+    return { bookingId, reference, created: true, total: prepared.total, ticketsEmailed: null, eftSent, unpaid: true };
   } catch (error) {
     // Nothing was recorded as paid yet: remove the half-made booking so it does not hold places or seating.
     if (!completed) {

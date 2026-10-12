@@ -13,7 +13,7 @@ import { spotLabel } from '@/lib/seating';
 
 type Spot = { id: string; number: string; type: 'hut' | 'table'; available: boolean; unavailableReason?: string; recommended?: boolean };
 type PaymentKey = 'CASH' | 'CARD' | 'EFT';
-type Result = { reference: string; total: number; ticketsEmailed: boolean | null; eftSent: boolean | null; created: boolean; email: string };
+type Result = { reference: string; total: number; ticketsEmailed: boolean | null; eftSent: boolean | null; created: boolean; email: string; unpaid?: boolean };
 type ImportResult = { row: number; name: string; date: string; people: number; ok: boolean; message: string; reference?: string };
 
 const PAYMENT_LABELS: Record<PaymentKey, string> = { CASH: 'Cash', CARD: 'Card machine', EFT: 'EFT received' };
@@ -62,6 +62,8 @@ function NewBooking() {
   const [spotIds, setSpotIds] = useState<string[]>([]);
   const [spotError, setSpotError] = useState('');
   const [paid, setPaid] = useState(true);
+  // Unpaid bookings: the EFT payment email is only sent when staff choose to.
+  const [sendEft, setSendEft] = useState(false);
   const [method, setMethod] = useState<PaymentKey>('CASH');
   const [paymentReference, setPaymentReference] = useState('');
   const [notes, setNotes] = useState('');
@@ -92,7 +94,7 @@ function NewBooking() {
   const chosenTables = spots.filter(spot => spotIds.includes(spot.id) && spot.type === 'table').length;
   const people = lineItems.filter(line => line.isPerson).reduce((sum, line) => sum + line.quantity, 0);
   const seatingReady = chosenHuts === huts && chosenTables === tables;
-  const customerReady = customer.firstName.trim() && customer.lastName.trim() && (customer.phone.trim() || customer.email.trim()) && (paid || customer.email.trim());
+  const customerReady = customer.firstName.trim() && customer.lastName.trim() && (customer.phone.trim() || customer.email.trim()) && (paid || !sendEft || customer.email.trim());
   const canSubmit = pricesLoaded && Boolean(date) && Boolean(customerReady) && people > 0 && (!isParty || Boolean(party.slot)) && seatingReady && !submitting;
 
   const loadSpots = useCallback(async () => {
@@ -130,13 +132,13 @@ function NewBooking() {
   const reset = () => {
     setDate(''); setCustomer({ firstName: '', lastName: '', phone: '', email: '' }); setIsParty(false);
     setParty({ option: 'option-1', slot: '', children: 10, adultsSwim: 0, adultsDry: 0, kidsSwim: 0, kidsDry: 0, packs: 0 });
-    setSelections({}); setSpotIds([]); setPaid(true); setMethod('CASH'); setPaymentReference(''); setNotes('');
+    setSelections({}); setSpotIds([]); setPaid(true); setSendEft(false); setMethod('CASH'); setPaymentReference(''); setNotes('');
     setResult(null); setError(''); bookingKey.current = newKey();
   };
 
   const submit = async () => {
     if (!canSubmit) return;
-    const summary = `${customer.firstName} ${customer.lastName} · ${date}${isParty ? ` · party ${party.slot}` : ''}\n${lineItems.filter(line => line.quantity > 0 && line.subtotal >= 0).map(line => `${line.quantity}× ${line.name}`).join('\n')}${spotIds.length ? `\nSeating: ${spots.filter(spot => spotIds.includes(spot.id)).map(spot => spotLabel(spot.type, spot.number)).join(', ')}` : ''}\n\nTotal: ${rand(total)}\n${paid ? `Paid: ${PAYMENT_LABELS[method]}${customer.email ? ' · QR tickets will be emailed' : ' · no email, so no tickets are emailed'}` : 'Not paid: EFT payment instructions will be emailed (the booking keeps its places until an admin or manager deletes it)'}`;
+    const summary = `${customer.firstName} ${customer.lastName} · ${date}${isParty ? ` · party ${party.slot}` : ''}\n${lineItems.filter(line => line.quantity > 0 && line.subtotal >= 0).map(line => `${line.quantity}× ${line.name}`).join('\n')}${spotIds.length ? `\nSeating: ${spots.filter(spot => spotIds.includes(spot.id)).map(spot => spotLabel(spot.type, spot.number)).join(', ')}` : ''}\n\nTotal: ${rand(total)}\n${paid ? `Paid: ${PAYMENT_LABELS[method]}${customer.email ? ' · QR tickets will be emailed' : ' · no email, so no tickets are emailed'}` : `Not paid: ${sendEft ? 'EFT payment instructions will be emailed' : 'no EFT email is sent'} (the booking keeps its places until it is paid or an admin or manager deletes it)`}`;
     const answer = await confirm({ title: 'Save this booking?', message: summary, confirmLabel: 'Save booking' });
     if (!answer.confirmed) return;
     setSubmitting(true); setError('');
@@ -144,7 +146,7 @@ function NewBooking() {
       const response = await fetch('/api/admin/add-booking', {
         method: 'POST',
         headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitDate: date, customer, selections, party: partyDetails, spotIds, notes, payment: paid ? { method, reference: paymentReference } : null, expectedTotal: total, idempotencyKey: bookingKey.current }),
+        body: JSON.stringify({ visitDate: date, customer, selections, party: partyDetails, spotIds, notes, payment: paid ? { method, reference: paymentReference } : null, sendEftEmail: !paid && sendEft, expectedTotal: total, idempotencyKey: bookingKey.current }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'The booking could not be saved');
@@ -164,9 +166,10 @@ function NewBooking() {
       <p style={{ marginTop: '0.5rem' }}>
         {result.ticketsEmailed === true && `QR tickets were emailed to ${result.email}.`}
         {result.ticketsEmailed === false && 'The tickets are ready, but the email could not be sent. It is listed under Email retries.'}
-        {result.ticketsEmailed === null && result.eftSent === null && 'No email address, so no tickets were emailed. At the gate, find the guest by name or phone in the scanner search.'}
+        {!result.unpaid && result.ticketsEmailed === null && result.eftSent === null && 'No email address, so no tickets were emailed. At the gate, find the guest by name or phone in the scanner search.'}
         {result.eftSent === true && `EFT payment instructions were emailed to ${result.email}. The booking keeps its places until it is paid or an admin or manager deletes it; approve the proof of payment when it arrives.`}
-        {result.eftSent === false && 'The EFT instructions could not be emailed. They are listed under Email retries; the booking is only held for 15 minutes until they are sent.'}
+        {result.eftSent === false && 'The EFT instructions could not be emailed. They are listed under Email retries. The booking keeps its places.'}
+        {result.unpaid && result.eftSent === null && 'Saved as not paid. No EFT email was sent. The booking keeps its places until it is paid or an admin or manager deletes it.'}
       </p>
       <div style={{ display: 'flex', gap: 8, marginTop: '1rem', flexWrap: 'wrap' }}>
         <Link className="btn btn-secondary" href={`/admin/bookings?q=${encodeURIComponent(result.reference)}`}>Open booking</Link>
@@ -254,7 +257,13 @@ function NewBooking() {
         </div>
         <label style={{ ...labelStyle, marginTop: '0.75rem' }}>Receipt / payment reference (optional)<input value={paymentReference} maxLength={80} onChange={event => setPaymentReference(event.target.value)} style={fieldStyle} /></label>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>Only choose Paid once the money has been received. {customer.email ? 'QR tickets are emailed to the customer.' : 'Without an email address, no tickets are emailed; the gate finds the guest by name or phone.'}</p>
-      </> : <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>The customer is emailed the EFT payment details. The booking keeps its places until it is paid or an admin or manager deletes it (only online bookings have 48 hours to pay). {customer.email ? '' : <strong>An email address is required.</strong>}</p>}
+      </> : <>
+        <div className="walkin-methods" role="radiogroup" aria-label="EFT payment email" style={{ marginTop: '0.5rem' }}>
+          <button type="button" role="radio" aria-checked={!sendEft} className={`walkin-method${!sendEft ? ' selected' : ''}`} onClick={() => setSendEft(false)}>Don&apos;t send EFT email</button>
+          <button type="button" role="radio" aria-checked={sendEft} className={`walkin-method${sendEft ? ' selected' : ''}`} onClick={() => setSendEft(true)}>Send EFT email</button>
+        </div>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>{sendEft ? 'The customer is emailed the EFT payment details and bank account.' : 'No email is sent to the customer.'} The booking keeps its places until it is paid or an admin or manager deletes it (only online bookings have 48 hours to pay). {sendEft && !customer.email ? <strong>An email address is required to send the EFT email.</strong> : ''}</p>
+      </>}
 
       {error && <p role="alert" className="callout callout-danger" style={{ marginTop: '0.75rem' }}>{error}</p>}
       {!seatingReady && huts + tables > 0 && <p style={{ color: 'var(--warning-text)', fontSize: '0.85rem', marginTop: '0.75rem' }}>Choose the seating before saving.</p>}

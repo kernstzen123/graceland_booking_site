@@ -4,8 +4,8 @@ import { createStaffBooking, OFFICE_PAYMENT_METHODS, prepareStaffBooking, StaffB
 
 /**
  * POST — a booking taken by staff (phone or office). Paid bookings get their
- * QR tickets emailed; unpaid ones get EFT payment instructions.
- * Body: { visitDate, customer, selections, party?, spotIds, notes?, payment: { method, reference? } | null, idempotencyKey }
+ * QR tickets emailed; unpaid ones are only emailed EFT payment instructions when sendEftEmail is true.
+ * Body: { visitDate, customer, selections, party?, spotIds, notes?, payment: { method, reference? } | null, sendEftEmail?, idempotencyKey }
  */
 export async function POST(request: Request) {
   try {
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
       throw new StaffBookingError(`Prices have changed: the total is now R ${prepared.total.toFixed(2)}. Check it with the customer and submit again.`);
     }
     const key = typeof body?.idempotencyKey === 'string' && body.idempotencyKey.trim() ? `office-${body.idempotencyKey.trim().slice(0, 80)}` : null;
-    const result = await createStaffBooking(prepared, { kind: 'OFFICE', actorId: user.id, idempotencyKey: key, payment });
+    const result = await createStaffBooking(prepared, { kind: 'OFFICE', actorId: user.id, idempotencyKey: key, payment, sendEftEmail: !payment && body?.sendEftEmail === true });
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     if (error instanceof AdminAuthError) return NextResponse.json({ success: false, error: error.message }, { status: error.status });

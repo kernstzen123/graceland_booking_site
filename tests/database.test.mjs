@@ -300,7 +300,9 @@ it('database migrations and functions behave correctly', async () => {
 
   // ── New seating map ─────────────────────────────────────────────────────
   const activeSpots = await rows(`select number, type, capacity from public.venue_spots where active`);
-  check('new map: 16 huts for 14 people and 12 tables for 6', activeSpots.filter(s => s.type === 'hut' && s.capacity === 14 && /^H\d+$/.test(s.number)).length === 16 && activeSpots.filter(s => s.type === 'table' && s.capacity === 6 && /^T\d+$/.test(s.number)).length === 12 && activeSpots.length === 28, `${activeSpots.length} active`);
+  check('new map: 16 huts for 14 people and 14 tables for 6 (T13 and T14 added in 20261014)', activeSpots.filter(s => s.type === 'hut' && s.capacity === 14 && /^H\d+$/.test(s.number)).length === 16 && activeSpots.filter(s => s.type === 'table' && s.capacity === 6 && /^T\d+$/.test(s.number)).length === 14 && activeSpots.length === 30, `${activeSpots.length} active`);
+  const moved = await rows(`select number, x_percent::float as x, y_percent::float as y from public.venue_spots where number in ('T1', 'T8', 'T13', 'T14') order by number`);
+  check('tables T1–T12 moved and T13, T14 placed on the map', JSON.stringify(moved) === JSON.stringify([{ number: 'T1', x: 53.59, y: 28.39 }, { number: 'T13', x: 46.16, y: 65.96 }, { number: 'T14', x: 43.79, y: 61.78 }, { number: 'T8', x: 64.3, y: 25.94 }]), JSON.stringify(moved));
   const retired = await rows(`select id from public.venue_spots where not active`);
   check('old map spots are retired, not deleted', retired.length === 28);
   const seatBooking = await reserve('BK-SEAT', 2, 100);
@@ -322,7 +324,7 @@ it('database migrations and functions behave correctly', async () => {
   await seat(await party('BK-TABLE-A', '09:30–11:30'), partyTable);
   await expectError('a table is booked for the whole day, even by a party', `select public.reserve_booking_spots('${await party('BK-TABLE-B', '14:30–16:30')}', '${future}', array['${partyTable}']::uuid[])`, /just taken/);
   const seatingReport = (await one(`select public.admin_report_data($1::date, $1::date, 'visit') as r`, [future])).r.seating;
-  check('report totals count only the current map', Number(seatingReport.hutTotal) === 16 && Number(seatingReport.tableTotal) === 12, JSON.stringify(seatingReport));
+  check('report totals count only the current map', Number(seatingReport.hutTotal) === 16 && Number(seatingReport.tableTotal) === 14, JSON.stringify(seatingReport));
 
   // ── Specials ────────────────────────────────────────────────────────────
   // A Saturday and the Sunday after it, at least a week from now.

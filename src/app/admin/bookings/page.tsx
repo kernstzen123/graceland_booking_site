@@ -386,7 +386,10 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', visit_date: '', notes: '', total: '', people: '' });
+  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', visit_date: '', party_slot: '', notes: '', total: '', people: '' });
+  // A party (it has a time slot, or party lines from an older import) can be moved to another time slot.
+  const partyBooking = Boolean(booking.party_slot) || (booking.booking_items || []).some(item => item.metadata?.party === true);
+  const [partySlots, setPartySlots] = useState<string[]>([]);
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [prices, setPrices] = useState<PriceList>(DEFAULT_PRICES);
   const [seatIds, setSeatIds] = useState<string[]>([]);
@@ -402,28 +405,29 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
   const chosenTables = seatIds.filter(id => seatType(id) === 'table').length;
   const seatsMatch = chosenHuts === need.huts && chosenTables === need.tables;
 
-  /** Huts and tables on the map for a date, marking those another booking holds. */
-  const loadSeats = async (date: string) => {
+  /** Huts and tables on the map for a date (and, for a party, its time slot), marking those another booking holds. */
+  const loadSeats = async (date: string, slot = '') => {
     setSeatError('');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
     try {
       const accessToken = (await supabaseBrowser.auth.getSession()).data.session?.access_token || '';
-      const response = await fetch(`/api/admin/bookings/${booking.id}/seating?date=${date}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' });
+      const response = await fetch(`/api/admin/bookings/${booking.id}/seating?date=${date}${slot ? `&slot=${encodeURIComponent(slot)}` : ''}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not load the seating.');
       setSeatOptions(data.spots);
+      setPartySlots(Array.isArray(data.slots) ? data.slots : []);
     } catch (loadError) { setSeatError(loadError instanceof Error ? loadError.message : 'Could not load the seating.'); }
   };
   const startEditing = () => {
     const current = customerOf(booking);
-    setForm({ first_name: current?.first_name || '', last_name: current?.last_name || '', email: current?.email || '', phone: current?.phone || '', visit_date: booking.visit_date, notes: staffNotes(booking.notes), total: String(Number(booking.total_amount)), people: String(booking.people_count) });
+    setForm({ first_name: current?.first_name || '', last_name: current?.last_name || '', email: current?.email || '', phone: current?.phone || '', visit_date: booking.visit_date, party_slot: booking.party_slot || '', notes: staffNotes(booking.notes), total: String(Number(booking.total_amount)), people: String(booking.people_count) });
     setEditItems((booking.booking_items || []).map(item => {
       const match = matchEditableItem(item.metadata);
       return { id: item.id, itemId: match?.id || null, legacyName: match ? undefined : item.metadata?.name || 'Booking item', legacyPerson: item.metadata?.isPerson === true, quantity: String(item.quantity), price: String(Number(item.price_per_unit ?? 0)) };
     }));
     setSeatIds(currentSeats.map(seat => seat.id));
     setEditError(''); setEditing(true);
-    loadSeats(booking.visit_date);
+    loadSeats(booking.visit_date, booking.party_slot || '');
     fetch('/api/prices', { cache: 'no-store' }).then(response => (response.ok ? response.json() : null)).then(data => { if (data?.prices) setPrices(data.prices); }).catch(() => { /* default prices stay */ });
   };
   const chooseItem = (index: number, itemId: string) => {
@@ -436,6 +440,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
     const error = await onSaveEdit({
       customer: { first_name: form.first_name, last_name: form.last_name, email: form.email, phone: form.phone },
       visit_date: form.visit_date, notes: form.notes, total_amount: form.total, people_count: form.people,
+      ...(partyBooking ? { party_slot: form.party_slot } : {}),
       spot_ids: seatIds.filter(Boolean),
       items: editItems.map(item => ({ id: item.id, itemId: item.itemId, quantity: Number(item.quantity), price_per_unit: Number(item.price) })),
     });
@@ -541,7 +546,15 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
             <label style={labelStyle}>Surname<input style={inputStyle} value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} /></label>
             <label style={labelStyle}>Email<input style={inputStyle} type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
             <label style={labelStyle}>Phone<input style={inputStyle} value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
-            <label style={labelStyle}>Visit date<input style={inputStyle} type="date" value={form.visit_date} onChange={e => { setForm({ ...form, visit_date: e.target.value }); loadSeats(e.target.value); }} /></label>
+            <label style={labelStyle}>Visit date<input style={inputStyle} type="date" value={form.visit_date} onChange={e => { setForm({ ...form, visit_date: e.target.value }); loadSeats(e.target.value, form.party_slot); }} /></label>
+            {partyBooking && <label style={labelStyle}>Party time slot
+              <select style={{ ...inputStyle, borderColor: form.party_slot && !partySlots.includes(form.party_slot) ? 'var(--warning)' : 'var(--border-color)' }} value={form.party_slot} onChange={e => { setForm({ ...form, party_slot: e.target.value }); loadSeats(form.visit_date, e.target.value); }}>
+                {!form.party_slot && <option value="">Choose a time slot…</option>}
+                {form.party_slot && !partySlots.includes(form.party_slot) && <option value={form.party_slot}>{form.party_slot} (not a party slot on this date)</option>}
+                {partySlots.map(slot => <option key={slot} value={slot}>{slot}</option>)}
+              </select>
+              {partySlots.length === 0 && <small style={{ color: 'var(--warning-text)' }}>There are no party time slots on this date.</small>}
+            </label>}
             <label style={labelStyle}>People (headcount)<input style={inputStyle} type="number" min={1} value={form.people} onChange={e => setForm({ ...form, people: e.target.value })} /></label>
           </div>
           <h3 style={{ margin: '1rem 0 0.5rem' }}>Items</h3>
