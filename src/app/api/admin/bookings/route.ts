@@ -8,6 +8,7 @@ import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNee
 import { spotLabel } from '@/lib/seating';
 import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
 import { johannesburgToday } from '@/lib/opening-rules';
+import { getPartySlots } from '@/lib/parties';
 import { IMPORTED_NOTE } from '@/lib/staff-bookings';
 
 const DETAIL_FIELDS = 'id,reference,visit_date,party_slot,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),booking_spots(spot_id,venue_spots(number,type)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
@@ -217,8 +218,28 @@ export async function POST(request: Request) {
       const { data: storedItems, error: itemsError } = await supabase.from('booking_items').select('id,quantity,price_per_unit,metadata').eq('booking_id', booking.id);
       if (itemsError) throw itemsError;
       const existingLines = (storedItems || []) as StoredLine[];
+
+      // Party time slot: a party (it has a slot, or party lines from an older import) can be moved to
+      // another slot on its date. Its hut is checked for the new time when the seats are saved below.
+      const currentSlot = (booking.party_slot as string | null) || null;
+      const isParty = Boolean(currentSlot) || existingLines.some(line => line.metadata?.party === true);
+      let partySlot = currentSlot;
+      if (isParty && edit.party_slot !== undefined) {
+        const requested = typeof edit.party_slot === 'string' ? edit.party_slot.trim() : '';
+        if (requested) partySlot = requested;
+        else if (currentSlot) return fail('Choose a party time slot.');
+      }
+      const slotChanged = partySlot !== currentSlot;
+      if (isParty && partySlot && (slotChanged || dateChanged)) {
+        const slots: string[] = [...getPartySlots(visitDate)];
+        if (!slots.includes(partySlot)) {
+          return fail(slots.length ? `${partySlot} is not a party time slot on ${visitDate}. Choose one of: ${slots.join(', ')}.` : `There are no party time slots on ${visitDate}. Choose another date.`);
+        }
+      }
+      if (slotChanged) updates.party_slot = partySlot;
+
       let lines;
-      try { lines = Array.isArray(edit.items) ? parseEditedItems(edit.items, existingLines, booking.party_slot || null) : null; }
+      try { lines = Array.isArray(edit.items) ? parseEditedItems(edit.items, existingLines, partySlot) : null; }
       catch (editError) { if (editError instanceof BookingEditError) return fail(editError.message); throw editError; }
       const itemsChanged = lines ? linesChanged(lines, existingLines) : false;
 
@@ -287,12 +308,20 @@ export async function POST(request: Request) {
       // ── Save ──
       // Seats first: the database swaps them in one step, checks clashes (party huts by time
       // slot) under the seating lock, and refuses a taken spot, leaving the booking untouched.
-      const seatsMoved = seatsChanged || (dateChanged && spotIds.length > 0);
+      // A new party slot changes when the party's hut is in use, so its seats are checked again.
+      const seatsMoved = seatsChanged || ((dateChanged || slotChanged) && spotIds.length > 0);
       if (seatsMoved) {
         if (spotIds.length) {
+          // The database checks hut clashes using the booking's own slot, so that is saved first
+          // and put back if the seats cannot be kept.
+          if (slotChanged) {
+            const { error: slotError } = await supabase.from('bookings').update({ party_slot: partySlot }).eq('id', booking.id);
+            if (slotError) throw slotError;
+          }
           const { error: reserveError } = await supabase.rpc('reserve_booking_spots', { p_booking_id: booking.id, p_visit_date: visitDate, p_spot_ids: spotIds });
           if (reserveError) {
-            if (/just taken|invalid|more than once/i.test(reserveError.message)) return fail(`${reserveError.message.replace('Please choose another spot.', '')}Choose another hut or table${dateChanged ? ` for ${visitDate}` : ''}.`, 409);
+            if (slotChanged) await supabase.from('bookings').update({ party_slot: currentSlot }).eq('id', booking.id);
+            if (/just taken|invalid|more than once/i.test(reserveError.message)) return fail(`${reserveError.message.replace('Please choose another spot.', '')}Choose another hut or table${slotChanged ? ` for the ${partySlot} slot` : dateChanged ? ` for ${visitDate}` : ''}.`, 409);
             throw reserveError;
           }
         } else {
@@ -314,6 +343,17 @@ export async function POST(request: Request) {
             ? await supabase.from('booking_items').update(row).eq('id', line.id)
             : await supabase.from('booking_items').insert({ booking_id: booking.id, ...row });
           if (saveItemError) throw saveItemError;
+        }
+      }
+
+      // Party lines carry their slot (metadata.partySlot), as online party bookings store it.
+      if (slotChanged) {
+        const { data: partyLines, error: partyLinesError } = await supabase.from('booking_items').select('id,metadata').eq('booking_id', booking.id);
+        if (partyLinesError) throw partyLinesError;
+        for (const line of partyLines || []) {
+          if (line.metadata?.party !== true || line.metadata.partySlot === partySlot) continue;
+          const { error: partyLineError } = await supabase.from('booking_items').update({ metadata: { ...line.metadata, partySlot } }).eq('id', line.id);
+          if (partyLineError) throw partyLineError;
         }
       }
 
@@ -360,6 +400,7 @@ export async function POST(request: Request) {
         ...(itemsChanged && lines ? { items: { from: describeLines(existingLines.map(line => ({ quantity: line.quantity, price: Number(line.price_per_unit), name: String(line.metadata?.name || 'Item') }))), to: describeLines(lines) } } : {}),
         ...(seatsMoved ? { seating: { from: seatNames((booking.booking_spots || []).map(row => (Array.isArray(row.venue_spots) ? row.venue_spots[0] : row.venue_spots) as { type: string; number: string } | null)), to: seatNames(chosenSpots) } } : {}),
         ...(dateChanged ? { visit_date: { from: booking.visit_date, to: visitDate } } : {}),
+        ...(slotChanged ? { party_slot: { from: currentSlot, to: partySlot } } : {}),
         ...(updates.total_amount !== undefined ? { total_amount: { from: booking.total_amount, to: updates.total_amount } } : {}),
         ...(updates.people_count !== undefined ? { people_count: { from: booking.people_count, to: updates.people_count } } : {}),
         ...(updates.amount_due !== undefined ? { amount_due: { from: booking.amount_due, to: updates.amount_due } } : {}),
