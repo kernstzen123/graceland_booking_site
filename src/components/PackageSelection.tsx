@@ -37,6 +37,8 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
   const [partyAvailability, setPartyAvailability] = useState<{ slots: string[]; availableSlots: string[]; nextAvailableDate: string | null } | null>(null);
   const [partyError, setPartyError] = useState('');
   const [selectionError, setSelectionError] = useState('');
+  // Set when someone tries to tick "birthday party" with day-visitor items in the cart.
+  const [partyBlockedTried, setPartyBlockedTried] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +60,13 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
   // A special given free when the cart is over its minimum spend (the booking API decides; this only shows it).
   // A booking is a birthday party or a day visit, not both (huts and tables can be added to either).
   const dayVisitInCart = specials.length > 0 || Object.entries(selections).some(([id, quantity]) => Number(quantity) > 0 && !id.startsWith('hut-'));
+  // Clears the day-visitor tickets and specials (keeping huts and tables) and switches to a party.
+  const switchToParty = () => {
+    Object.entries(selections).forEach(([id, quantity]) => { if (Number(quantity) > 0 && !id.startsWith('hut-')) onUpdateSelection(id, 0); });
+    onSpecialsChange([]);
+    onPartyChange({ ...party, enabled: true });
+    setPartyBlockedTried(false);
+  };
   const autoSpecial = party.enabled ? null : pickAutoSpecial(availableSpecials, calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total, prices, specials.map(special => special.id));
   const price = (key: string) => priceOf(prices, key);
   /** What the swimming button adds to a non-swimming party adult (R180 swimming − R80 non-swimming = R100 by default). */
@@ -232,11 +241,18 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
           )}
           {partyError && <div className="callout callout-danger"><p>{partyError}</p></div>}
 
-          <label className={`party-toggle-row${party.enabled ? ' active' : ''}`} style={!party.enabled && dayVisitInCart ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}>
-            <input type="checkbox" checked={party.enabled} disabled={!party.enabled && dayVisitInCart} onChange={event => onPartyChange({ ...party, enabled: event.target.checked })} />
-            <span>I want to book a birthday party</span>
+          {!party.enabled && dayVisitInCart && <div role="alert" className={`callout ${partyBlockedTried ? 'callout-danger' : 'callout-warning'}`} style={{ marginBottom: '1rem' }}>
+            <p><strong>⚠ You can book a day visit OR a birthday party — not both.</strong></p>
+            <p>You have day-visitor tickets{specials.length > 0 ? ' or specials' : ''} in this booking, so the birthday party option is locked. Keep your day visit, or switch this booking to a birthday party (this removes the day-visitor tickets and specials; any extra huts or tables stay).</p>
+            <button type="button" className="btn" onClick={switchToParty} style={{ marginTop: 8, border: '1px solid currentColor' }}>Switch to a birthday party instead</button>
+          </div>}
+          <label className={`party-toggle-row${party.enabled ? ' active' : ''}`} style={!party.enabled && dayVisitInCart ? { opacity: 0.6, cursor: 'not-allowed', borderStyle: 'dashed' } : undefined}>
+            <input type="checkbox" checked={party.enabled} aria-disabled={!party.enabled && dayVisitInCart} onChange={event => {
+              if (event.target.checked && dayVisitInCart) { setPartyBlockedTried(true); return; }
+              onPartyChange({ ...party, enabled: event.target.checked });
+            }} />
+            <span>I want to book a birthday party{!party.enabled && dayVisitInCart ? ' — not available with day-visitor tickets' : ''}</span>
           </label>
-          {!party.enabled && dayVisitInCart && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 6 }}>A booking can be a day visit or a birthday party, not both. To book a party, first remove the day-visitor tickets and specials above.</p>}
 
           {party.enabled && <div className="party-fieldset">
             <div>
