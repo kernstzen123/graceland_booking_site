@@ -23,8 +23,10 @@ const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? book
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }, { value: 'ATTENTION', label: 'Needs attention' }, { value: 'DELETED', label: 'Deleted' }];
 const PAID_STATUSES = ['PAID', 'CONFIRMED'];
 /** Bookings that can still be edited: paid, or waiting for payment and still holding their places (not cancelled, refunded or deleted). */
-const isEditable = (booking: Booking) => !booking.deleted_at && !booking.voucher_issued && (PAID_STATUSES.includes(booking.status) || booking.status === 'PAYMENT_PENDING'
-  || (booking.status === 'UNPAID' && Boolean(booking.expires_at) && new Date(booking.expires_at as string).getTime() > Date.now()));
+/** An unpaid booking that still holds its places: it can be edited and take part-payments (e.g. a deposit). */
+const isHoldingUnpaid = (booking: Booking) => booking.status === 'PAYMENT_PENDING'
+  || (booking.status === 'UNPAID' && Boolean(booking.expires_at) && new Date(booking.expires_at as string).getTime() > Date.now());
+const isEditable = (booking: Booking) => !booking.deleted_at && !booking.voucher_issued && (PAID_STATUSES.includes(booking.status) || isHoldingUnpaid(booking));
 /**
  * What a voucher refund is based on: the payments actually received (as the
  * database calculates it). An imported booking only counts the payments
@@ -456,6 +458,8 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
   const customer = customerOf(booking);
   const { confirm, dialog } = useConfirm();
   const isPaid = PAID_STATUSES.includes(booking.status);
+  // Payments can be recorded on any booking that is paid or still holding its places.
+  const canChangePayments = (isPaid || isHoldingUnpaid(booking)) && !booking.deleted_at && !booking.voucher_issued;
   const isDeleted = Boolean(booking.deleted_at);
   const isCancelled = ['CANCELLED', 'REFUNDED'].includes(booking.status);
   const paidAmount = paidAmountOf(booking);
@@ -519,7 +523,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
     </div>
     <h3 style={{ marginTop: '1.5rem' }}>Items</h3>
     {booking.booking_items?.map((item, index) => <p key={index} style={{ borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>{item.packages?.[0]?.name || item.huts?.[0]?.name || item.metadata?.name || 'Booking item'} × {item.quantity} · R {Number(item.subtotal).toFixed(2)}</p>)}
-    <BalanceSection booking={booking} canRecord={isPaid && !isDeleted && !booking.voucher_issued} onRecordPayment={onRecordPayment} />
+    <BalanceSection booking={booking} canRecord={canChangePayments} onRecordPayment={onRecordPayment} />
     <h3 style={{ marginTop: '1.5rem' }}>Payments</h3>
     {booking.payments?.length ? booking.payments.map(payment => {
       const recordedByHand = isImportedPaymentRow(payment);
@@ -527,7 +531,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
       const note = recordedByHand ? (payment.provider_reference || '').replace(/^IMPORTED( · )?/, '') : payment.provider_reference;
       return <div key={payment.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', fontSize: '0.9rem' }}>
         <p style={{ textDecoration: payment.status === 'VOID' ? 'line-through' : undefined }}>R {Number(payment.amount).toFixed(2)} · {method} · <strong>{payment.status === 'VOID' ? 'REMOVED' : payment.status}</strong>{note ? <> · <span style={{ wordBreak: 'break-all' }}>{note}</span></> : null}<br /><small style={{ color: 'var(--text-muted)' }}>{recordedByHand ? `Paid ${paymentDate(payment.created_at)}` : new Date(payment.created_at).toLocaleString()}</small></p>
-        {recordedByHand && payment.status === 'COMPLETE' && isPaid && !isDeleted && !booking.voucher_issued && <button type="button" className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onRemovePayment(payment.id, `R ${Number(payment.amount).toFixed(2)} ${method.toLowerCase()}`)}>Remove</button>}
+        {recordedByHand && payment.status === 'COMPLETE' && canChangePayments && <button type="button" className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onRemovePayment(payment.id, `R ${Number(payment.amount).toFixed(2)} ${method.toLowerCase()}`)}>Remove</button>}
       </div>;
     }) : <p style={{ color: 'var(--text-muted)' }}>No payments recorded.</p>}
     <h3 style={{ marginTop: '1.5rem' }}>Tickets</h3>
@@ -655,8 +659,9 @@ function BalanceSection({ booking, canRecord, onRecordPayment }: { booking: Book
     if (problem) { setError(problem); return; }
     setAdding(false); setEntry({ amount: '', method: 'CASH', paidOn: johannesburgToday(), note: '' });
   };
-  // Online bookings that were never paid simply show what they cost.
-  if (!PAID_STATUSES.includes(booking.status) && !cancelled) return null;
+  const unpaid = !PAID_STATUSES.includes(booking.status);
+  // Unpaid bookings that can no longer take a payment (their reservation lapsed) simply show what they cost.
+  if (unpaid && !cancelled && !canRecord) return null;
 
   return <div style={{ marginTop: '1.5rem' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -669,6 +674,7 @@ function BalanceSection({ booking, canRecord, onRecordPayment }: { booking: Book
         <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.6rem 0.75rem' }}><small style={{ color: 'var(--text-muted)' }}>Paid</small><p style={{ fontWeight: 700 }}>R {summary.paid.toFixed(2)}</p></div>
         <div style={{ border: `1px solid ${summary.outstanding > 0 ? 'var(--danger)' : 'var(--border-color)'}`, borderRadius: 8, padding: '0.6rem 0.75rem' }}><small style={{ color: 'var(--text-muted)' }}>{summary.overpaid > 0 ? 'Overpaid' : 'Outstanding'}</small><p style={{ fontWeight: 700, color: summary.outstanding > 0 ? 'var(--danger)' : undefined }}>R {(summary.overpaid > 0 ? summary.overpaid : summary.outstanding).toFixed(2)}</p></div>
       </div>
+      {unpaid && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>This booking is unpaid. Payments recorded here (e.g. a deposit) count towards it; once they cover the full amount it is marked paid and the tickets are emailed.</p>}
       {voucher > 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>R {voucher.toFixed(2)} of the R {Number(booking.total_amount).toFixed(2)} total was paid with a voucher.</p>}
       {canRecord && !adding && <button type="button" className="btn btn-secondary" style={{ marginTop: '0.75rem' }} onClick={() => { setAdding(true); setError(''); }}>Record a payment</button>}
       {canRecord && adding && <div style={{ marginTop: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.75rem', display: 'grid', gap: '0.6rem' }}>

@@ -1,7 +1,8 @@
 /**
  * Payments staff record by hand (cash, card or EFT), first added for bookings
- * imported from the booking book and now used on any paid booking, e.g. for
- * the difference after a booking was edited.
+ * imported from the booking book and now used on any booking, e.g. for the
+ * difference after a booking was edited, or a deposit on an unpaid booking
+ * (which stays unpaid until the payments cover the full amount).
  *
  * Imported bookings stay PAID so their seats and capacity are held, but many
  * were unpaid or only partly paid when they were copied in. Staff record each
@@ -72,6 +73,9 @@ export function paymentSummary(total: number, payments: Array<{ amount: number |
   const state: PaymentState = paid <= 0 && due > 0 ? 'UNPAID' : overpaid > 0 ? 'OVERPAID' : outstanding > 0 ? 'PARTIAL' : 'PAID';
   return { total: due, paid, outstanding, overpaid, state };
 }
+
+/** What is still owed on `total` after the completed payments, e.g. the rest after a deposit. */
+export const outstandingAfterPayments = (total: number, payments: Array<{ amount: number | string; status: string }>) => paymentSummary(total, payments).outstanding;
 
 export const PAYMENT_STATE_LABELS: Record<PaymentState, string> = {
   UNPAID: 'Not paid',

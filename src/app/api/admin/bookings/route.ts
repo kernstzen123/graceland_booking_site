@@ -3,10 +3,10 @@ import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce, generateTicketsAndSendEmail, resignBookingQrCodes } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
-import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus } from '@/lib/booking-holds';
+import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus, STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
 import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
-import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
+import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, outstandingAfterPayments, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
 import { johannesburgToday } from '@/lib/opening-rules';
 import { getPartySlots } from '@/lib/parties';
 import { IMPORTED_NOTE } from '@/lib/staff-bookings';
@@ -107,12 +107,17 @@ export async function POST(request: Request) {
 
     // Recording a payment taken by hand (cash, card or EFT at the office or gate),
     // e.g. what was paid on a booking imported from the booking book, or the
-    // difference after a booking was edited. The booking stays PAID (its seats
+    // difference after a booking was edited. A paid booking stays PAID (its seats
     // and capacity stay held); the payments only change what it shows as paid
-    // and outstanding.
+    // and outstanding. An unpaid booking (e.g. a deposit) stays unpaid until it
+    // is paid in full.
     if (action === 'add_payment' || action === 'void_payment') {
       const auditPrefix = isImportedBooking(booking) ? '_IMPORTED' : '';
-      if (booking.deleted_at || !['PAID', 'CONFIRMED'].includes(booking.status) || booking.voucher_issued) return NextResponse.json({ success: false, error: 'This booking is cancelled or refunded, so its payments can no longer be changed.' }, { status: 400 });
+      const paid = ['PAID', 'CONFIRMED'].includes(booking.status);
+      // An unpaid booking that still holds its places can take part-payments (e.g. a deposit). It stays
+      // unpaid until the payments add up to the full amount, and is then marked paid.
+      const holding = booking.status === 'PAYMENT_PENDING' || (booking.status === 'UNPAID' && Boolean(booking.expires_at) && new Date(booking.expires_at as string).getTime() > Date.now());
+      if (booking.deleted_at || !(paid || holding) || booking.voucher_issued) return NextResponse.json({ success: false, error: 'This booking is cancelled, refunded or its reservation has lapsed, so its payments can no longer be changed.' }, { status: 400 });
       const payments = (booking.payments || []) as Array<{ id: string; amount: number; method: string; status: string; provider_reference: string | null }>;
       const amountToPay = Number(booking.total_amount) - Number(booking.voucher_amount_used || 0);
       const before = paymentSummary(amountToPay, payments);
@@ -133,7 +138,34 @@ export async function POST(request: Request) {
         if (insertError) throw insertError;
         const after = paymentSummary(amountToPay, [...payments, { amount: payment.amount, status: 'COMPLETE' }]);
         await writeAudit(user.id, `RECORD${auditPrefix}_PAYMENT`, 'booking', booking.id, { reference: booking.reference, payment_id: inserted.id, amount: payment.amount, method: payment.method, paid_on: payment.paidOn, note: payment.note || null, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
-        return NextResponse.json({ success: true, message: `R${payment.amount.toFixed(2)} ${IMPORTED_PAYMENT_METHODS[payment.method].toLowerCase()} payment recorded. ${after.outstanding > 0 ? `R${after.outstanding.toFixed(2)} still owed.` : 'Paid in full.'}` });
+        const recorded = `R${payment.amount.toFixed(2)} ${IMPORTED_PAYMENT_METHODS[payment.method].toLowerCase()} payment recorded.`;
+        if (paid) return NextResponse.json({ success: true, message: `${recorded} ${after.outstanding > 0 ? `R${after.outstanding.toFixed(2)} still owed.` : 'Paid in full.'}` });
+
+        if (after.outstanding > 0) {
+          // Money has been taken, so an online booking's payment window no longer applies: it keeps its places
+          // until it is paid in full or an admin deals with it (a booking under proof review is held already).
+          if (booking.status === 'UNPAID') {
+            const { error: holdError } = await supabase.from('bookings').update({ expires_at: STAFF_HOLD_UNTIL }).eq('id', booking.id).eq('status', 'UNPAID');
+            if (holdError) throw holdError;
+          }
+          return NextResponse.json({ success: true, message: `${recorded} R${after.outstanding.toFixed(2)} still owed; the booking stays unpaid until it is paid in full.` });
+        }
+
+        // Paid in full: confirm the booking and send the tickets, as "Mark paid" does (the payments are already recorded).
+        const result = await setBookingPaymentStatus(booking.id, 'PAID', { paymentMethod: payment.method });
+        if (!result.ok) {
+          return NextResponse.json({ success: true, message: `${recorded} The booking is paid in full but could not be confirmed: ${result.detail || 'please try again'}. Use "Mark paid" to confirm it.` });
+        }
+        let emailSent = true;
+        try {
+          await emailTicketsOnce(booking.id, customerEmail, customerName);
+        } catch (emailError) {
+          emailSent = false;
+          console.error(`Ticket email failed after ${booking.reference} was paid in full`, emailError);
+          await recordNotificationFailure('booking', 'TICKETS_EMAIL_FAILED', customerEmail, booking.id, emailError);
+        }
+        await writeAudit(user.id, 'MARK_PAID', 'booking', booking.id, { reference: booking.reference, reason: 'Paid in full by recorded payments', force: false, previous_status: result.previousStatus, hold_reclaimed: result.reclaimed });
+        return NextResponse.json({ success: true, message: `${recorded} Paid in full: the booking is now paid${emailSent ? ' and the tickets were emailed.' : ', but the ticket email could not be sent. Use "Resend tickets".'}` });
       }
 
       const target = payments.find(payment => payment.id === body.paymentId);
@@ -155,11 +187,13 @@ export async function POST(request: Request) {
       if (force && role !== 'ADMIN') return NextResponse.json({ success: false, error: 'Only admins can mark a booking paid when the day is full or its seating is taken.' }, { status: 403 });
       // Money already recorded (e.g. a PayFast payment that arrived after the
       // reservation expired) is not recorded a second time.
+      // A part-payment (e.g. a deposit recorded by hand) only leaves the rest to record.
       const completedPayment = (booking.payments || []).find(payment => payment.status === 'COMPLETE');
+      const remaining = outstandingAfterPayments(Number(booking.amount_due ?? booking.total_amount), booking.payments || []);
       const result = await setBookingPaymentStatus(booking.id, 'PAID', {
         paymentMethod: completedPayment ? booking.payment_method || completedPayment.method : 'ADMIN_OVERRIDE',
         force,
-        payment: completedPayment ? undefined : { amount: Number(booking.amount_due ?? booking.total_amount), reference: `ADMIN-${booking.id}` },
+        payment: remaining > 0 ? { amount: remaining, reference: `ADMIN-${booking.id}` } : undefined,
       });
       if (!result.ok) {
         const forceable = Boolean(result.reason && FORCEABLE_FAILURES.has(result.reason));
@@ -458,6 +492,12 @@ export async function POST(request: Request) {
     // bookings are refused by archive_booking.
     if (!['ADMIN', 'MANAGER'].includes(role)) return NextResponse.json({ success: false, error: 'Only admins and managers can delete bookings' }, { status: 403 });
     if (reason.length < 3) return NextResponse.json({ success: false, error: 'Enter a reason for deleting this booking.' }, { status: 400 });
+    // An unpaid booking with part-payments recorded on it is not deleted with the money still on it (paid bookings are refused by archive_booking).
+    const recordedPayments = ['PAID', 'CONFIRMED'].includes(booking.status) ? [] : (booking.payments || []).filter(payment => payment.status === 'COMPLETE' && isImportedPaymentRow(payment));
+    if (recordedPayments.length) {
+      const amount = recordedPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+      return NextResponse.json({ success: false, error: `This booking has R${amount.toFixed(2)} in recorded payments. Remove those payments (or refund the customer) before deleting it.` }, { status: 409 });
+    }
     const result = await archiveBooking(booking.id, user.id, reason);
     if (!result.ok) return NextResponse.json({ success: false, error: result.detail || 'The booking could not be deleted' }, { status: 409 });
     await writeAudit(user.id, 'DELETE_BOOKING', 'booking', booking.id, { reference: booking.reference, reason, previous_status: result.previousStatus });
