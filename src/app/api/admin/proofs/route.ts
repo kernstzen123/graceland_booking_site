@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
 import { FORCEABLE_FAILURES, isStaffUnpaidBooking, setBookingPaymentStatus, STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
+import { isImportedPaymentRow, outstandingAfterPayments } from '@/lib/imported-payments';
 
 /** Hours a customer gets to upload a new proof after one is rejected. */
 const REUPLOAD_HOURS = 24;
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
 
     const { data: proof, error: proofError } = await supabase
       .from('payment_proofs')
-      .select('id, status, booking_id, bookings(id,reference,total_amount,amount_due,status,expires_at,visit_date,people_count,sold_by,payment_method,customers(first_name,last_name,email))')
+      .select('id, status, booking_id, bookings(id,reference,total_amount,amount_due,status,expires_at,visit_date,people_count,sold_by,payment_method,customers(first_name,last_name,email),payments(amount,status,provider_reference))')
       .eq('id', proofId).maybeSingle();
     if (proofError) throw proofError;
     if (!proof) return NextResponse.json({ success: false, error: 'Proof not found' }, { status: 404 });
@@ -69,7 +70,8 @@ export async function POST(request: Request) {
         // A booking staff made (Add booking tab) keeps its places until an admin or manager deletes it.
         const { error: bookingError } = await supabase.from('bookings').update({
           status: 'UNPAID',
-          expires_at: isStaffUnpaidBooking(booking) ? STAFF_HOLD_UNTIL : new Date(Date.now() + REUPLOAD_HOURS * 60 * 60 * 1000).toISOString(),
+          // So does a booking with a part-payment recorded on it.
+          expires_at: isStaffUnpaidBooking(booking) || (booking.payments || []).some(payment => payment.status === 'COMPLETE' && isImportedPaymentRow(payment)) ? STAFF_HOLD_UNTIL : new Date(Date.now() + REUPLOAD_HOURS * 60 * 60 * 1000).toISOString(),
         }).eq('id', booking.id).eq('status', 'PAYMENT_PENDING');
         if (bookingError) throw bookingError;
       }
@@ -90,11 +92,12 @@ export async function POST(request: Request) {
     // Marks the booking paid and records the payment in one transaction. If the
     // reservation lapsed, the day's capacity, the seating and any voucher are
     // re-checked under the booking locks first.
-    const paymentAmount = Number(booking.amount_due ?? booking.total_amount);
+    // A part-payment already recorded (e.g. a deposit) is not counted twice: the EFT pays the rest.
+    const paymentAmount = outstandingAfterPayments(Number(booking.amount_due ?? booking.total_amount), booking.payments || []);
     const result = await setBookingPaymentStatus(booking.id, 'PAID', {
       paymentMethod: 'MANUAL_EFT',
       force: forcing,
-      payment: { amount: paymentAmount, reference: `EFT-${proof.id}` },
+      payment: paymentAmount > 0 ? { amount: paymentAmount, reference: `EFT-${proof.id}` } : undefined,
     });
     if (!result.ok) {
       const forceable = Boolean(result.reason && FORCEABLE_FAILURES.has(result.reason));

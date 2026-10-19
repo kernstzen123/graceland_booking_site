@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ImportedPaymentError, importedPaymentReference, isImportedPaymentRow, paidFromNotes, parseImportedPayment, paymentSummary, voucherRefundAmount } from '@/lib/imported-payments';
+import { ImportedPaymentError, importedPaymentReference, isImportedPaymentRow, outstandingAfterPayments, paidFromNotes, parseImportedPayment, paymentSummary, voucherRefundAmount } from '@/lib/imported-payments';
 import { buildDailySummary } from '@/lib/daily-summary';
 import type { ReportData } from '@/lib/reports';
 
@@ -128,5 +128,17 @@ describe('voucher refund amount (as issue_booking_voucher works it out)', () => 
   it('falls back to the total only for bookings paid online without a payment line', () => {
     expect(voucherRefundAmount({ total_amount: 450, payment_method: 'PAYFAST', payments: [] })).toBe(450);
     expect(voucherRefundAmount({ total_amount: 1000, payment_method: 'IMPORTED', payments: [] })).toBe(0);
+  });
+});
+
+describe('what is left to pay after a deposit', () => {
+  it('counts only completed payments', () => {
+    const payments = [{ amount: 300, status: 'COMPLETE' }, { amount: 200, status: 'VOID' }];
+    expect(outstandingAfterPayments(1000, payments)).toBe(700);
+  });
+  it('is the full amount with no payments and nothing once paid in full or overpaid', () => {
+    expect(outstandingAfterPayments(1000, [])).toBe(1000);
+    expect(outstandingAfterPayments(1000, [{ amount: 400, status: 'COMPLETE' }, { amount: '600', status: 'COMPLETE' }])).toBe(0);
+    expect(outstandingAfterPayments(1000, [{ amount: 1200, status: 'COMPLETE' }])).toBe(0);
   });
 });
