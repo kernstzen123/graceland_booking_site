@@ -4,7 +4,7 @@ import { buildPackageGroups, PACKAGE_GROUPS, priceOf, calculateServerTotal, calc
 import type { BookingSpecialSelection, Special } from '@/lib/specials';
 import { autoApplyMinSpend, describeAutoExtras, pickAutoSpecial } from '@/lib/special-auto';
 import { CheckIcon } from '@/components/icons';
-import { maxHutsFor, maxTablesFor } from '@/lib/seating';
+import { maxTablesFor } from '@/lib/seating';
 
 const PARTY_INCLUDES = [
   'Unlimited waterslides (September–April)',
@@ -88,9 +88,7 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
     }
   }
   const groupSize = Object.entries(selections).reduce((sum, [id, quantity]) => sum + (id.includes('child') || id.includes('adult') || id.includes('pensioner') || id.includes('infant') || id.includes('toddler') ? Number(quantity || 0) : 0), 0) + (party.enabled ? party.children + party.adults + party.additionalChildren : 0) + specialGroupSize;
-  const maxHuts = maxHutsFor(groupSize);
   const maxTables = maxTablesFor(groupSize);
-  const paidHuts = Number(selections['hut-covered'] || 0);
 
   const continueToDetails = () => {
     let specialAdultCount = 0;
@@ -211,13 +209,13 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
                     <span style={{ width: '20px', textAlign: 'center' }}>{selections[item.id] || 0}</span>
                     <button
                       onClick={() => onUpdateSelection(item.id, (selections[item.id] || 0) + 1)}
-                      disabled={(item.id === 'hut-covered' && paidHuts + (party.enabled ? 1 : 0) >= maxHuts) || (item.id === 'hut-shaded' && (selections['hut-shaded'] || 0) >= maxTables)}
+                      disabled={item.id === 'hut-shaded' && (selections['hut-shaded'] || 0) >= maxTables}
                       style={{ width: '30px', height: '30px', borderRadius: '50%', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     >+</button>
                   </div>
                 </div>
               ))}
-              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any group can book a shaded table (seating for 6). Covered huts need at least 6 people per hut: groups of 6 or more may book 1 hut, 12 or more 2 huts, and 18 or more up to 3 huts. Groups can also book one table for every 6 people. Birthday parties include one selectable hut.</p>}
+              {group.category === 'DAY VISITOR HUTS' && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Any group, of any size, can book covered huts (seating for 14–16) and a shaded table (seating for 6). Groups can book one table for every 6 people. Birthday parties include one selectable hut.</p>}
             </div>
           </div>
         ))}

@@ -18,21 +18,14 @@ export function compareSpots(a: { type: string; number: string }, b: { type: str
   return a.number.localeCompare(b.number, undefined, { numeric: true });
 }
 
-// ── How many huts and tables a booking may have (online bookings) ──────────
-// Shared by the booking page and the booking API so they always agree. Staff
-// bookings (Add booking, walk-ins, imports, edits) are not limited.
+// ── How many tables a booking may have (online bookings) ───────────────────
+// Shared by the booking page and the booking API so they always agree. Covered
+// huts have no group-size limit: any group (even one person) may book any
+// number of free huts. Staff bookings (Add booking, walk-ins, imports, edits)
+// are not limited.
 
-/** Each covered hut needs at least this many people in the group. */
-export const PEOPLE_PER_HUT = 6;
-/** Most covered huts one online booking can take (a party's hut counts). */
-export const MAX_HUTS_PER_BOOKING = 3;
 /** A shaded table seats this many; a group may take one table per this many people. */
 export const PEOPLE_PER_TABLE = 6;
-
-/** Covered huts a group of this size may book online: 6–11 people 1, 12–17 people 2, 18+ people 3. */
-export function maxHutsFor(people: number) {
-  return Math.max(0, Math.min(MAX_HUTS_PER_BOOKING, Math.floor(people / PEOPLE_PER_HUT)));
-}
 
 /** Shaded tables a group of this size may book online (always at least one). */
 export function maxTablesFor(people: number) {

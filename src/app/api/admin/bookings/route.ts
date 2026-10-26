@@ -3,7 +3,7 @@ import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { emailTicketsOnce, generateTicketsAndSendEmail, resignBookingQrCodes } from '@/lib/ticketing';
 import { recordNotificationFailure } from '@/lib/voucher-email';
-import { archiveBooking, FORCEABLE_FAILURES, setBookingPaymentStatus, STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
+import { archiveBooking, expireOnlineUnpaidBookings, FORCEABLE_FAILURES, setBookingPaymentStatus, STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
 import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
 import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, outstandingAfterPayments, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
@@ -40,6 +40,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, booking: data });
     }
 
+    // Online bookings left unpaid for 48 hours are deleted before the list is shown.
+    await expireOnlineUnpaidBookings();
     const query = params.get('q')?.trim().slice(0, 100) || null;
     const status = params.get('status')?.toUpperCase() || '';
     const date = params.get('date') || '';

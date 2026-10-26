@@ -15,6 +15,7 @@ const BAND = 'FFE0F2FE';
 const SUBTOTAL = 'FFF1F5F9';
 const ON_SITE = 'FFFEF3C7';
 const TOTAL = 'FFDCFCE7';
+const UNPAID = 'FFFEE2E2';
 const BORDER = 'FFCBD5E1';
 const MUTED = 'FF475569';
 const CURRENCY_FORMAT = '"R" #,##0.00';
@@ -37,9 +38,10 @@ const countsOf = (row: SummaryRow) => [row.total, row.children, row.toddlers, ro
 const sumOf = (rows: SummaryRow[]) => rows.reduce((sum, row) => sum.map((value, index) => value + countsOf(row)[index]), [0, 0, 0, 0, 0, 0]);
 const paidOf = (rows: SummaryRow[]) => rows.reduce((sum, row) => sum + row.paid, 0);
 
-/** The "Additional info" cell: what is owed or that it came from the booking book, then the booking's notes. */
+/** The "Additional info" cell: unpaid, what is owed or that it came from the booking book, then the booking's notes. */
 const additionalInfo = (booking: SummaryRow) => [
-  booking.owing > 0 ? `${booking.imported ? 'Booking book: owes' : 'Owes'} R ${booking.owing.toFixed(2)}` : booking.imported ? 'Booking book' : '',
+  booking.unpaid ? `NOT PAID${booking.owing > 0 ? `: owes R ${booking.owing.toFixed(2)}` : ''}`
+    : booking.owing > 0 ? `${booking.imported ? 'Booking book: owes' : 'Owes'} R ${booking.owing.toFixed(2)}` : booking.imported ? 'Booking book' : '',
   booking.notes ? `Notes: ${booking.notes}` : '',
 ].filter(Boolean).join('\n');
 
@@ -59,7 +61,7 @@ export async function buildDailySummaryWorkbook(summary: DailySummary, date: str
   sheet.getCell('A1').font = { bold: true, size: 16, color: { argb: NAVY } };
   sheet.getRow(1).height = 26;
   sheet.mergeCells(2, 1, 2, LAST_COLUMN);
-  sheet.getCell('A2').value = `${longDate(date)}   ·   Paid online bookings (walk-in sales not included)${schedule ? '   ·   Hut and table schedule on the next sheet' : ''}`;
+  sheet.getCell('A2').value = `${longDate(date)}   ·   All bookings, paid and unpaid (unpaid marked NOT PAID; walk-in sales not included)${schedule ? '   ·   Hut and table schedule on the next sheet' : ''}`;
   sheet.getCell('A2').font = { size: 11, color: { argb: MUTED } };
 
   const header = sheet.getRow(4);
@@ -100,6 +102,11 @@ export async function buildDailySummaryWorkbook(summary: DailySummary, date: str
     const row = sheet.getRow(next);
     row.values = [booking.time, booking.client, { formula: `SUM(D${next}:H${next})`, result: booking.total }, booking.children, booking.toddlers, booking.infants, booking.adults, booking.pensioners, booking.meals, booking.seating, booking.paid, additionalInfo(booking)];
     styleRow(row);
+    if (booking.unpaid) {
+      row.getCell(2).fill = fill(UNPAID);
+      row.getCell(LAST_COLUMN).fill = fill(UNPAID);
+      row.getCell(LAST_COLUMN).font = { bold: true, color: { argb: 'FFB91C1C' } };
+    }
     // Room for wrapped notes: about 48 characters fit on a line of the "Additional info" column.
     const lines = additionalInfo(booking).split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / 48)), 0);
     if (lines > 1) row.height = Math.min(150, 15 * lines + 4);
@@ -183,11 +190,14 @@ export function hutScheduleRows(schedule: HutSchedule) {
 
 function addHutScheduleSheet(workbook: ExcelJS.Workbook, schedule: HutSchedule) {
   const { hutHeaders, huts, tableHeaders, tables } = hutScheduleRows(schedule);
-  const columns = Math.max(hutHeaders.length, tableHeaders.length);
+  // The tables sit beside the huts (with a narrow gap column) so the whole schedule prints on one landscape page.
+  const tableStart = hutHeaders.length + 2;
+  const columns = tables.length ? tableStart + tableHeaders.length - 1 : hutHeaders.length;
   const sheet = workbook.addWorksheet('Huts & tables', {
-    pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
+    pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 1, horizontalCentered: true, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 } },
   });
-  sheet.columns = Array.from({ length: columns }, (_, index) => ({ width: index === 0 ? 10 : 28 }));
+  const widthOf = (column: number) => (column === 1 || column === tableStart ? 8 : column === hutHeaders.length + 1 ? 3 : column > tableStart ? 36 : 28);
+  sheet.columns = Array.from({ length: columns }, (_, index) => ({ width: widthOf(index + 1) }));
 
   sheet.mergeCells(1, 1, 1, columns);
   sheet.getCell('A1').value = 'Graceland Venues: Hut & Table Schedule';
@@ -204,42 +214,43 @@ function addHutScheduleSheet(workbook: ExcelJS.Workbook, schedule: HutSchedule) 
   sheet.getCell('A3').alignment = { wrapText: true, vertical: 'top' };
   sheet.getRow(3).height = 28;
 
-  let next = 5;
-  const addTable = (title: string, headers: string[], rows: string[][]) => {
-    sheet.mergeCells(next, 1, next, headers.length);
-    const band = sheet.getCell(next, 1);
+  const BAND_ROW = 5;
+  const HEADER_ROW = 6;
+  const FIRST_ROW = 7;
+  /** One block (huts or tables) starting at `startColumn`; returns how many lines each of its rows needs. */
+  const addTable = (title: string, headers: string[], rows: string[][], startColumn: number) => {
+    sheet.mergeCells(BAND_ROW, startColumn, BAND_ROW, startColumn + headers.length - 1);
+    const band = sheet.getCell(BAND_ROW, startColumn);
     band.value = title;
     band.font = { bold: true, color: { argb: NAVY } };
     band.fill = fill(BAND);
     band.border = border;
-    sheet.getRow(next).height = 20;
-    next += 1;
-    const header = sheet.getRow(next);
-    header.values = headers;
-    header.height = 22;
-    header.eachCell(cell => {
+    headers.forEach((value, index) => {
+      const cell = sheet.getCell(HEADER_ROW, startColumn + index);
+      cell.value = value;
       cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       cell.fill = fill(NAVY);
       cell.border = border;
       cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     });
-    next += 1;
-    for (const values of rows) {
-      const row = sheet.getRow(next);
-      row.values = values;
-      const lines = Math.max(1, ...values.map(value => value.split('\n').length));
-      row.height = Math.max(20, lines * 15);
+    return rows.map((values, rowIndex) => {
       values.forEach((value, index) => {
-        const cell = row.getCell(index + 1);
+        const cell = sheet.getCell(FIRST_ROW + rowIndex, startColumn + index);
+        cell.value = value;
         cell.border = border;
         cell.alignment = { vertical: 'middle', horizontal: index === 0 ? 'center' : 'left', wrapText: true };
         if (index === 0) cell.font = { bold: true };
         else if (value === 'Free' || value === '—') cell.font = { color: { argb: MUTED } };
       });
-      next += 1;
-    }
-    next += 1;
+      // Lines the row needs: each name on its own line, long ones wrapping (about one character per unit of column width).
+      return Math.max(1, ...values.map((value, index) => value.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / (widthOf(startColumn + index) - 2))), 0)));
+    });
   };
-  addTable('Covered huts', hutHeaders, huts);
-  if (tables.length) addTable('Shaded tables', tableHeaders, tables);
+  const hutLines = addTable('Covered huts', hutHeaders, huts, 1);
+  const tableLines = tables.length ? addTable('Shaded tables', tableHeaders, tables, tableStart) : [];
+  sheet.getRow(BAND_ROW).height = 20;
+  sheet.getRow(HEADER_ROW).height = 22;
+  for (let index = 0; index < Math.max(hutLines.length, tableLines.length); index++) {
+    sheet.getRow(FIRST_ROW + index).height = Math.max(18, Math.max(hutLines[index] || 1, tableLines[index] || 1) * 14 + 4);
+  }
 }
