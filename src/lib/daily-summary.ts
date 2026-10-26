@@ -1,5 +1,6 @@
 /**
- * The daily summary sheet: one line per paid online booking for a visit date,
+ * The daily summary sheet: one line per booking for a visit date (paid, and
+ * unpaid ones that still hold their places),
  * grouped into the day's birthday-party time slots and the day visitors.
  * Walk-in gate sales are not bookings and are left out.
  */
@@ -10,6 +11,8 @@ export type SummaryItem = { quantity: number; metadata?: { itemId?: string; name
 export type SummaryBooking = {
   party_slot: string | null;
   total_amount: number;
+  /** PAID / CONFIRMED, or UNPAID / PAYMENT_PENDING for a booking still waiting for (the rest of) its payment. */
+  status?: string | null;
   /** 'IMPORTED' for bookings copied from the booking book (paid outside the system). */
   payment_method?: string | null;
   /** What an online, office or gate booking was charged when it was paid (its total less any voucher). */
@@ -25,7 +28,7 @@ export type SummaryBooking = {
 };
 
 export type SummaryCounts = { children: number; toddlers: number; infants: number; adults: number; pensioners: number };
-export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number; imported: boolean; owing: number; notes: string };
+export type SummaryRow = SummaryCounts & { time: string; client: string; total: number; meals: string; seating: string; paid: number; imported: boolean; unpaid: boolean; owing: number; notes: string };
 export type SummarySection = { slot: string; rows: SummaryRow[] };
 export type DailySummary = { parties: SummarySection[]; dayVisitors: SummaryRow[] };
 
@@ -66,12 +69,16 @@ function toRow(booking: SummaryBooking): SummaryRow {
   // Any other booking was paid its amount due, or more if staff recorded payments on it after it was edited;
   // it only owes something when its total went up after it was paid.
   const imported = booking.payment_method === 'IMPORTED';
+  // A booking that is not paid yet has only the payments recorded on it (e.g. a deposit) and owes the rest.
+  const unpaid = Boolean(booking.status) && !['PAID', 'CONFIRMED'].includes(booking.status as string);
   const cents = (value: number) => Math.round(value * 100) / 100;
   const total = Number(booking.total_amount) || 0;
   const recorded = cents((booking.payments || []).filter(payment => payment.status === 'COMPLETE').reduce((sum, payment) => sum + Number(payment.amount), 0));
   const toPay = Math.max(0, total - (Number(booking.voucher_amount_used) || 0));
-  const owing = imported ? Math.max(0, cents(total - recorded)) : Math.max(0, cents(toPay - Math.max(Number(booking.amount_due ?? toPay) || 0, recorded)));
-  const paid = imported ? recorded : cents(total - owing);
+  const owing = imported ? Math.max(0, cents(total - recorded))
+    : unpaid ? Math.max(0, cents(toPay - recorded))
+      : Math.max(0, cents(toPay - Math.max(Number(booking.amount_due ?? toPay) || 0, recorded)));
+  const paid = imported || unpaid ? recorded : cents(total - owing);
   const spots = (booking.booking_spots || []).map(row => first(row.venue_spots)).filter((spot): spot is { number: string; type: string } => Boolean(spot?.number));
   return {
     time: booking.party_slot ? slotStart(booking.party_slot) : 'DV',
@@ -82,13 +89,14 @@ function toRow(booking: SummaryBooking): SummaryRow {
     seating: spots.sort(compareSpots).map(spot => spot.number).join(', '),
     paid,
     imported,
+    unpaid,
     owing,
     notes: staffNoteText(booking.notes),
   };
 }
 
 /**
- * Group a day's paid bookings. `slots` are the party slots offered on that day
+ * Group a day's bookings. `slots` are the party slots offered on that day
  * (shown even when empty); a booking in any other slot still gets its own section.
  */
 export function buildDailySummary(bookings: SummaryBooking[], slots: readonly string[]): DailySummary {

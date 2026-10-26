@@ -124,3 +124,37 @@ describe('booking notes in the daily summary', () => {
     expect(sheet.getRow(row).getCell(12).value).toBe('Notes: Wheelchair access needed');
   });
 });
+
+describe('unpaid bookings on the daily summary', () => {
+  const unpaid: SummaryBooking = {
+    status: 'UNPAID',
+    party_slot: null,
+    total_amount: 650,
+    amount_due: 650,
+    payments: [{ amount: 200, status: 'COMPLETE' }, { amount: 100, status: 'VOID' }],
+    customers: { first_name: 'Sipho', last_name: 'Nkosi' },
+    booking_items: [day('day-water-adult', 2)],
+    booking_spots: [{ venue_spots: { number: 'H4', type: 'hut' } }, { venue_spots: { number: 'T2', type: 'table' } }],
+  };
+
+  it('shows only what was paid (e.g. a deposit) and owes the rest, with its huts and tables', () => {
+    const [row] = buildDailySummary([unpaid], SLOTS).dayVisitors;
+    expect(row).toMatchObject({ client: 'Sipho Nkosi', unpaid: true, paid: 200, owing: 450, seating: 'H4, T2', adults: 2 });
+  });
+
+  it('is marked NOT PAID on the sheet', async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await buildDailySummaryWorkbook(buildDailySummary([unpaid], SLOTS), '2026-11-07') as unknown as ArrayBuffer);
+    const sheet = workbook.worksheets[0];
+    const row = sheet.getColumn(2).values.findIndex(value => value === 'Sipho Nkosi');
+    expect(sheet.getRow(row).getCell(12).value).toBe('NOT PAID: owes R 450.00');
+  });
+
+  it('prints the hut and table schedule on one landscape page', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const schedule = { date: '2026-11-07', slots: SLOTS, huts: [{ number: 'H1', bookings: [] }], tables: [{ number: 'T1', bookings: [] }] };
+    await workbook.xlsx.load(await buildDailySummaryWorkbook(buildDailySummary([], SLOTS), '2026-11-07', schedule) as unknown as ArrayBuffer);
+    const setup = workbook.getWorksheet('Huts & tables')!.pageSetup;
+    expect(setup).toMatchObject({ orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 1 });
+  });
+});

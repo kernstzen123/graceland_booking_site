@@ -123,6 +123,29 @@ export async function archiveBooking(bookingId: string, actorId: string, reason:
 }
 
 /**
+ * Delete (soft delete, like the Delete button) online bookings still unpaid 48
+ * hours after they were made. Bookings staff added, bookings with any payment
+ * or a proof under review, and flagged bookings are never touched; the rules
+ * live in the database function. Called when staff open the bookings list or
+ * the daily summary (pg_cron also runs it every 15 minutes where enabled).
+ * Never throws: a failure only means the clean-up waits for the next call.
+ */
+export async function expireOnlineUnpaidBookings() {
+  try {
+    const { data, error } = await supabase.rpc('expire_online_unpaid_bookings');
+    if (error) {
+      // PGRST202: the migration has not been applied yet.
+      if (error.code !== 'PGRST202') console.error('Could not delete expired online bookings', error);
+      return 0;
+    }
+    return Number(data) || 0;
+  } catch (error) {
+    console.error('Could not delete expired online bookings', error);
+    return 0;
+  }
+}
+
+/**
  * Put a booking on the staff "Needs attention" list, e.g. when money arrived
  * for a booking that could not be confirmed automatically. Earlier reasons are
  * kept. Throws if the flag could not be saved, so a payment webhook fails and

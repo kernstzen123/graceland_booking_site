@@ -408,6 +408,42 @@ it('database migrations and functions behave correctly', async () => {
   await db.query(`update public.specials set archived_at = now() where id = $1`, [special]);
   await expectError('an archived special is refused', `select * from public.create_booking('${weekend.sat}', 4, ${customer}, 'BK-SP-ARCH', 660, null, null, null, '${specialItems}'::jsonb, array[]::uuid[], null, null, '${JSON.stringify([{ id: special, quantity: 1 }])}'::jsonb)`, /no longer available/);
 
+  // ── Online bookings left unpaid for 48 hours are deleted (20261016) ─────
+  const aged = async (ref, changes = '', expires = `now() - interval '1 hour'`) => {
+    const id = await reserve(ref, 2, 100);
+    await db.query(`update public.bookings set created_at = now() - interval '49 hours', expires_at = ${expires}${changes} where id = $1`, [id]);
+    return id;
+  };
+  const oldOnline = await aged('BK-EXP-OLD');
+  const oldFailed = await aged('BK-EXP-FAILED', `, status = 'PAYMENT_FAILED'`);
+  const staffMade = await aged('BK-EXP-STAFF', `, payment_method = 'MANUAL_EFT'`, `'9999-12-31T23:59:59Z'`);
+  await db.exec(`reset role`);
+  const staffUser = (await one(`insert into auth.users (email) values ('staff@example.com') returning id`)).id;
+  await db.exec(`set role service_role`);
+  const staffSold = await aged('BK-EXP-SOLD', `, sold_by = '${staffUser}'`);
+  const imported = await aged('IM-EXP-1');
+  const withDeposit = await aged('BK-EXP-DEPOSIT');
+  await db.query(`insert into public.payments (booking_id, amount, method, status, provider_reference) values ($1, 50, 'CASH', 'COMPLETE', 'IMPORTED · deposit')`, [withDeposit]);
+  const withProof = await aged('BK-EXP-PROOF');
+  await db.query(`insert into public.payment_proofs (booking_id, file_url, status) values ($1, 'proof.pdf', 'PENDING')`, [withProof]);
+  const flagged = await aged('BK-EXP-FLAG', `, attention_reason = 'Money arrived late'`);
+  const recent = await reserve('BK-EXP-NEW', 2, 100);
+  await db.query(`update public.bookings set created_at = now() - interval '47 hours' where id = $1`, [recent]);
+  const stillHeld = await aged('BK-EXP-HELD', '', `now() - interval '10 minutes'`);
+  const paidOld = await aged('BK-EXP-PAID', `, status = 'PAID'`);
+  const expired = (await one(`select public.expire_online_unpaid_bookings() as n`)).n;
+  const state = async id => one(`select status, deleted_at is not null as deleted, delete_reason from public.bookings where id = $1`, [id]);
+  check('an online booking unpaid after 48 hours is deleted (cancelled and hidden)', (await state(oldOnline)).deleted === true && (await state(oldOnline)).status === 'CANCELLED' && /48 hours/.test((await state(oldOnline)).delete_reason), JSON.stringify(await state(oldOnline)));
+  check('...and so is one whose online payment failed', (await state(oldFailed)).deleted === true);
+  for (const [label, id] of [['a booking staff added (Add booking)', staffMade], ['a booking staff sold', staffSold], ['an imported booking', imported], ['a booking with a deposit recorded', withDeposit], ['a booking with a proof under review', withProof], ['a booking on the Needs attention list', flagged], ['a booking made under 48 hours ago', recent], ['a booking whose payment window ended under 30 minutes ago', stillHeld], ['a paid booking', paidOld]]) {
+    check(`${label} is never deleted automatically`, (await state(id)).deleted === false, JSON.stringify(await state(id)));
+  }
+  check('the clean-up reports how many it deleted, and logs each one', Number(expired) >= 2 && Number((await one(`select count(*) as n from public.admin_audit_log where action = 'AUTO_DELETE_UNPAID_BOOKING' and entity_id = $1`, [oldOnline])).n) === 1, `${expired}`);
+  check('running it again deletes nothing more', Number((await one(`select public.expire_online_unpaid_bookings() as n`)).n) === 0);
+
+  await db.exec(`reset role`);
+  await db.exec(`set role anon`);
+  await expectError('customers cannot run the clean-up', `select public.expire_online_unpaid_bookings()`, /permission denied/);
   await db.exec(`reset role`);
   expect(failures).toEqual([]);
 });
