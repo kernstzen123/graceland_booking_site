@@ -22,6 +22,12 @@ const staffNotes = (notes?: string | null) => staffNoteText(notes);
 const customerOf = (booking: Booking) => Array.isArray(booking.customers) ? booking.customers[0] : booking.customers;
 const STATUS_FILTERS = [{ value: '', label: 'All statuses' }, { value: 'PAID', label: 'Paid' }, { value: 'PENDING', label: 'Awaiting payment' }, { value: 'CANCELLED', label: 'Cancelled / refunded' }, { value: 'FAILED', label: 'Payment failed' }, { value: 'ATTENTION', label: 'Needs attention' }, { value: 'DELETED', label: 'Deleted' }];
 const PAID_STATUSES = ['PAID', 'CONFIRMED'];
+/** Client cancellation fees from the terms and conditions (within 48 hours or a no-show is 100%: no voucher). */
+const CANCELLATION_FEES = [
+  { fee: 10, when: 'More than 14 days before the booking' },
+  { fee: 25, when: '7 to 14 days before the booking' },
+  { fee: 50, when: '48 hours to 7 days before the booking' },
+];
 /** Bookings that can still be edited: paid, or waiting for payment and still holding their places (not cancelled, refunded or deleted). */
 /** An unpaid booking that still holds its places: it can be edited and take part-payments (e.g. a deposit). */
 const isHoldingUnpaid = (booking: Booking) => booking.status === 'PAYMENT_PENDING'
@@ -632,7 +638,8 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
           </div>
           <p className="modal-message">The customer paid R {paidAmount.toFixed(2)}. Choose the cancellation fee to deduct; they receive a voucher for the rest.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {[10, 15, 20].map(fee => <button key={fee} className="btn" onClick={() => handleRefundOption(fee)} style={{ border: '1px solid var(--border-color)', justifyContent: 'center' }}>-{fee}% fee · voucher R {voucherFor(fee).toFixed(2)}</button>)}
+            {CANCELLATION_FEES.map(({ fee, when }) => <button key={fee} className="btn" onClick={() => handleRefundOption(fee)} style={{ border: '1px solid var(--border-color)', justifyContent: 'center', flexDirection: 'column', gap: 2 }}><span>-{fee}% fee · voucher R {voucherFor(fee).toFixed(2)}</span><small style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{when}</small></button>)}
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Cancelled within 48 hours of the booking, or a no-show: the fee is 100%, so no voucher is issued.</p>
             <button className="btn" onClick={() => handleRefundOption(0)} style={{ border: '1px solid var(--primary)', color: 'var(--primary)', justifyContent: 'center', marginTop: 8 }}>Full refund · voucher R {paidAmount.toFixed(2)}</button>
           </div>
         </div>

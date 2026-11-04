@@ -81,20 +81,25 @@ export default function TermsAndConditions() {
               </thead>
               <tbody>
                 <tr>
-                  <td>Made over 14 days prior to the scheduled booking start time and date</td>
+                  <td>Made more than 14 days prior to the scheduled booking start date and time</td>
                   <td>10%</td>
                 </tr>
                 <tr>
-                  <td>Made between 24 hours and 14 days prior to the scheduled booking start time and date</td>
-                  <td>15%</td>
+                  <td>Made between 7 and 14 days prior to the scheduled booking start date and time</td>
+                  <td>25%</td>
                 </tr>
                 <tr>
-                  <td>Made within 24 hours prior to the scheduled booking start time and date</td>
-                  <td>20%</td>
+                  <td>Made between 48 hours and 7 days prior to the scheduled booking start date and time</td>
+                  <td>50%</td>
+                </tr>
+                <tr>
+                  <td>Made within 48 hours prior to the scheduled booking start date and time, or failure to arrive for the booking (no-show)</td>
+                  <td>100% (non-refundable)</td>
                 </tr>
               </tbody>
             </table>
             <p>Administration fees are calculated as a percentage of the cancelled order value.</p>
+            <p>If the park closes due to weather or operational reasons, the client may reschedule the booking or receive a full refund.</p>
           </section>
 
           <section id="no-show" className="legal-section">
