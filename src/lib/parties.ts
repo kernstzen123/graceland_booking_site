@@ -20,6 +20,18 @@ export const PARTY_SLOTS = {
   sunday: ['10:30–12:30', '13:00–15:00'],
 } as const;
 
+/**
+ * Periods (first and last day, inclusive) when no birthday parties are offered,
+ * online or by staff. Day visitors can still book these dates. Bookings already
+ * made for a party in a period are kept.
+ */
+export const PARTY_BLOCKED_PERIODS: ReadonlyArray<{ from: string; to: string }> = [
+  { from: '2026-12-21', to: '2027-01-14' },
+];
+
+/** Whether `dateValue` (YYYY-MM-DD) falls in one of the PARTY_BLOCKED_PERIODS. */
+export const isPartyBlockedDate = (dateValue: string) => PARTY_BLOCKED_PERIODS.some(period => dateValue >= period.from && dateValue <= period.to);
+
 const toUtcDate = (value: string) => {
   const [year, month, day] = value.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day));
@@ -75,7 +87,7 @@ export function getPartySlots(dateValue: string) {
   const isDecemberSchoolHolidayMonday = month === 12 && day === 1;
   const isBlackout = (month === 12 && dayOfMonth >= 25) || (month === 1 && dayOfMonth <= 7);
   const isPublicHoliday = southAfricanPublicHolidays(date.getUTCFullYear()).has(dateValue);
-  if (isBlackout) return [];
+  if (isBlackout || isPartyBlockedDate(dateValue)) return [];
   // Sunday parties are closed from May through the end of September.
   if (day === 0 && (month >= 5 && month <= 9)) return [];
   if (isPublicHoliday) return month >= 5 && month <= 9 ? [] : [...PARTY_SLOTS.sunday];
