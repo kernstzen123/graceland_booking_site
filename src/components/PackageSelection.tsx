@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { calculatePartyTotal, getPartySlots, PartyDetails } from '@/lib/parties';
+import { calculatePartyTotal, getPartySlots, nextPartyDate, PartyDetails } from '@/lib/parties';
 import { buildPackageGroups, PACKAGE_GROUPS, priceOf, calculateServerTotal, calculateSpecialPrice, type PriceList } from '@/lib/pricing';
 import type { BookingSpecialSelection, Special } from '@/lib/specials';
 import { autoApplyMinSpend, describeAutoExtras, pickAutoSpecial } from '@/lib/special-auto';
@@ -67,9 +67,16 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
     onPartyChange({ ...party, enabled: true });
     setPartyBlockedTried(false);
   };
-  // No party slot left on this date (none offered, e.g. the December holiday block, or all booked).
-  const noPartiesOnDate = Boolean(partyAvailability && partyAvailability.availableSlots.length === 0);
+  // No party slot on this date: none offered (e.g. the December holiday block, known straight away
+  // without waiting for the availability check), or every slot is booked.
+  const noSlotsOffered = getPartySlots(selectedDate).length === 0;
+  const noPartiesOnDate = noSlotsOffered || Boolean(partyAvailability && partyAvailability.availableSlots.length === 0);
+  const nextAvailablePartyDate = partyAvailability ? partyAvailability.nextAvailableDate : nextPartyDate(selectedDate);
   const partyLocked = !party.enabled && (dayVisitInCart || noPartiesOnDate);
+  // A party ticked earlier (e.g. before going back and choosing another date) is unticked on a date without party slots.
+  useEffect(() => {
+    if (party.enabled && noPartiesOnDate) onPartyChange({ ...party, enabled: false, slot: '' });
+  }, [party, noPartiesOnDate, onPartyChange]);
   const longDate = (value: string) => new Date(`${value}T00:00:00Z`).toLocaleDateString('en-ZA', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const autoSpecial = party.enabled ? null : pickAutoSpecial(availableSpecials, calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total, prices, specials.map(special => special.id));
   const price = (key: string) => priceOf(prices, key);
@@ -236,12 +243,12 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
             ))}
           </ul>
 
-          {partyAvailability && noPartiesOnDate && (
+          {noPartiesOnDate && (
             <div className="callout callout-warning">
               <p>
-                <strong>{partyAvailability.slots.length ? 'All party time slots on this day are fully booked.' : 'There are no birthday parties available on this day.'}</strong>
-                {partyAvailability.nextAvailableDate
-                  ? <span> No parties are available until <strong>{longDate(partyAvailability.nextAvailableDate)}</strong>.</span>
+                <strong>{!noSlotsOffered && partyAvailability?.slots.length ? 'All party time slots on this day are fully booked.' : 'There are no birthday parties available on this day.'}</strong>
+                {nextAvailablePartyDate
+                  ? <span> No parties are available until <strong>{longDate(nextAvailablePartyDate)}</strong>.</span>
                   : <span> Please choose another date.</span>}
                 {' '}Day visitor tickets can still be booked for this day.
               </p>
@@ -255,7 +262,7 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
             <button type="button" className="btn" onClick={switchToParty} style={{ marginTop: 8, border: '1px solid currentColor' }}>Switch to a birthday party instead</button>
           </div>}
           <label className={`party-toggle-row${party.enabled ? ' active' : ''}`} style={partyLocked ? { opacity: 0.6, cursor: 'not-allowed', borderStyle: 'dashed' } : undefined}>
-            <input type="checkbox" checked={party.enabled} aria-disabled={partyLocked} onChange={event => {
+            <input type="checkbox" checked={party.enabled} disabled={!party.enabled && noPartiesOnDate} aria-disabled={partyLocked} onChange={event => {
               if (event.target.checked && noPartiesOnDate) return;
               if (event.target.checked && dayVisitInCart) { setPartyBlockedTried(true); return; }
               onPartyChange({ ...party, enabled: event.target.checked });
