@@ -67,6 +67,10 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
     onPartyChange({ ...party, enabled: true });
     setPartyBlockedTried(false);
   };
+  // No party slot left on this date (none offered, e.g. the December holiday block, or all booked).
+  const noPartiesOnDate = Boolean(partyAvailability && partyAvailability.availableSlots.length === 0);
+  const partyLocked = !party.enabled && (dayVisitInCart || noPartiesOnDate);
+  const longDate = (value: string) => new Date(`${value}T00:00:00Z`).toLocaleDateString('en-ZA', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const autoSpecial = party.enabled ? null : pickAutoSpecial(availableSpecials, calculateServerTotal(selections, party.enabled ? party : undefined, prices, specials).total, prices, specials.map(special => special.id));
   const price = (key: string) => priceOf(prices, key);
   /** What the swimming button adds to a non-swimming party adult (R180 swimming − R80 non-swimming = R100 by default). */
@@ -222,7 +226,7 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
 
         <section className="party-section">
           <div className="party-section-header">
-            <h3>Birthday parties</h3>
+            <h3>Birthday parties <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}>(2 hour time slot)</span></h3>
           </div>
           <p className="party-subtitle">Kiddy parties are two-hour parties hosted Tuesday to Sunday. A free party hut is included for summer outdoor parties.</p>
 
@@ -232,24 +236,31 @@ export function PackageSelection({ selectedDate, selections, specials, prices, p
             ))}
           </ul>
 
-          {partyAvailability && partyAvailability.availableSlots.length === 0 && (
+          {partyAvailability && noPartiesOnDate && (
             <div className="callout callout-warning">
-              <p><strong>Birthdays not available on this day.</strong>{partyAvailability.nextAvailableDate && <span> The next available party date is <strong>{partyAvailability.nextAvailableDate}</strong>.</span>}</p>
+              <p>
+                <strong>{partyAvailability.slots.length ? 'All party time slots on this day are fully booked.' : 'There are no birthday parties available on this day.'}</strong>
+                {partyAvailability.nextAvailableDate
+                  ? <span> No parties are available until <strong>{longDate(partyAvailability.nextAvailableDate)}</strong>.</span>
+                  : <span> Please choose another date.</span>}
+                {' '}Day visitor tickets can still be booked for this day.
+              </p>
             </div>
           )}
           {partyError && <div className="callout callout-danger"><p>{partyError}</p></div>}
 
-          {!party.enabled && dayVisitInCart && <div role="alert" className={`callout ${partyBlockedTried ? 'callout-danger' : 'callout-warning'}`} style={{ marginBottom: '1rem' }}>
+          {!party.enabled && dayVisitInCart && !noPartiesOnDate && <div role="alert" className={`callout ${partyBlockedTried ? 'callout-danger' : 'callout-warning'}`} style={{ marginBottom: '1rem' }}>
             <p><strong>⚠ You can book a day visit OR a birthday party — not both.</strong></p>
             <p>You have day-visitor tickets{specials.length > 0 ? ' or specials' : ''} in this booking, so the birthday party option is locked. Keep your day visit, or switch this booking to a birthday party (this removes the day-visitor tickets and specials; any extra huts or tables stay).</p>
             <button type="button" className="btn" onClick={switchToParty} style={{ marginTop: 8, border: '1px solid currentColor' }}>Switch to a birthday party instead</button>
           </div>}
-          <label className={`party-toggle-row${party.enabled ? ' active' : ''}`} style={!party.enabled && dayVisitInCart ? { opacity: 0.6, cursor: 'not-allowed', borderStyle: 'dashed' } : undefined}>
-            <input type="checkbox" checked={party.enabled} aria-disabled={!party.enabled && dayVisitInCart} onChange={event => {
+          <label className={`party-toggle-row${party.enabled ? ' active' : ''}`} style={partyLocked ? { opacity: 0.6, cursor: 'not-allowed', borderStyle: 'dashed' } : undefined}>
+            <input type="checkbox" checked={party.enabled} aria-disabled={partyLocked} onChange={event => {
+              if (event.target.checked && noPartiesOnDate) return;
               if (event.target.checked && dayVisitInCart) { setPartyBlockedTried(true); return; }
               onPartyChange({ ...party, enabled: event.target.checked });
             }} />
-            <span>I want to book a birthday party{!party.enabled && dayVisitInCart ? ' — not available with day-visitor tickets' : ''}</span>
+            <span>I want to book a birthday party{!party.enabled && noPartiesOnDate ? ' — not available on this day' : !party.enabled && dayVisitInCart ? ' — not available with day-visitor tickets' : ''}</span>
           </label>
 
           {party.enabled && <div className="party-fieldset">
