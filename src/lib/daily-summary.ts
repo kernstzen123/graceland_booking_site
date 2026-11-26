@@ -62,9 +62,11 @@ function countItems(items: SummaryItem[]) {
   return { counts, meals };
 }
 
-function toRow(booking: SummaryBooking): SummaryRow {
-  const customer = first(booking.customers);
-  const { counts, meals } = countItems(booking.booking_items || []);
+/** What a booking has paid and still owes (shared by the daily summary and the gate scanner). */
+export type BookingPayment = { total: number; paid: number; owing: number; unpaid: boolean; imported: boolean };
+export type PaymentFields = Pick<SummaryBooking, 'total_amount' | 'status' | 'payment_method' | 'amount_due' | 'voucher_amount_used' | 'payments'>;
+
+export function bookingPayment(booking: PaymentFields): BookingPayment {
   // Imported bookings were paid (or part-paid) outside the system: only the payments recorded on them count.
   // Any other booking was paid its amount due, or more if staff recorded payments on it after it was edited;
   // it only owes something when its total went up after it was paid.
@@ -79,6 +81,13 @@ function toRow(booking: SummaryBooking): SummaryRow {
     : unpaid ? Math.max(0, cents(toPay - recorded))
       : Math.max(0, cents(toPay - Math.max(Number(booking.amount_due ?? toPay) || 0, recorded)));
   const paid = imported || unpaid ? recorded : cents(total - owing);
+  return { total, paid, owing, unpaid, imported };
+}
+
+function toRow(booking: SummaryBooking): SummaryRow {
+  const customer = first(booking.customers);
+  const { counts, meals } = countItems(booking.booking_items || []);
+  const { paid, owing, unpaid, imported } = bookingPayment(booking);
   const spots = (booking.booking_spots || []).map(row => first(row.venue_spots)).filter((spot): spot is { number: string; type: string } => Boolean(spot?.number));
   return {
     time: booking.party_slot ? slotStart(booking.party_slot) : 'DV',

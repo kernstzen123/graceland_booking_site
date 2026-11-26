@@ -3,7 +3,9 @@ import { supabase } from '@/lib/supabase';
 import { escapeHtml, renderEmailLayout, calloutBox, statusBadge, buttonHtml } from '@/lib/email-layout';
 import { BANK_DETAILS } from '@/lib/business-details';
 import { getBusinessSettings } from '@/lib/business-settings';
-import { customerHoldMessage, eftHoldHours, formatJohannesburgDateTime, holdBookingForPayment, isOpenEndedHold } from '@/lib/booking-holds';
+import QRCode from 'qrcode';
+import { customerHoldMessage, eftHoldHours, formatJohannesburgDateTime, holdBookingForPayment, isOpenEndedHold, isStaffUnpaidBooking } from '@/lib/booking-holds';
+import { bookingScanUrl, ensureBookingQrToken } from '@/lib/booking-qr';
 import { sendEmail } from '@/lib/mailer';
 
 /** A customer-safe reason the instructions were not sent (the booking is not payable). */
@@ -20,7 +22,7 @@ export class EftEmailRefused extends Error {
 export async function sendEftInstructions(bookingId: string) {
   const { data: booking, error } = await supabase
     .from('bookings')
-    .select('id, reference, status, total_amount, amount_due, visit_date, customers(first_name, email)')
+    .select('id, reference, status, total_amount, amount_due, visit_date, sold_by, payment_method, people_count, customers(first_name, email)')
     .eq('id', bookingId)
     .maybeSingle();
   if (error) throw error;
@@ -45,6 +47,25 @@ export async function sendEftInstructions(bookingId: string) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
   const uploadUrl = `${appUrl}/upload-proof?ref=${encodeURIComponent(ref)}`;
+  // A booking staff added gets its booking QR code straight away, so the group can be checked in at the gate
+  // even before it is paid. Online bookings get theirs once paid.
+  // A problem making the QR code never stops the payment instructions going out.
+  let bookingQr: { contentId: string; png: Buffer } | null = null;
+  if (isStaffUnpaidBooking(booking)) {
+    try {
+      bookingQr = { contentId: 'booking-qr', png: await QRCode.toBuffer(bookingScanUrl(appUrl, await ensureBookingQrToken(booking.id)), { type: 'png', width: 320, margin: 1 }) };
+    } catch (qrError) {
+      console.error(`Could not add the booking QR code to the EFT email for ${ref}`, qrError);
+    }
+  }
+  const qrSection = bookingQr ? `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:2px solid #0EA5E9;border-radius:12px;margin:0 0 18px;">
+        <tr><td style="padding:20px;text-align:center;">
+          <p style="margin:0 0 12px;font-size:15px;font-weight:700;color:#0f172a;">Your booking QR code: show it at the entrance for your whole group${Number(booking.people_count) > 0 ? ` (${Number(booking.people_count)} ${Number(booking.people_count) === 1 ? 'person' : 'people'})` : ''}.</p>
+          <img src="cid:${bookingQr.contentId}" alt="Booking QR code" width="220" height="220" style="display:block;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;" />
+          <p style="margin:12px 0 0;font-size:12px;color:#b91c1c;">This booking is not paid yet. Please pay before your visit.</p>
+        </td></tr>
+      </table>` : '';
   const { supportEmail, supportPhone } = await getBusinessSettings();
   const bankRow = (label: string, value: string) => `<tr><td style="color:#64748b;">${label}</td><td style="text-align:right;font-weight:600;">${escapeHtml(value)}</td></tr>`;
   const html = renderEmailLayout({
@@ -74,9 +95,13 @@ export async function sendEftInstructions(bookingId: string) {
       </div>
       <p>Once you have paid, upload your proof of payment so we can confirm your booking:</p>
       ${buttonHtml(uploadUrl, 'Upload Proof of Payment')}
-      <p style="font-size:13px;color:#64748b;">${holdNotice} Tickets are issued once our team has reviewed and approved it.</p>
+      <p style="font-size:13px;color:#64748b;">${holdNotice}${bookingQr ? '' : ' Tickets are issued once our team has reviewed and approved it.'}</p>
+      ${qrSection}
     `,
   });
-  await sendEmail({ to: customerEmail, subject: `Payment Instructions for Booking ${ref}`, html, replyTo: supportEmail });
+  await sendEmail({
+    to: customerEmail, subject: `Payment Instructions for Booking ${ref}`, html, replyTo: supportEmail,
+    ...(bookingQr ? { attachments: [{ filename: `${ref}-qr.png`, content: bookingQr.png, contentType: 'image/png', contentId: bookingQr.contentId }] } : {}),
+  });
   return { customerEmail };
 }

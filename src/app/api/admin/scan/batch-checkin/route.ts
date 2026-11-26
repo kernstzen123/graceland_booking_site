@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AdminAuthError, requireAdmin, writeAudit } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
+import { bookingIsActive } from '@/lib/booking-card';
 
 type CheckinItem = {
   ticket_uid: string;
@@ -21,7 +22,8 @@ type ResultItem = {
   message?: string;
 };
 
-type TicketRow = { id: string; ticket_uid: string; status: string; visit_date: string; bookings: { status: string } | Array<{ status: string }> | null };
+type BookingState = { status: string; expires_at: string | null; deleted_at: string | null; voucher_issued: boolean | null };
+type TicketRow = { id: string; ticket_uid: string; status: string; visit_date: string; bookings: BookingState | Array<BookingState> | null };
 
 const johannesburgDate = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date(iso));
 
@@ -30,8 +32,9 @@ const johannesburgDate = (iso: string) => new Intl.DateTimeFormat('en-CA', { tim
  *
  * Processes check-ins that scanners queued while offline. Tickets are loaded
  * and marked USED in bulk; each check-in is checked the same way as an online
- * scan: the booking must still be paid and the ticket must be for the day it
- * was scanned. The first sync for a ticket wins; later ones are recorded as
+ * scan: the booking must still be paid (or unpaid but still holding its places,
+ * which the gate checks in with a NOT PAID warning) and the ticket must be for
+ * the day it was scanned. The first sync for a ticket wins; later ones are recorded as
  * duplicates (with a check-in alert if they came from another device).
  */
 export async function POST(request: Request) {
@@ -62,7 +65,7 @@ export async function POST(request: Request) {
 
     const { data: ticketRows, error: ticketError } = await supabase
       .from('tickets')
-      .select('id,ticket_uid,status,visit_date,bookings(status)')
+      .select('id,ticket_uid,status,visit_date,bookings(status,expires_at,deleted_at,voucher_issued)')
       .in('ticket_uid', uids);
     if (ticketError) throw ticketError;
     const tickets = new Map((ticketRows as TicketRow[] || []).map(ticket => [ticket.ticket_uid, ticket]));
@@ -77,7 +80,8 @@ export async function POST(request: Request) {
       const ticket = tickets.get(item.ticket_uid);
       if (!ticket) continue;
       const booking = Array.isArray(ticket.bookings) ? ticket.bookings[0] : ticket.bookings;
-      if (!booking || !['PAID', 'CONFIRMED'].includes(booking.status)) rejectReason.set(item.ticket_uid, 'Booking was cancelled or refunded');
+      // Judged as at the scan, so an unpaid booking's payment window is compared with when it was checked in.
+      if (!booking || !bookingIsActive(booking, Date.parse(item.checked_in_at))) rejectReason.set(item.ticket_uid, 'Booking was cancelled, refunded or deleted');
       else if (ticket.status === 'CANCELLED') rejectReason.set(item.ticket_uid, 'Ticket was cancelled');
       else if (ticket.visit_date !== johannesburgDate(item.checked_in_at)) rejectReason.set(item.ticket_uid, `Ticket is for ${ticket.visit_date}, not the day it was scanned`);
       else if (ticket.status === 'VALID') toClaim.push(item.ticket_uid);

@@ -20,6 +20,7 @@ export async function POST(request: Request) {
       if (!claims) {
         return NextResponse.json({ error: 'Invalid or expired QR code' }, { status: 400 });
       }
+      if (claims.type === 'booking') return NextResponse.json({ error: 'This is a booking QR code: scan it at the entrance, not for a meal' }, { status: 400 });
       mealUid = claims.tid;
     }
 

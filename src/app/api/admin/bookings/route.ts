@@ -91,7 +91,7 @@ export async function POST(request: Request) {
     if (action === 'refund') return NextResponse.json({ success: false, error: 'Use "Voucher refund" on the booking. Only admins can issue refunds.' }, { status: 400 });
     if (typeof bookingId !== 'string' || !bookingId || !ACTIONS.includes(action)) return NextResponse.json({ success: false, error: 'Invalid booking action' }, { status: 400 });
     const { data: booking, error } = await supabase.from('bookings')
-      .select('id,reference,status,total_amount,amount_due,payment_method,sold_by,expires_at,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,voucher_issued,deleted_at,party_slot,customers(first_name,last_name,email,phone),tickets(id,ticket_uid,status),payments(id,amount,method,status,provider_reference),booking_spots(spot_id,venue_spots(number,type))')
+      .select('id,reference,status,total_amount,amount_due,payment_method,sold_by,expires_at,attention_reason,visit_date,customer_id,notes,people_count,voucher_amount_used,voucher_issued,deleted_at,party_slot,qr_token,customers(first_name,last_name,email,phone),tickets(id,ticket_uid,status),payments(id,amount,method,status,provider_reference),booking_spots(spot_id,venue_spots(number,type))')
       .eq('id', bookingId).maybeSingle();
     if (error) throw error;
     if (!booking) return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
@@ -413,9 +413,10 @@ export async function POST(request: Request) {
       }
 
       // Gate tickets follow the items. Tickets that were already scanned are never touched.
-      // A booking that is not paid yet has no tickets: they are issued from its items once it is paid.
+      // An unpaid booking only has tickets once its booking QR code was issued (staff bookings); otherwise
+      // they are issued from its items once it is paid.
       let ticketNote = '';
-      if (itemsChanged && paid) {
+      if (itemsChanged && (paid || (booking.tickets || []).length > 0)) {
         const hasUsed = (booking.tickets || []).some(ticket => ticket.status === 'USED');
         if (hasUsed) ticketNote = ' Some tickets were already scanned, so the tickets were left as they are.';
         else {
@@ -442,9 +443,10 @@ export async function POST(request: Request) {
         ...(updates.amount_due !== undefined ? { amount_due: { from: booking.amount_due, to: updates.amount_due } } : {}),
       });
       const changed = itemsChanged || seatsMoved || Object.keys(updates).length > 0;
-      // The customer's emailed QR codes no longer match once the tickets are rebuilt or the date moves.
-      const resendNote = paid && !imported && (dateChanged || (itemsChanged && !ticketNote))
-        ? ' Use "Resend tickets" to email the customer their updated tickets.' : '';
+      // A booking QR code keeps working after any change. Older per-person ticket codes do not match once the
+      // tickets are rebuilt or the date moves, so those customers need the new booking email.
+      const resendNote = paid && !imported && !booking.qr_token && (dateChanged || (itemsChanged && !ticketNote))
+        ? ' Use "Send booking QR" to email the customer their booking QR code.' : '';
       const owedNote = paid && updates.total_amount !== undefined && Number(updates.total_amount) > Number(booking.total_amount)
         ? ' The total went up: record the extra payment under Balance once it is paid.' : '';
       return NextResponse.json({ success: true, message: changed ? `Booking updated.${ticketNote}${resendNote}${owedNote}` : 'Nothing was changed.' });
