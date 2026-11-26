@@ -5,12 +5,15 @@
 //
 // Stores:
 //   tickets     – mirror of server tickets for today, keyed by ticket_uid
+//   bookings    – today's booking cards (what the scanner shows for a booking QR code), keyed by bookingId
 //   sync_queue  – check-in events waiting to be pushed to the server
 //   meta        – key/value pairs (last_sync, ticket_count, device_id, cached_session)
 // ---------------------------------------------------------------------------
 
+import type { BookingCard } from '@/lib/booking-card';
+
 const DB_NAME = 'graceland-scanner';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 /** Returns today's date as YYYY-MM-DD in the Africa/Johannesburg timezone. */
 function johannesburgTodayClient(): string {
@@ -18,6 +21,9 @@ function johannesburgTodayClient(): string {
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
+
+/** A booking card kept on the device, with the booking's own QR code for offline lookups. */
+export type OfflineBooking = BookingCard & { qrToken: string | null };
 
 export type OfflineTicket = {
   ticket_uid: string;
@@ -89,6 +95,13 @@ export function initDB(): Promise<IDBDatabase> {
         tickets.createIndex('status', 'status', { unique: false });
       }
 
+      // Booking cards — keyed by booking id, found by their QR code (added in version 3)
+      if (!db.objectStoreNames.contains('bookings')) {
+        const bookings = db.createObjectStore('bookings', { keyPath: 'bookingId' });
+        bookings.createIndex('qrToken', 'qrToken', { unique: false });
+        bookings.createIndex('reference', 'reference', { unique: false });
+      }
+
       // Sync queue — auto-increment key
       if (!db.objectStoreNames.contains('sync_queue')) {
         const queue = db.createObjectStore('sync_queue', { keyPath: 'id', autoIncrement: true });
@@ -102,7 +115,12 @@ export function initDB(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      // A newer version of the page (e.g. after an update) needs this copy to step aside so it can upgrade.
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
     request.onerror = () => reject(request.error);
   });
 
@@ -191,8 +209,9 @@ export async function clearCachedSession(): Promise<void> {
  */
 export async function clearOfflineTickets(): Promise<void> {
   const db = await initDB();
-  const t = tx(db, ['tickets', 'meta'], 'readwrite');
+  const t = tx(db, ['tickets', 'bookings', 'meta'], 'readwrite');
   t.objectStore('tickets').clear();
+  t.objectStore('bookings').clear();
   t.objectStore('meta').delete('last_sync');
   t.objectStore('meta').delete('ticket_count');
   t.objectStore('meta').delete('cached_session');
@@ -215,6 +234,7 @@ export async function syncTicketsFromServer(authToken: string, date?: string): P
 
   const data = await response.json();
   const tickets: OfflineTicket[] = data.tickets;
+  const bookings: OfflineBooking[] = Array.isArray(data.bookings) ? data.bookings : [];
   const synced_at: string = data.synced_at;
 
   const db = await initDB();
@@ -222,8 +242,9 @@ export async function syncTicketsFromServer(authToken: string, date?: string): P
   // Wipe and repopulate tickets store.
   // We need to preserve local check-in status for tickets we already
   // marked as USED offline but haven't synced yet.
-  const t = tx(db, ['tickets', 'sync_queue'], 'readwrite');
+  const t = tx(db, ['tickets', 'bookings', 'sync_queue'], 'readwrite');
   const ticketStore = t.objectStore('tickets');
+  const bookingStore = t.objectStore('bookings');
   const queueStore = t.objectStore('sync_queue');
 
   // Collect ticket_uids that are in the pending sync queue
@@ -253,6 +274,8 @@ export async function syncTicketsFromServer(authToken: string, date?: string): P
     }
     ticketStore.put(ticket);
   }
+  bookingStore.clear();
+  for (const booking of bookings) bookingStore.put(booking);
 
   await txDone(t);
 
@@ -385,6 +408,86 @@ export async function checkInLocally(ticketUid: string, deviceId: string): Promi
   await txDone(t);
 
   return { success: true, ticket };
+}
+
+// ── Booking cards (one QR code per booking) ────────────────────────────────
+
+/** The booking's tickets on this device (they are stored by booking reference). */
+async function bookingTickets(store: IDBObjectStore, reference: string): Promise<OfflineTicket[]> {
+  return reqToPromise(store.index('booking_ref').getAll(reference)) as Promise<OfflineTicket[]>;
+}
+
+/** The card with its check-in count taken from this device's tickets (which include check-ins not synced yet). */
+function withLocalCounts(booking: OfflineBooking, tickets: OfflineTicket[]): OfflineBooking {
+  const live = tickets.filter(ticket => ticket.status !== 'CANCELLED');
+  if (!live.length) return booking;
+  return { ...booking, people: live.length, checkedIn: live.filter(ticket => ticket.status === 'USED').length };
+}
+
+/**
+ * The booking behind a scanned or typed code, from this device's copy: the
+ * booking's own QR code, an older per-person ticket code (opens the whole
+ * booking), a ticket ID or a booking reference.
+ */
+export async function lookupBookingLocally(code: string): Promise<OfflineBooking | null> {
+  const db = await initDB();
+  let value = code.trim();
+  try { value = new URL(value).searchParams.get('token') || value; } catch { /* not a URL */ }
+  // A ticket code or ID is matched first, in its own read, then the booking is read in one go.
+  const ticket = await lookupTicket(value);
+  const t = tx(db, ['bookings', 'tickets'], 'readonly');
+  const bookingStore = t.objectStore('bookings');
+  const ticketStore = t.objectStore('tickets');
+  let booking: OfflineBooking | undefined;
+  if (ticket) booking = await reqToPromise(bookingStore.get(ticket.booking_id)) as OfflineBooking | undefined;
+  if (!booking) booking = await reqToPromise(bookingStore.index('qrToken').get(value)) as OfflineBooking | undefined;
+  if (!booking && value.toUpperCase().startsWith('BK-')) booking = await reqToPromise(bookingStore.index('reference').get(value.toUpperCase())) as OfflineBooking | undefined;
+  if (!booking) return null;
+  return withLocalCounts(booking, await bookingTickets(ticketStore, booking.reference));
+}
+
+/**
+ * Check in `count` people on a booking while offline: the next unused tickets on
+ * this device are marked used and queued for the server, like single tickets.
+ */
+export async function checkInBookingLocally(bookingId: string, count: number, deviceId: string): Promise<{ success: boolean; checkedIn: string[]; booking?: OfflineBooking; error?: string }> {
+  const db = await initDB();
+  const t = tx(db, ['bookings', 'tickets', 'sync_queue'], 'readwrite');
+  const bookingStore = t.objectStore('bookings');
+  const ticketStore = t.objectStore('tickets');
+  const queueStore = t.objectStore('sync_queue');
+  const booking = await reqToPromise(bookingStore.get(bookingId)) as OfflineBooking | undefined;
+  if (!booking) return { success: false, checkedIn: [], error: 'This booking is not on this device. Sync when online.' };
+  if (booking.visitDate !== johannesburgTodayClient()) return { success: false, checkedIn: [], booking, error: `This booking is for ${booking.visitDate}, not today.` };
+  if (!booking.active) return { success: false, checkedIn: [], booking, error: 'This booking has been cancelled.' };
+  const tickets = await bookingTickets(ticketStore, booking.reference);
+  const free = tickets.filter(ticket => ticket.status === 'VALID').sort((a, b) => a.ticket_uid.localeCompare(b.ticket_uid)).slice(0, count);
+  if (!free.length) return { success: false, checkedIn: [], booking: withLocalCounts(booking, tickets), error: 'Everyone on this booking is already checked in.' };
+  const now = new Date().toISOString();
+  for (const ticket of free) {
+    ticket.status = 'USED';
+    ticket.checked_in_at = now;
+    ticket.checked_in_by_device = deviceId;
+    ticketStore.put(ticket);
+    const item: SyncQueueItem = { ticket_uid: ticket.ticket_uid, ticket_id: ticket.ticket_id, checked_in_at: now, device_id: deviceId, synced: 0, retries: 0, last_error: null };
+    queueStore.add(item);
+  }
+  await txDone(t);
+  return { success: true, checkedIn: free.map(ticket => ticket.ticket_uid), booking: withLocalCounts(booking, tickets) };
+}
+
+/** After an online check-in, mark those tickets used on this device too (the server already has them, so nothing is queued). */
+export async function markTicketsUsedLocally(ticketUids: string[], deviceId: string): Promise<void> {
+  if (!ticketUids.length) return;
+  const db = await initDB();
+  const t = tx(db, 'tickets', 'readwrite');
+  const store = t.objectStore('tickets');
+  const now = new Date().toISOString();
+  for (const uid of ticketUids) {
+    const ticket = await reqToPromise(store.get(uid)) as OfflineTicket | undefined;
+    if (ticket && ticket.status === 'VALID') store.put({ ...ticket, status: 'USED', checked_in_at: now, checked_in_by_device: deviceId });
+  }
+  await txDone(t);
 }
 
 // ── Sync queue ─────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ import { getCurrentPrices } from '@/lib/price-store';
 import { cleanText, isValidEmail } from '@/lib/request-security';
 import { customerError } from '@/lib/public-errors';
 import { emailTicketsOnce, generateTicketsAndSendEmail } from '@/lib/ticketing';
+import { ensureBookingQrToken } from '@/lib/booking-qr';
 import { recordNotificationFailure } from '@/lib/mailer';
 import { sendEftInstructions } from '@/lib/eft-email';
 import { STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
@@ -202,6 +203,15 @@ ${prepared.notes}` : IMPORTED_NOTE, expires_at: null, sold_by: actorId }).eq('id
     if (error) throw error;
     completed = true;
     await writeAudit(actorId, 'OFFICE_BOOKING', 'booking', bookingId, { reference, total: prepared.total, payment: options.sendEftEmail ? 'EFT instructions sent' : 'Unpaid, no EFT email' });
+    // The booking QR code (and the tickets behind it) is made now, without an email, so the booking can be
+    // scanned at the gate even before it is paid (the scanner shows NOT PAID). A failure here does not undo
+    // the booking: "Send booking QR" or the gate makes them later.
+    try {
+      await generateTicketsAndSendEmail(bookingId, '', customerName, { sendEmail: false });
+      await ensureBookingQrToken(bookingId);
+    } catch (qrError) {
+      console.error(`Could not make the booking QR code for unpaid staff booking ${reference}`, qrError);
+    }
     // The EFT email only goes out when staff tick it on the Add booking page.
     let eftSent: boolean | null = null;
     if (options.sendEftEmail) {

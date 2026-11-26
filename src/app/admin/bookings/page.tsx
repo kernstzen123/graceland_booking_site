@@ -125,14 +125,15 @@ function BookingsPage() {
       if (!result.confirmed) return;
       reason = result.value;
     } else if (type === 'resend_tickets') {
-      const result = await confirm({ title: 'Resend tickets', message: `Resend tickets for ${selected.reference} to the customer's email?`, confirmLabel: 'Resend tickets', tone: 'primary' });
+      const unpaidNote = PAID_STATUSES.includes(selected.status) ? '' : ' The booking is not paid yet, so the email also says what is still owed.';
+      const result = await confirm({ title: 'Send booking QR', message: `Email ${selected.reference}'s booking QR code to the customer? It is one QR code for the whole booking, with a summary of what was booked.${unpaidNote}`, confirmLabel: 'Send booking QR', tone: 'primary' });
       if (!result.confirmed) return;
     } else if (type === 'cancel_ticket') {
       const result = await confirm({ title: 'Invalidate ticket', message: 'This ticket will no longer scan as valid at the gate. This cannot be undone.', confirmLabel: 'Invalidate ticket', tone: 'danger', promptLabel: 'Reason (optional)', promptPlaceholder: 'Internal note for the audit log', promptRequired: false });
       if (!result.confirmed) return;
       reason = result.value || null;
     }
-    setBusy(type); setMessage(type === 'refund' ? 'Issuing voucher refund... please wait.' : type === 'resend_tickets' ? 'Resending tickets...' : 'Processing booking action... please wait.');
+    setBusy(type); setMessage(type === 'refund' ? 'Issuing voucher refund... please wait.' : type === 'resend_tickets' ? 'Sending the booking QR code...' : 'Processing booking action... please wait.');
     try {
       let endpoint: string;
       let body: string | undefined;
@@ -159,7 +160,7 @@ function BookingsPage() {
       if (type === 'delete' || type === 'purge') setSelected(null); else await openBooking(selected.id);
       if (type === 'resolve_attention') showToast('Alert resolved');
       await reload();
-      if (type === 'resend_tickets') showToast('Tickets resent successfully');
+      if (type === 'resend_tickets') showToast('Booking QR code emailed');
       if (type === 'refund') showToast(data.emailSent ? 'Voucher issued and email sent' : 'Voucher issued; email queued for retry');
     } finally { setBusy(''); }
   };
@@ -544,7 +545,7 @@ function BookingDetail({ booking, onAction, onSaveEdit, onRecordPayment, onRemov
     {booking.tickets?.length ? booking.tickets.map(ticket => <div key={ticket.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-color)', padding: '0.5rem 0', flexWrap: 'wrap' }}><span style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>{ticket.ticket_uid} · <strong>{ticket.status}</strong></span>{ticket.status === 'VALID' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }} onClick={() => onAction('cancel_ticket', ticket.id)}>Invalidate</button>}</div>) : <p style={{ color: 'var(--text-muted)' }}>No tickets issued.</p>}
     {!isDeleted && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: '1.5rem' }}>
       {isEditable(booking) && <button className="btn btn-primary" onClick={startEditing}>Edit booking</button>}
-      {isPaid && <button className="btn btn-primary" onClick={() => onAction('resend_tickets')}>Resend tickets</button>}
+      {(isPaid || isHoldingUnpaid(booking)) && !booking.voucher_issued && <button className="btn btn-primary" onClick={() => onAction('resend_tickets')}>Send booking QR</button>}
       {!isPaid && !isCancelled && <button className="btn" onClick={() => onAction('mark_paid')} style={{ border: '1px solid var(--border-color)' }}>Mark paid</button>}
       {isPaid && !booking.voucher_issued && <button className="btn" style={{ color: '#b91c1c', border: '1px solid #b91c1c' }} onClick={() => setShowRefundModal(true)}>Voucher refund</button>}
       {!isPaid && booking.status !== 'PAYMENT_PENDING' && <button className="btn" style={{ color: 'var(--danger)', border: '1px solid var(--danger)' }} onClick={() => onAction('delete')}>Delete</button>}

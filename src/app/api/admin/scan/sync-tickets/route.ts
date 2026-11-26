@@ -3,12 +3,16 @@ import { spotLabel } from '@/lib/seating';
 import { AdminAuthError, requireAdmin } from '@/lib/admin-auth';
 import { supabase } from '@/lib/supabase';
 import { johannesburgToday } from '@/lib/opening-rules';
+import { BOOKING_CARD_SELECT, bookingIsActive, buildBookingCard, type BookingCardRow } from '@/lib/booking-card';
+import { fetchAllRows } from '@/lib/fetch-all';
 
 /**
  * GET /api/admin/scan/sync-tickets?date=YYYY-MM-DD
  *
  * Downloads all tickets for the given date (defaults to today) with the fields
- * needed for offline validation in the scanner's IndexedDB cache.
+ * needed for offline validation in the scanner's IndexedDB cache, and the
+ * day's booking cards (passes, seating, names, total, paid or not, and the
+ * booking's own QR code) so a booking can be shown and checked in offline.
  */
 export async function GET(request: Request) {
   try {
@@ -35,7 +39,7 @@ export async function GET(request: Request) {
         qr_token,
         packages(name),
         customers(first_name, last_name, phone, email),
-        bookings(reference, status, voucher_issued, payment_method)
+        bookings(reference, status, voucher_issued, payment_method, expires_at, deleted_at)
       `)
       .eq('visit_date', date)
       .in('status', ['VALID', 'USED']);
@@ -68,9 +72,9 @@ export async function GET(request: Request) {
     // Map to the offline ticket format
     const offlineTickets = (tickets || [])
       .filter(t => {
-        // Only include tickets from confirmed/paid bookings
+        // Paid bookings, and unpaid ones that still hold their places (they are checked in with a NOT PAID warning).
         const booking = Array.isArray(t.bookings) ? t.bookings[0] : t.bookings;
-        return booking && ['PAID', 'CONFIRMED'].includes(booking.status);
+        return Boolean(booking && bookingIsActive(booking));
       })
       .map(t => {
         const customer = Array.isArray(t.customers) ? t.customers[0] : t.customers;
@@ -98,8 +102,17 @@ export async function GET(request: Request) {
         };
       });
 
+    // The day's booking cards, for the bookings whose tickets are on the device.
+    const activeBookingIds = new Set(offlineTickets.map(ticket => ticket.booking_id));
+    const bookingRows = await fetchAllRows<BookingCardRow>((from, to) => supabase
+      .from('bookings').select(BOOKING_CARD_SELECT).eq('visit_date', date).is('deleted_at', null).order('id').range(from, to));
+    const bookings = bookingRows
+      .filter(row => activeBookingIds.has(row.id))
+      .map(row => ({ ...buildBookingCard(row), qrToken: row.qr_token || null }));
+
     return NextResponse.json({
       tickets: offlineTickets,
+      bookings,
       synced_at: new Date().toISOString(),
       count: offlineTickets.length,
     });

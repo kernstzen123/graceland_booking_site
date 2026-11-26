@@ -68,12 +68,12 @@ describe('imported (booking book) bookings in reports', async () => {
 });
 
 describe('meal vouchers are issued even when the tickets already exist', () => {
-  it('creates the missing meal vouchers on a retry', async () => {
+  const runWith = async (bookingStatus: string) => {
     const inserts: Array<{ table: string; rows: Array<Record<string, unknown>> }> = [];
     // Tickets were saved by an earlier attempt that failed before the meal vouchers.
     const tables: Record<string, unknown> = {
       tickets: [{ ticket_uid: 'TKT-1', qr_token: 'x', visit_date: '2099-12-31' }],
-      booking_items: [{ quantity: 1, package_id: null, hut_id: null, metadata: { name: 'Adult', isPerson: true }, bookings: { visit_date: '2099-12-31', customer_id: 'c1', voucher_credit_id: null } }],
+      booking_items: [{ quantity: 1, package_id: null, hut_id: null, metadata: { name: 'Adult', isPerson: true }, bookings: { visit_date: '2099-12-31', customer_id: 'c1', voucher_credit_id: null, status: bookingStatus } }],
       booking_spots: [],
       meal_vouchers: [],
       booking_specials: [{ special_id: 's1', quantity: 2, snapshot: { title: 'Family Package', free_meals: 0, included_meals: [{ name: 'Pizza', quantity: 1 }] } }],
@@ -95,11 +95,21 @@ describe('meal vouchers are issued even when the tickets already exist', () => {
     vi.resetModules();
     const { generateTicketsAndSendEmail } = await import('@/lib/ticketing');
     await generateTicketsAndSendEmail('booking-1', '', 'Guest', { sendEmail: false });
+    vi.doUnmock('@/lib/supabase');
+    return inserts;
+  };
+
+  it('creates the missing meal vouchers on a retry', async () => {
+    const inserts = await runWith('PAID');
     const meals = inserts.find(i => i.table === 'meal_vouchers')?.rows || [];
     expect(meals.length).toBe(2); // 1 pizza × 2 packages
     expect(meals.every(m => m.meal_name === 'Pizza' && m.visit_date === '2099-12-31')).toBe(true);
     expect(inserts.some(i => i.table === 'tickets')).toBe(false); // the existing tickets are reused
-    vi.doUnmock('@/lib/supabase');
+  });
+
+  it('issues no meal vouchers while the booking is unpaid (an unpaid staff booking already has its tickets)', async () => {
+    const inserts = await runWith('UNPAID');
+    expect(inserts.some(i => i.table === 'meal_vouchers')).toBe(false);
   });
 });
 

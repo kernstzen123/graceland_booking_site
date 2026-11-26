@@ -4,7 +4,10 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import QRCode from 'qrcode';
 import { supabase } from './supabase';
 import { createQrToken } from './qr-token';
-import { escapeHtml, renderEmailLayout, calloutBox, statusBadge } from './email-layout';
+import { escapeHtml, renderEmailLayout } from './email-layout';
+import { BOOKING_CARD_SELECT, buildBookingCard, type BookingCardRow } from './booking-card';
+import { bookingEmailBody, createBookingPdf, formatVisitDate, wrapPdfText } from './booking-email';
+import { bookingScanUrl, ensureBookingQrToken } from './booking-qr';
 import { getBusinessSettings } from './business-settings';
 import { sendEmail } from './mailer';
 import { spotLabel } from './seating';
@@ -16,7 +19,7 @@ type BookingItem = {
   metadata: { name?: string; itemId?: string; isPerson?: boolean; attendeeNames?: Array<{ firstName: string; lastName: string }> } | null;
   packages?: { name?: string } | null;
   huts?: { name?: string } | null;
-  bookings?: { visit_date?: string; customer_id?: string; voucher_credit_id?: string | null } | null;
+  bookings?: { visit_date?: string; customer_id?: string; voucher_credit_id?: string | null; status?: string } | null;
 };
 
 /**
@@ -32,7 +35,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
 
   const { data: bookingItems, error: itemsError } = await supabase
     .from('booking_items')
-    .select('*, bookings(visit_date, customer_id, voucher_credit_id), packages(name), huts(name)')
+    .select('*, bookings(visit_date, customer_id, voucher_credit_id, status), packages(name), huts(name)')
     .eq('booking_id', bookingId);
   if (itemsError) throw new Error(`Could not load booking items: ${itemsError.message}`);
 
@@ -71,7 +74,10 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
     const special = (Array.isArray(m.specials) ? m.specials[0] : m.specials) as SpecialTitle;
     return { ...m, display_name: `${m.meal_name || mealName} (${special?.title || 'Special'})` };
   });
-  if (!existingMeals?.length && bookingSpecials?.length) {
+  // Meal vouchers are only issued once the booking is paid: the kitchen redeems them without checking payment,
+  // and an unpaid staff booking gets its tickets (for its booking QR code) before it is paid.
+  const paidBooking = ['PAID', 'CONFIRMED'].includes(String(items[0]?.bookings?.status || ''));
+  if (!existingMeals?.length && bookingSpecials?.length && paidBooking) {
     const visitDate = String(items[0]?.bookings?.visit_date);
     const newMeals: Array<Record<string, unknown>> = [];
     for (const bs of bookingSpecials) {
@@ -113,7 +119,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
       attendee_name: attendeeFullNames[index] || '',
     }));
     if (options.sendEmail !== false) {
-      await sendTicketsEmail(customerEmail, customerName, labelledTickets as Array<Record<string, unknown>>, voucherRemaining, labelledMeals);
+      await sendBookingEmail(bookingId, customerEmail, customerName, voucherRemaining, labelledMeals);
       await markTicketsEmailed(bookingId);
     }
     return labelledTickets;
@@ -143,7 +149,7 @@ export async function generateTicketsAndSendEmail(bookingId: string, customerEma
   })));
   if (insertError) throw new Error(`Could not create tickets: ${insertError.message}`);
   if (options.sendEmail !== false) {
-    await sendTicketsEmail(customerEmail, customerName, newTickets, voucherRemaining, labelledMeals);
+    await sendBookingEmail(bookingId, customerEmail, customerName, voucherRemaining, labelledMeals);
     await markTicketsEmailed(bookingId);
   }
   return newTickets;
@@ -232,24 +238,28 @@ function buildTicketDisplayNames(items: BookingItem[], seatingLabel = '') {
   return { names, attendeeFullNames };
 }
 
-async function sendTicketsEmail(email: string, name: string, tickets: Array<Record<string, unknown>>, voucherRemaining: number | null = null, meals: Array<Record<string, unknown>> = []) {
+/**
+ * The booking email: one QR code for the whole booking (staff scan it once at
+ * the gate and check the group in), a summary of the booking and a one-page
+ * PDF. Meal vouchers keep their own QR codes for the kitchen. Paid bookings
+ * get it when the payment is confirmed; staff can send it to any booking with
+ * "Send booking QR", including unpaid ones (then it says what is still owed).
+ */
+async function sendBookingEmail(bookingId: string, email: string, name: string, voucherRemaining: number | null = null, meals: Array<Record<string, unknown>> = []) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   if (process.env.NODE_ENV === 'production' && !appUrl.startsWith('https://')) throw new Error('NEXT_PUBLIC_APP_URL must use HTTPS in production');
   if (!email) throw new Error('Customer email address is missing');
 
-  // Extract the visit date from the first ticket for the email header
-  const rawVisitDate = String(tickets[0]?.visit_date || '');
-  const formattedVisitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : '';
+  const token = await ensureBookingQrToken(bookingId);
+  const { data: row, error } = await supabase.from('bookings').select(BOOKING_CARD_SELECT).eq('id', bookingId).single();
+  if (error) throw new Error(`Could not load the booking for its email: ${error.message}`);
+  const card = buildBookingCard(row as unknown as BookingCardRow);
+  const formattedVisitDate = formatVisitDate(card.visitDate);
 
   // QR codes are drawn here and embedded in the email as inline images (cid:),
-  // so ticket tokens are never sent to a third-party QR service and the codes
-  // still show when such a service is down. The same images go into the PDFs.
-  const qrCodes = await Promise.all(tickets.map(async (ticket, index) => ({
-    contentId: `ticket-qr-${index + 1}`,
-    filename: `${String(ticket.ticket_uid || `ticket-${index + 1}`)}-qr.png`,
-    png: await QRCode.toBuffer(ticketScanUrl(appUrl, ticket), { type: 'png', width: 220, margin: 1 }),
-  })));
-
+  // so the codes are never sent to a third-party QR service and still show
+  // when such a service is down. The same image goes into the PDF.
+  const bookingQr = { contentId: 'booking-qr', filename: `${card.reference}-qr.png`, png: await QRCode.toBuffer(bookingScanUrl(appUrl, token), { type: 'png', width: 320, margin: 1 }) };
   const mealQrCodes = await Promise.all(meals.map(async (meal, index) => ({
     contentId: `meal-qr-${index + 1}`,
     filename: `${String(meal.meal_uid || `meal-${index + 1}`)}-qr.png`,
@@ -283,182 +293,27 @@ async function sendTicketsEmail(email: string, name: string, tickets: Array<Reco
     </table>`;
   }).join('');
 
-  const ticketsHtml = tickets.map((ticket, index) => {
-    const attendeeName = String(ticket.attendee_name || '');
-    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;margin-bottom:16px;overflow:hidden;">
-      <tr>
-        <td style="background:#0EA5E9;padding:8px 16px;">
-          <p style="margin:0;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:1px;">TICKET ${index + 1} OF ${tickets.length}</p>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:18px 20px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-            <tr>
-              <td style="vertical-align:top;">
-                ${attendeeName ? `<p style="margin:0 0 4px;font-size:16px;font-weight:700;color:#0f172a;">${escapeHtml(attendeeName)}</p>` : ''}
-                <p style="margin:0 0 10px;font-size:13px;font-weight:600;color:#334155;">${escapeHtml(String(ticket.display_name || 'Entrance Ticket'))}</p>
-                <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Ticket ID</p>
-                <p style="margin:0 0 12px;font-size:13px;font-family:'Courier New',monospace;color:#0f172a;">${escapeHtml(String(ticket.ticket_uid))}</p>
-                <p style="margin:0;font-size:11px;color:#94a3b8;">Present this QR code at the entrance scanner.</p>
-              </td>
-              <td width="112" style="vertical-align:top;text-align:center;padding-left:14px;">
-                <img src="cid:${qrCodes[index].contentId}" alt="QR Code for Ticket" width="104" height="104" style="border:1px solid #e2e8f0;border-radius:8px;" />
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>`;
-  }).join('');
-  const voucherNotice = voucherRemaining !== null ? `<div style="background:#eff6ff;border:1px solid #93c5fd;padding:14px 16px;border-radius:8px;color:#1d4ed8;font-size:13px;margin-bottom:18px;"><strong>Voucher balance remaining:</strong> R ${voucherRemaining.toFixed(2)}. Vouchers never expire and are valid for ticket purchases only.</div>` : '';
-  const visitDateBanner = formattedVisitDate ? calloutBox({ label: 'Visit Date', value: escapeHtml(formattedVisitDate), tone: 'green' }) : '';
   const { supportEmail, supportPhone } = await getBusinessSettings();
   const html = renderEmailLayout({
     supportEmail,
     supportPhone,
-    preheader: formattedVisitDate ? `Your tickets for ${formattedVisitDate} are ready` : 'Your Graceland Venues tickets are ready',
-    bodyHtml: `
-      ${statusBadge('BOOKING CONFIRMED', 'green')}
-      <h1 style="margin:0 0 16px;font-size:20px;color:#0f172a;">Your tickets are ready</h1>
-      <p>Hi ${escapeHtml(name)},</p>
-      <p>Your payment was successful and your booking is confirmed.</p>
-      ${voucherNotice}
-      ${visitDateBanner}
-      <p>Each person requires their own ticket to enter${tickets.length > 1 ? ` — you have <strong>${tickets.length} tickets</strong> below` : ''}. A PDF copy of every ticket is also attached to this email. Please make sure to print your qr code tickets.</p>
-      ${ticketsHtml}
-      ${mealsHtml.length > 0 ? `<p><strong>Free Meals:</strong> You also have ${meals.length} free meal voucher(s) included.</p>${mealsHtml}` : ''}
-      <p>We look forward to seeing you!</p>
-    `,
+    preheader: `Your booking QR code for ${formattedVisitDate} is ready`,
+    bodyHtml: bookingEmailBody({ card, customerName: name, qrContentId: bookingQr.contentId, voucherRemaining, mealsHtml, mealCount: meals.length }),
   });
-  const attachments = await Promise.all(tickets.map((ticket, index) => createTicketPdf(ticket, qrCodes[index].png, index)));
+  const bookingPdf = await createBookingPdf(card, bookingQr.png);
   const mealAttachments = await Promise.all(meals.map((meal, index) => createMealPdf(meal, mealQrCodes[index].png, index)));
   await sendEmail({
     to: email,
-    subject: formattedVisitDate ? `Your Tickets for ${formattedVisitDate} - Graceland Venues` : 'Your Tickets - Graceland Venues',
+    subject: `Your booking for ${formattedVisitDate} - Graceland Venues`,
     html,
     replyTo: supportEmail,
     attachments: [
-      ...qrCodes.map(qr => ({ filename: qr.filename, content: qr.png, contentType: 'image/png', contentId: qr.contentId })),
+      { filename: bookingQr.filename, content: bookingQr.png, contentType: 'image/png', contentId: bookingQr.contentId },
       ...mealQrCodes.map(qr => ({ filename: qr.filename, content: qr.png, contentType: 'image/png', contentId: qr.contentId })),
-      ...attachments.map(({ filename, content }) => ({ filename, content, contentType: 'application/pdf' })),
+      { filename: bookingPdf.filename, content: bookingPdf.content, contentType: 'application/pdf' },
       ...mealAttachments.map(({ filename, content }) => ({ filename, content, contentType: 'application/pdf' })),
     ],
   });
-}
-
-/** What a ticket's QR code encodes: the staff scanner link with the signed ticket token. */
-function ticketScanUrl(appUrl: string, ticket: Record<string, unknown>) {
-  return `${appUrl}/admin/scanner?token=${encodeURIComponent(String(ticket.qr_token))}`;
-}
-
-async function createTicketPdf(ticket: Record<string, unknown>, qrBuffer: Buffer, index: number) {
-  const ticketUid = String(ticket.ticket_uid || `ticket-${index + 1}`);
-  const displayName = String(ticket.display_name || 'Entrance Ticket');
-  const attendeeName = String(ticket.attendee_name || '');
-  const rawVisitDate = String(ticket.visit_date || '');
-  const visitDate = rawVisitDate ? formatVisitDate(rawVisitDate) : 'See booking confirmation';
-
-  const document = await PDFDocument.create();
-  const page = document.addPage([595, 842]);
-  const regular = await document.embedFont(StandardFonts.Helvetica);
-  const bold = await document.embedFont(StandardFonts.HelveticaBold);
-  const primary = rgb(14 / 255, 165 / 255, 233 / 255);
-  const dark = rgb(15 / 255, 23 / 255, 42 / 255);
-  const muted = rgb(100 / 255, 116 / 255, 139 / 255);
-  const green = rgb(21 / 255, 128 / 255, 61 / 255);
-
-  // --- Fixed bottom-up layout for QR code and footer ---
-  // This ensures these elements never collide with the top-down text.
-  const footerY = 80;
-  page.drawText('This ticket is valid for one person and may only be used once.', { x: 115, y: footerY, size: 10, font: regular, color: muted });
-
-  const scanInstructionY = 245;
-  page.drawText('Present this QR code at the entrance scanner.', { x: 145, y: scanInstructionY, size: 13, font: regular, color: dark });
-
-  const qrY = 275;
-  const qrImage = await document.embedPng(qrBuffer);
-  page.drawImage(qrImage, { x: 187, y: qrY, width: 220, height: 220 });
-
-  // --- Top-down layout for ticket info ---
-  // The QR zone starts at qrY + 220 = 495, so text must stay above that.
-  const qrZoneTop = qrY + 220 + 15; // 510 — safe boundary
-
-  page.drawRectangle({ x: 40, y: 42, width: 515, height: 758, borderColor: primary, borderWidth: 2 });
-  page.drawText('GRACELAND VENUES', { x: 75, y: 720, size: 24, font: bold, color: primary });
-  page.drawText('DIGITAL ENTRY TICKET', { x: 77, y: 690, size: 12, font: regular, color: muted });
-
-  let nextY = 660;
-
-  // Visit date — displayed prominently at the top so it's never hidden
-  page.drawText(`Visit Date: ${visitDate}`, { x: 75, y: nextY, size: 16, font: bold, color: green });
-  nextY -= 30;
-
-  // Attendee name (prominent, if available)
-  if (attendeeName) {
-    const nameLines = wrapPdfText(attendeeName, bold, 445, 22, 2);
-    nameLines.forEach((line) => {
-      if (nextY > qrZoneTop) {
-        page.drawText(line, { x: 75, y: nextY, size: 22, font: bold, color: dark });
-        nextY -= 28;
-      }
-    });
-    nextY -= 4;
-  }
-
-  // Ticket type / display name
-  const titleSize = 18;
-  const titleLines = wrapPdfText(displayName, bold, 445, titleSize, 3);
-  titleLines.forEach((line) => {
-    if (nextY > qrZoneTop) {
-      page.drawText(line, { x: 75, y: nextY, size: titleSize, font: bold, color: primary });
-      nextY -= 23;
-    }
-  });
-
-  nextY -= 10;
-  if (nextY > qrZoneTop) {
-    page.drawText(`Ticket ID: ${ticketUid}`, { x: 75, y: nextY, size: 13, font: regular, color: muted });
-  }
-
-  const content = Buffer.from(await document.save());
-
-  return { filename: `${ticketUid}.pdf`, content };
-}
-
-function formatVisitDate(dateStr: string): string {
-  // Parse as local date (avoid timezone shift by splitting manually)
-  const parts = dateStr.split('-');
-  if (parts.length !== 3) return dateStr;
-  const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-  if (isNaN(date.getTime())) return dateStr;
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
-}
-
-function wrapPdfText(text: string, font: Awaited<ReturnType<PDFDocument['embedFont']>>, maxWidth: number, size: number, maxLines: number) {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = '';
-
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
-      current = candidate;
-      continue;
-    }
-    if (current) lines.push(current);
-    current = word;
-  }
-  if (current) lines.push(current);
-
-  if (lines.length <= maxLines) return lines;
-  const visible = lines.slice(0, maxLines);
-  let last = visible[maxLines - 1];
-  while (last.length > 1 && font.widthOfTextAtSize(`${last}…`, size) > maxWidth) last = last.slice(0, -1);
-  visible[maxLines - 1] = `${last}…`;
-  return visible;
 }
 
 function mealScanUrl(appUrl: string, meal: Record<string, unknown>) {

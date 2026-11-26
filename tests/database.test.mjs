@@ -441,6 +441,45 @@ it('database migrations and functions behave correctly', async () => {
   check('the clean-up reports how many it deleted, and logs each one', Number(expired) >= 2 && Number((await one(`select count(*) as n from public.admin_audit_log where action = 'AUTO_DELETE_UNPAID_BOOKING' and entity_id = $1`, [oldOnline])).n) === 1, `${expired}`);
   check('running it again deletes nothing more', Number((await one(`select public.expire_online_unpaid_bookings() as n`)).n) === 0);
 
+  // ── One QR code per booking: check in a group, or part of it (20261017) ──
+  const jhbToday = (await one(`select (now() at time zone 'Africa/Johannesburg')::date::text as d`)).d;
+  const groupBooking = async (ref, people, changes = `status = 'PAID', expires_at = null`) => {
+    const id = await reserve(ref, people, 100 * people);
+    await db.query(`update public.bookings set visit_date = $2::date, ${changes} where id = $1`, [id, jhbToday]);
+    for (let i = 0; i < people; i++) {
+      await db.query(`insert into public.tickets (booking_id, ticket_uid, visit_date, qr_token, issued_at) values ($1, $2, $3::date, $4, now() + ($5 || ' seconds')::interval)`, [id, `TKT-${ref}-${i}`, jhbToday, `token-${ref}-${i}`, String(i)]);
+    }
+    return id;
+  };
+  const checkIn = (id, count, device = 'gate-1') => one(`select * from public.check_in_booking($1, $2, null, $3)`, [id, count, device]);
+  const family = await groupBooking('BK-GRP-1', 6);
+  let group = await checkIn(family, 4);
+  check('a group can check in part of the booking (4 of 6)', group.ok === true && group.checked_in.length === 4 && group.used === 4 && group.total === 6, JSON.stringify(group));
+  check('the first tickets issued are the ones used', JSON.stringify(group.checked_in) === JSON.stringify(['TKT-BK-GRP-1-0', 'TKT-BK-GRP-1-1', 'TKT-BK-GRP-1-2', 'TKT-BK-GRP-1-3']), JSON.stringify(group.checked_in));
+  group = await checkIn(family, 5);
+  check('the same QR code checks in the rest later, never more than booked', group.ok === true && group.checked_in.length === 2 && group.used === 6, JSON.stringify(group));
+  group = await checkIn(family, 1);
+  check('a full booking is not checked in again', group.ok === false && group.reason === 'ALL_USED' && group.used === 6, JSON.stringify(group));
+  check('each person checked in gets a scan record', Number((await one(`select count(*) as n from public.ticket_scans s join public.tickets t on t.id = s.ticket_id where t.booking_id = $1 and s.result_status = 'APPROVED' and s.device_id = 'gate-1'`, [family])).n) === 6);
+  const unpaidStaff = await groupBooking('BK-GRP-UNPAID', 2, `status = 'UNPAID', sold_by = '${staffUser}', payment_method = 'MANUAL_EFT', expires_at = '9999-12-31T23:59:59Z'`);
+  check('an unpaid booking that still holds its places can be checked in', (await checkIn(unpaidStaff, 2)).ok === true);
+  const lapsed = await groupBooking('BK-GRP-LAPSED', 2, `status = 'UNPAID', expires_at = now() - interval '1 hour'`);
+  check('an unpaid online booking whose payment window ended cannot', (await checkIn(lapsed, 1)).reason === 'NOT_ACTIVE');
+  const deletedGroup = await groupBooking('BK-GRP-DELETED', 2, `status = 'CANCELLED', deleted_at = now()`);
+  check('a deleted or cancelled booking cannot', (await checkIn(deletedGroup, 1)).reason === 'CANCELLED');
+  const tomorrowGroup = await groupBooking('BK-GRP-TOMORROW', 2);
+  await db.query(`update public.bookings set visit_date = visit_date + 1 where id = $1`, [tomorrowGroup]);
+  check('a booking for another day cannot', (await checkIn(tomorrowGroup, 1)).reason === 'WRONG_DATE');
+  const noTickets = await reserve('BK-GRP-NONE', 2, 200);
+  await db.query(`update public.bookings set visit_date = $2::date, status = 'PAID', expires_at = null where id = $1`, [noTickets, jhbToday]);
+  check('a booking without tickets says so', (await checkIn(noTickets, 1)).reason === 'NO_TICKETS');
+  await expectError('the number of people must be at least 1', `select * from public.check_in_booking('${family}', 0, null, null)`, /Invalid number/);
+  await db.query(`update public.bookings set qr_token = 'booking-token-1' where id = $1`, [family]);
+  await expectError('a booking QR code is unique', `update public.bookings set qr_token = 'booking-token-1' where id = '${unpaidStaff}'`, /duplicate key/);
+
+  await db.exec(`reset role`);
+  await db.exec(`set role anon`);
+  await expectError('customers cannot check in bookings', `select * from public.check_in_booking('${family}', 1, null, null)`, /permission denied/);
   await db.exec(`reset role`);
   await db.exec(`set role anon`);
   await expectError('customers cannot run the clean-up', `select public.expire_online_unpaid_bookings()`, /permission denied/);
