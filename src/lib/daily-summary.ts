@@ -6,6 +6,7 @@
  */
 import { compareSpots } from '@/lib/seating';
 import { staffNoteText } from '@/lib/booking-edit';
+import type { PaymentState, PaymentSummary } from '@/lib/imported-payments';
 
 export type SummaryItem = { quantity: number; metadata?: { itemId?: string; name?: string; party?: boolean; isPerson?: boolean } | null };
 export type SummaryBooking = {
@@ -82,6 +83,24 @@ export function bookingPayment(booking: PaymentFields): BookingPayment {
       : Math.max(0, cents(toPay - Math.max(Number(booking.amount_due ?? toPay) || 0, recorded)));
   const paid = imported || unpaid ? recorded : cents(total - owing);
   return { total, paid, owing, unpaid, imported };
+}
+
+/**
+ * The balance on the booking details page, by the same rule as bookingPayment:
+ * `total` is what the customer pays in money (the booking total less any
+ * voucher), `paid` the money received, `outstanding` what is still owed. A paid
+ * online, office or gate booking was paid its amount due even when no payment
+ * line was recorded for it (e.g. bookings paid before payments were recorded).
+ */
+export function bookingBalance(booking: PaymentFields): PaymentSummary {
+  const cents = (value: number) => Math.round(value * 100) / 100;
+  const { owing, unpaid, imported } = bookingPayment(booking);
+  const total = cents(Math.max(0, (Number(booking.total_amount) || 0) - (Number(booking.voucher_amount_used) || 0)));
+  const recorded = cents((booking.payments || []).filter(payment => payment.status === 'COMPLETE').reduce((sum, payment) => sum + Number(payment.amount), 0));
+  const paid = imported || unpaid ? recorded : Math.max(recorded, cents(total - owing));
+  const overpaid = cents(Math.max(0, paid - total));
+  const state: PaymentState = paid <= 0 && total > 0 ? 'UNPAID' : overpaid > 0 ? 'OVERPAID' : owing > 0 ? 'PARTIAL' : 'PAID';
+  return { total, paid, outstanding: owing, overpaid, state };
 }
 
 function toRow(booking: SummaryBooking): SummaryRow {

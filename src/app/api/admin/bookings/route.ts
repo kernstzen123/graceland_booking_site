@@ -6,10 +6,11 @@ import { recordNotificationFailure } from '@/lib/voucher-email';
 import { archiveBooking, expireOnlineUnpaidBookings, FORCEABLE_FAILURES, setBookingPaymentStatus, STAFF_HOLD_UNTIL } from '@/lib/booking-holds';
 import { BookingEditError, editedNotes, linesChanged, parseEditedItems, seatsNeeded, type StoredLine } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
-import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, outstandingAfterPayments, parseImportedPayment, paymentSummary, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
+import { importedPaymentReference, ImportedPaymentError, isImportedPaymentRow, IMPORTED_PAYMENT_METHODS, outstandingAfterPayments, parseImportedPayment, paymentTimestamp, VOID_PAYMENT_STATUS } from '@/lib/imported-payments';
 import { johannesburgToday } from '@/lib/opening-rules';
 import { getPartySlots } from '@/lib/parties';
 import { IMPORTED_NOTE } from '@/lib/staff-bookings';
+import { bookingBalance } from '@/lib/daily-summary';
 
 const DETAIL_FIELDS = 'id,reference,visit_date,party_slot,status,payment_method,total_amount,people_count,created_at,expires_at,notes,refunded_at,voucher_issued,voucher_amount_used,amount_due,deleted_at,delete_reason,attention_reason,attention_at,customers(first_name,last_name,email,phone),booking_items(id,quantity,price_per_unit,subtotal,metadata,packages(name),huts(name)),booking_spots(spot_id,venue_spots(number,type)),payments(id,amount,method,status,provider_reference,created_at),payment_proofs(id,file_url,status,admin_notes,uploaded_at,verified_at),tickets(id,ticket_uid,qr_token,status,visit_date,issued_at)';
 const STATUS_FILTERS = ['PAID', 'PENDING', 'CANCELLED', 'FAILED', 'ATTENTION', 'DELETED'];
@@ -121,8 +122,9 @@ export async function POST(request: Request) {
       const holding = booking.status === 'PAYMENT_PENDING' || (booking.status === 'UNPAID' && Boolean(booking.expires_at) && new Date(booking.expires_at as string).getTime() > Date.now());
       if (booking.deleted_at || !(paid || holding) || booking.voucher_issued) return NextResponse.json({ success: false, error: 'This booking is cancelled, refunded or its reservation has lapsed, so its payments can no longer be changed.' }, { status: 400 });
       const payments = (booking.payments || []) as Array<{ id: string; amount: number; method: string; status: string; provider_reference: string | null }>;
-      const amountToPay = Number(booking.total_amount) - Number(booking.voucher_amount_used || 0);
-      const before = paymentSummary(amountToPay, payments);
+      // Same balance as the booking details page shows (bookingBalance).
+      const balanceWith = (lines: Array<{ amount: number | string; status: string }>) => bookingBalance({ ...booking, payments: lines });
+      const before = balanceWith(payments);
 
       if (action === 'add_payment') {
         let payment;
@@ -138,7 +140,7 @@ export async function POST(request: Request) {
           provider_reference: importedPaymentReference(payment.note), created_at: paymentTimestamp(payment.paidOn),
         }).select('id').single();
         if (insertError) throw insertError;
-        const after = paymentSummary(amountToPay, [...payments, { amount: payment.amount, status: 'COMPLETE' }]);
+        const after = balanceWith([...payments, { amount: payment.amount, status: 'COMPLETE' }]);
         await writeAudit(user.id, `RECORD${auditPrefix}_PAYMENT`, 'booking', booking.id, { reference: booking.reference, payment_id: inserted.id, amount: payment.amount, method: payment.method, paid_on: payment.paidOn, note: payment.note || null, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
         const recorded = `R${payment.amount.toFixed(2)} ${IMPORTED_PAYMENT_METHODS[payment.method].toLowerCase()} payment recorded.`;
         if (paid) return NextResponse.json({ success: true, message: `${recorded} ${after.outstanding > 0 ? `R${after.outstanding.toFixed(2)} still owed.` : 'Paid in full.'}` });
@@ -178,7 +180,7 @@ export async function POST(request: Request) {
         .eq('id', target.id).eq('booking_id', booking.id).eq('status', 'COMPLETE').select('id');
       if (voidError) throw voidError;
       if (!voided?.length) return NextResponse.json({ success: false, error: 'This payment was already removed. Refresh the booking.' }, { status: 409 });
-      const after = paymentSummary(amountToPay, payments.filter(payment => payment.id !== target.id));
+      const after = balanceWith(payments.filter(payment => payment.id !== target.id));
       await writeAudit(user.id, `VOID${auditPrefix}_PAYMENT`, 'booking', booking.id, { reference: booking.reference, payment_id: target.id, amount: Number(target.amount), method: target.method, reason, paid_before: before.paid, paid_after: after.paid, outstanding_after: after.outstanding });
       return NextResponse.json({ success: true, message: `Payment removed. R${after.outstanding.toFixed(2)} now owed.` });
     }

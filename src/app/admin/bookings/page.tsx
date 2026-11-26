@@ -10,7 +10,8 @@ import { DownloadIcon } from '@/components/icons';
 import { DEFAULT_PRICES, EDITABLE_ITEMS, editableItemPrice, findEditableItem, matchEditableItem, type PriceList } from '@/lib/pricing';
 import { seatsNeeded, staffNoteText } from '@/lib/booking-edit';
 import { spotLabel } from '@/lib/seating';
-import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, paymentSummary, voucherRefundAmount } from '@/lib/imported-payments';
+import { IMPORTED_PAYMENT_METHODS, isImportedPaymentRow, PAYMENT_STATE_LABELS, voucherRefundAmount } from '@/lib/imported-payments';
+import { bookingBalance } from '@/lib/daily-summary';
 
 type Customer = { first_name: string; last_name: string; email: string; phone: string };
 type Payment = { id: string; amount: number; method: string; status: string; provider_reference: string | null; created_at: string };
@@ -39,8 +40,6 @@ const isEditable = (booking: Booking) => !booking.deleted_at && !booking.voucher
  * recorded on it.
  */
 const paidAmountOf = (booking: Booking) => voucherRefundAmount(booking);
-/** The money the customer pays: the total less any voucher used. */
-const amountToPayOf = (booking: Booking) => Math.max(0, Number(booking.total_amount) - Number(booking.voucher_amount_used || 0));
 const PAYMENT_STATE_COLOURS = { UNPAID: '#fee2e2', PARTIAL: '#fef3c7', PAID: '#dcfce7', OVERPAID: '#dbeafe' } as const;
 /** "12 Oct 2026" for a payment. */
 const paymentDate = (value: string) => new Date(value).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric' });
@@ -657,7 +656,9 @@ function BalanceSection({ booking, canRecord, onRecordPayment }: { booking: Book
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const cancelled = ['CANCELLED', 'REFUNDED'].includes(booking.status) || Boolean(booking.voucher_issued) || Boolean(booking.deleted_at);
-  const summary = paymentSummary(amountToPayOf(booking), booking.payments || []);
+  // The same rule as the daily summary and reports: a paid online, office or gate booking was paid its amount due.
+  const summary = bookingBalance(booking);
+  const recorded = (booking.payments || []).filter(payment => payment.status === 'COMPLETE').reduce((sum, payment) => sum + Number(payment.amount), 0);
   const voucher = Number(booking.voucher_amount_used || 0);
   const inputStyle = { width: '100%', padding: '0.55rem', border: '1px solid var(--border-color)', borderRadius: 8, font: 'inherit' };
   const save = async () => {
@@ -684,6 +685,7 @@ function BalanceSection({ booking, canRecord, onRecordPayment }: { booking: Book
       </div>
       {unpaid && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>This booking is unpaid. Payments recorded here (e.g. a deposit) count towards it; once they cover the full amount it is marked paid and the tickets are emailed.</p>}
       {voucher > 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>R {voucher.toFixed(2)} of the R {Number(booking.total_amount).toFixed(2)} total was paid with a voucher.</p>}
+      {summary.paid > recorded + 0.005 && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>R {(summary.paid - recorded).toFixed(2)} was paid when the booking was confirmed{recorded > 0 ? `, on top of the R ${recorded.toFixed(2)} in payments listed below` : ''} (no payment line was recorded for it).</p>}
       {canRecord && !adding && <button type="button" className="btn btn-secondary" style={{ marginTop: '0.75rem' }} onClick={() => { setAdding(true); setError(''); }}>Record a payment</button>}
       {canRecord && adding && <div style={{ marginTop: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.75rem', display: 'grid', gap: '0.6rem' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem' }}>

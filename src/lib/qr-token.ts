@@ -26,7 +26,12 @@ export function createQrToken(bookingId: string, ticketUid: string, visitDate: s
   return `${payload}.${signature(payload)}`;
 }
 
-export function verifyQrToken(token: string) {
+/**
+ * The claims of a correctly signed QR code, or null. Ticket and meal codes stop
+ * working after their visit date; pass { ignoreExpiry: true } only where the
+ * booking's own current date is checked instead (the gate's booking lookup).
+ */
+export function verifyQrToken(token: string, options: { ignoreExpiry?: boolean } = {}) {
   try {
     const [payload, providedSignature] = token.split('.');
     if (!payload || !providedSignature || !/^[A-Za-z0-9_-]+$/.test(payload) || !/^[A-Za-z0-9_-]+$/.test(providedSignature)) return null;
@@ -36,7 +41,7 @@ export function verifyQrToken(token: string) {
     if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) return null;
     const claims = JSON.parse(Buffer.from(payload, 'base64url').toString()) as QrClaims;
     // A booking code's date is checked against the booking itself at the gate (see createBookingQrToken).
-    const expired = claims.type !== 'booking' && claims.exp < Math.floor(Date.now() / 1000);
+    const expired = !options.ignoreExpiry && claims.type !== 'booking' && claims.exp < Math.floor(Date.now() / 1000);
     if (claims.v !== 1 || typeof claims.bid !== 'string' || typeof claims.tid !== 'string' || typeof claims.nonce !== 'string' || !Number.isInteger(claims.exp) || expired) return null;
     return claims;
   } catch {

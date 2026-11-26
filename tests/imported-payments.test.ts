@@ -142,3 +142,30 @@ describe('what is left to pay after a deposit', () => {
     expect(outstandingAfterPayments(1000, [{ amount: 1200, status: 'COMPLETE' }])).toBe(0);
   });
 });
+
+describe('the balance on the booking details page matches the daily summary', async () => {
+  const { bookingBalance, bookingPayment } = await import('@/lib/daily-summary');
+  const booking = (changes: Record<string, unknown>) => ({ total_amount: 1000, amount_due: 1000, voucher_amount_used: 0, status: 'PAID', payment_method: 'PAYFAST', payments: [{ amount: 1000, status: 'COMPLETE' }], ...changes });
+
+  it('a paid online booking is paid in full', () => {
+    expect(bookingBalance(booking({}))).toMatchObject({ total: 1000, paid: 1000, outstanding: 0, state: 'PAID' });
+  });
+  it('a paid booking with no payment line recorded is still paid its amount due', () => {
+    expect(bookingBalance(booking({ payments: [] }))).toMatchObject({ paid: 1000, outstanding: 0, state: 'PAID' });
+  });
+  it('after a voucher, only the money part is to pay', () => {
+    expect(bookingBalance(booking({ voucher_amount_used: 200, amount_due: 800, payments: [{ amount: 800, status: 'COMPLETE' }] }))).toMatchObject({ total: 800, paid: 800, outstanding: 0 });
+  });
+  it('a total that went up after payment shows what is owed', () => {
+    expect(bookingBalance(booking({ total_amount: 1110 }))).toMatchObject({ total: 1110, paid: 1000, outstanding: 110, state: 'PARTIAL' });
+  });
+  it('unpaid and imported bookings count only the payments recorded', () => {
+    expect(bookingBalance(booking({ status: 'UNPAID', payments: [{ amount: 300, status: 'COMPLETE' }] }))).toMatchObject({ paid: 300, outstanding: 700, state: 'PARTIAL' });
+    expect(bookingBalance(booking({ payment_method: 'IMPORTED', payments: [] }))).toMatchObject({ paid: 0, outstanding: 1000, state: 'UNPAID' });
+  });
+  it('owes the same as the daily summary sheet', () => {
+    for (const changes of [{}, { payments: [] }, { total_amount: 1110 }, { status: 'UNPAID', payments: [] }, { payment_method: 'IMPORTED', payments: [{ amount: 400, status: 'COMPLETE' }] }]) {
+      expect(bookingBalance(booking(changes)).outstanding).toBe(bookingPayment(booking(changes)).owing);
+    }
+  });
+});
