@@ -412,6 +412,19 @@ export async function checkInLocally(ticketUid: string, deviceId: string): Promi
 
 // ── Booking cards (one QR code per booking) ────────────────────────────────
 
+/** The booking a QR code was made for, read from the code itself (the server checks its signature when online). */
+function qrBookingId(token: string): string | null {
+  const match = /^([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/.exec(token);
+  if (!match) return null;
+  try {
+    const padded = match[1].replace(/-/g, '+').replace(/_/g, '/');
+    const claims = JSON.parse(atob(padded.padEnd(padded.length + ((4 - (padded.length % 4)) % 4), '=')));
+    return claims?.type !== 'meal' && typeof claims?.bid === 'string' ? claims.bid : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The booking's tickets on this device (they are stored by booking reference). */
 async function bookingTickets(store: IDBObjectStore, reference: string): Promise<OfflineTicket[]> {
   return reqToPromise(store.index('booking_ref').getAll(reference)) as Promise<OfflineTicket[]>;
@@ -442,6 +455,9 @@ export async function lookupBookingLocally(code: string): Promise<OfflineBooking
   if (ticket) booking = await reqToPromise(bookingStore.get(ticket.booking_id)) as OfflineBooking | undefined;
   if (!booking) booking = await reqToPromise(bookingStore.index('qrToken').get(value)) as OfflineBooking | undefined;
   if (!booking && value.toUpperCase().startsWith('BK-')) booking = await reqToPromise(bookingStore.index('reference').get(value.toUpperCase())) as OfflineBooking | undefined;
+  // A ticket code from an earlier email (its ticket since replaced or re-signed) still names its booking.
+  const signedFor = !booking ? qrBookingId(value) : null;
+  if (signedFor) booking = await reqToPromise(bookingStore.get(signedFor)) as OfflineBooking | undefined;
   if (!booking) return null;
   return withLocalCounts(booking, await bookingTickets(ticketStore, booking.reference));
 }

@@ -28,9 +28,9 @@ export async function GET(request: Request) {
       date,
       today: {
         headcount,
-        revenue: Number(day.revenue),
         bookings: Number(day.bookings),
-        breakdown: Object.fromEntries(Object.entries(day.breakdown || {}).map(([name, value]) => [name, { units: Number(value.units), revenue: Number(value.revenue) }])),
+        // Units only: revenue is not shown on the dashboard (it is in Reports).
+        breakdown: Object.fromEntries(Object.entries(day.breakdown || {}).map(([name, value]) => [name, { units: Number(value.units) }])),
         unscanned: Number(day.unscanned),
         scanned: Number(day.scanned),
         capacity: Number(day.capacity) || 500,

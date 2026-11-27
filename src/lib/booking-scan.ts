@@ -9,6 +9,12 @@ import { generateTicketsAndSendEmail } from '@/lib/ticketing';
  * own QR code, an older per-person ticket QR code (it opens the whole booking),
  * a ticket ID (TKT-…) or a booking reference (BK-…). Meal vouchers are told
  * apart so the scanner can redeem them as before.
+ *
+ * Every QR code ever emailed keeps opening its booking: a ticket code whose
+ * ticket was replaced (the booking was edited) or that was signed for an older
+ * visit date (the booking was moved) still opens the booking it was signed for.
+ * Its signature proves which booking that is; whether anyone can be checked in
+ * is then decided by the booking itself (its current date and status).
  */
 export type ScanTarget = { bookingId: string } | { mealUid: string } | { error: string };
 
@@ -21,8 +27,8 @@ export function tokenFromScan(value: string) {
 export async function resolveScanCode(input: { token?: string; ticketUid?: string; reference?: string }): Promise<ScanTarget> {
   const token = input.token ? tokenFromScan(input.token) : '';
   if (token) {
-    const claims = verifyQrToken(token);
-    if (!claims) return { error: 'This QR code is not valid or has expired.' };
+    const claims = verifyQrToken(token, { ignoreExpiry: true });
+    if (!claims) return { error: 'This QR code is not valid.' };
     if (claims.type === 'meal') return { mealUid: claims.tid };
     if (claims.type === 'booking') {
       const { data: booking, error } = await supabase.from('bookings').select('id,qr_token').eq('id', claims.bid).maybeSingle();
@@ -32,14 +38,19 @@ export async function resolveScanCode(input: { token?: string; ticketUid?: strin
     }
     const { data: ticket, error } = await supabase.from('tickets').select('booking_id,ticket_uid').eq('qr_token', token).maybeSingle();
     if (error) throw error;
-    if (!ticket) {
-      // Older meal voucher codes carry no type marker.
-      const { data: meal, error: mealError } = await supabase.from('meal_vouchers').select('meal_uid').eq('qr_token', token).maybeSingle();
-      if (mealError) throw mealError;
-      return meal ? { mealUid: meal.meal_uid } : { error: 'Ticket not found. It may have been replaced when the booking was changed.' };
+    if (ticket) {
+      if (ticket.booking_id !== claims.bid || ticket.ticket_uid !== claims.tid) return { error: 'This QR code is not valid.' };
+      return { bookingId: ticket.booking_id };
     }
-    if (ticket.booking_id !== claims.bid || ticket.ticket_uid !== claims.tid) return { error: 'This QR code is not valid.' };
-    return { bookingId: ticket.booking_id };
+    // Older meal voucher codes carry no type marker.
+    const { data: meal, error: mealError } = await supabase.from('meal_vouchers').select('meal_uid').eq('qr_token', token).maybeSingle();
+    if (mealError) throw mealError;
+    if (meal) return { mealUid: meal.meal_uid };
+    if (/^MEAL-/i.test(claims.tid)) return { error: 'This meal voucher is no longer valid.' };
+    // A ticket code from an earlier email whose ticket was since replaced or re-signed: open the booking it was signed for.
+    const { data: booking, error: bookingError } = await supabase.from('bookings').select('id').eq('id', claims.bid).maybeSingle();
+    if (bookingError) throw bookingError;
+    return booking ? { bookingId: booking.id } : { error: 'Booking not found.' };
   }
   const ticketUid = (input.ticketUid || '').trim().toUpperCase();
   if (ticketUid) {

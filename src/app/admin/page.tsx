@@ -7,14 +7,13 @@ import { PageHeader } from '@/components/admin/AdminShell';
 import { AlertIcon, CalendarIcon, ReceiptIcon, ScanIcon, TicketIcon } from '@/components/admin/AdminIcons';
 import { DownloadIcon } from '@/components/icons';
 
-type Sales = { units: number; revenue: number };
+type Sales = { units: number };
 type HutBooking = { slot: string | null; client: string; reference: string; paid: boolean };
 type SpotBookings = { number: string; bookings: HutBooking[] };
 type HutSchedule = { slots: string[]; huts: SpotBookings[]; tables?: SpotBookings[] };
-type Overview = { date: string; today: { headcount: number; revenue: number; bookings: number; unscanned: number; scanned: number; capacity: number; breakdown: Record<string, Sales> }; comparison: { lastWeekHeadcount: number; percent: number | null }; pendingProofs: number };
+type Overview = { date: string; today: { headcount: number; bookings: number; unscanned: number; scanned: number; capacity: number; breakdown: Record<string, Sales> }; comparison: { lastWeekHeadcount: number; percent: number | null }; pendingProofs: number };
 
 const johannesburgToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(new Date());
-const rand = (value: number) => `R ${value.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function Bar({ percent, tone = 'var(--primary)' }: { percent: number; tone?: string }) {
   return <div style={{ height: 10, background: '#e2e8f0', borderRadius: 6, marginTop: 8 }}><div style={{ height: '100%', width: `${Math.min(100, Math.max(0, percent))}%`, background: tone, borderRadius: 6, transition: 'width 0.3s' }} /></div>;
@@ -25,7 +24,6 @@ export default function AdminDashboard() {
   const [error, setError] = useState('');
   const [selectedDate, setSelectedDate] = useState(johannesburgToday);
   const [loading, setLoading] = useState(true);
-  const [chartMode, setChartMode] = useState<'units' | 'revenue'>('units');
   const [conflictCount, setConflictCount] = useState(0);
   const [hutSchedule, setHutSchedule] = useState<HutSchedule | null>(null);
 
@@ -97,8 +95,8 @@ export default function AdminDashboard() {
   const tickets = today.scanned + today.unscanned;
   const checkedInPercent = tickets ? Math.round((today.scanned / tickets) * 100) : 0;
   const comparison = data.comparison.percent === null ? 'No bookings on the same day last week' : `${data.comparison.percent >= 0 ? '▲' : '▼'} ${Math.abs(data.comparison.percent).toFixed(0)}% vs same day last week`;
-  const sales = Object.entries(today.breakdown).sort((a, b) => (chartMode === 'units' ? b[1].units - a[1].units : b[1].revenue - a[1].revenue));
-  const max = Math.max(1, ...sales.map(([, value]) => (chartMode === 'units' ? value.units : value.revenue)));
+  const sales = Object.entries(today.breakdown).sort((a, b) => b[1].units - a[1].units);
+  const max = Math.max(1, ...sales.map(([, value]) => value.units));
 
   return <main className="container" style={{ padding: '2rem 1rem' }}>
     {header}
@@ -117,12 +115,7 @@ export default function AdminDashboard() {
       <div className="card">
         <p className="admin-stat-label">Guests booked</p>
         <strong className="admin-stat-value" style={{ color: 'var(--primary)' }}>{today.headcount}</strong>
-        <p className="admin-stat-note">{comparison}</p>
-      </div>
-      <div className="card">
-        <p className="admin-stat-label">Revenue</p>
-        <strong className="admin-stat-value" style={{ color: 'var(--success-text)' }}>{rand(today.revenue)}</strong>
-        <p className="admin-stat-note">{today.bookings} booking{today.bookings === 1 ? '' : 's'}</p>
+        <p className="admin-stat-note">{today.bookings} booking{today.bookings === 1 ? '' : 's'} · {comparison}</p>
       </div>
       <div className="card">
         <p className="admin-stat-label">Checked in</p>
@@ -140,18 +133,13 @@ export default function AdminDashboard() {
 
     <section className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '1rem' }}>
-        <div><h2 style={{ fontSize: '1.15rem' }}>Sales by pass type</h2><p className="admin-stat-note">Paid bookings for this date.</p></div>
-        <div className="report-toggle" role="group" aria-label="Measure" style={{ margin: 0 }}>
-          <button className={`btn report-chip${chartMode === 'units' ? ' active' : ''}`} onClick={() => setChartMode('units')}>Units</button>
-          <button className={`btn report-chip${chartMode === 'revenue' ? ' active' : ''}`} onClick={() => setChartMode('revenue')}>Revenue</button>
-        </div>
+        <div><h2 style={{ fontSize: '1.15rem' }}>Sales by pass type</h2><p className="admin-stat-note">Passes sold in paid bookings for this date.</p></div>
       </div>
       {sales.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>No paid sales for this date.</p> : <div style={{ display: 'grid', gap: '0.7rem' }}>
         {sales.map(([name, value]) => {
-          const amount = chartMode === 'units' ? value.units : value.revenue;
           return <div key={name}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: '0.9rem' }}><span style={{ wordBreak: 'break-word' }}>{name}</span><strong style={{ whiteSpace: 'nowrap' }}>{chartMode === 'units' ? value.units : rand(value.revenue)}</strong></div>
-            <Bar percent={(amount / max) * 100} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: '0.9rem' }}><span style={{ wordBreak: 'break-word' }}>{name}</span><strong style={{ whiteSpace: 'nowrap' }}>{value.units}</strong></div>
+            <Bar percent={(value.units / max) * 100} />
           </div>;
         })}
       </div>}
